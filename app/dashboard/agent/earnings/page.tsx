@@ -1,0 +1,145 @@
+"use client"
+
+import { useState, useEffect } from "react"
+import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { DollarSign, TrendingUp, Calendar, Download } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { useToast } from "@/hooks/use-toast"
+
+export default function AgentEarningsPage() {
+  const { toast } = useToast()
+  const [earnings, setEarnings] = useState<any[]>([])
+  const [stats, setStats] = useState({
+    totalEarnings: 0,
+    thisMonth: 0,
+    pendingPayouts: 0,
+  })
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    fetchEarnings()
+  }, [])
+
+  const fetchEarnings = async () => {
+    try {
+      const token = localStorage.getItem("auth-token")
+      if (!token) return
+
+      const response = await fetch("/api/agent/earnings", {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+
+      if (response.ok) {
+        const data = await response.json()
+        setEarnings(data.earnings || [])
+        setStats({
+          totalEarnings: data.totalEarnings || 0,
+          thisMonth: data.thisMonth || 0,
+          pendingPayouts: data.pendingPayouts || 0,
+        })
+      }
+    } catch (error) {
+      console.error("Failed to fetch earnings:", error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <DashboardLayout userType="agent">
+      <div className="space-y-6">
+        <div className="flex justify-between items-center">
+          <div>
+            <h1 className="text-3xl font-bold">Earnings</h1>
+            <p className="text-muted-foreground">Track your commission and income</p>
+          </div>
+          <Button variant="outline">
+            <Download className="mr-2 h-4 w-4" />
+            Export Report
+          </Button>
+        </div>
+
+        {/* Stats Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Total Earnings</p>
+                  <p className="text-2xl font-bold">${stats.totalEarnings.toLocaleString()}</p>
+                </div>
+                <DollarSign className="h-8 w-8 text-primary" />
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">This Month</p>
+                  <p className="text-2xl font-bold">${stats.thisMonth.toLocaleString()}</p>
+                </div>
+                <TrendingUp className="h-8 w-8 text-green-500" />
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">Pending Payouts</p>
+                  <p className="text-2xl font-bold">${stats.pendingPayouts.toLocaleString()}</p>
+                </div>
+                <Calendar className="h-8 w-8 text-yellow-500" />
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Earnings History</CardTitle>
+            <CardDescription>Your commission payments</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {loading ? (
+              <div className="text-center py-8 text-muted-foreground">Loading earnings...</div>
+            ) : earnings.length > 0 ? (
+              <div className="space-y-4">
+                {earnings.map((earning: any, index: number) => (
+                  <div key={index} className="flex items-center justify-between p-4 border rounded-lg">
+                    <div>
+                      <h3 className="font-semibold">{earning.description || "Commission Payment"}</h3>
+                      <div className="text-sm text-muted-foreground">
+                        {earning.property?.title || "Property Deal"}
+                      </div>
+                      <div className="flex items-center text-sm text-muted-foreground">
+                        <Calendar className="h-3 w-3 mr-1" />
+                        {new Date(earning.createdAt).toLocaleDateString()}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-semibold text-lg text-green-600">
+                        +${earning.amount?.toLocaleString() || 0}
+                      </div>
+                      <Badge variant={earning.status === "PAID" ? "default" : "secondary"}>
+                        {earning.status || "Pending"}
+                      </Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-12 text-muted-foreground">
+                <p>No earnings yet</p>
+                <p className="text-sm mt-2">Complete deals to start earning commissions</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </DashboardLayout>
+  )
+}

@@ -1,0 +1,339 @@
+// Prisma Schema for RentGuard Platform
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// 用户模型
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  phone         String?   @unique
+  password      String
+  name          String
+  avatar        String?
+  userType      String    @default("TENANT") // TENANT, LANDLORD, AGENT, ADMIN
+  isPremium     Boolean   @default(false)
+  premiumExpiry DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // 关联关系
+  tenantProfile    TenantProfile?
+  landlordProfile  LandlordProfile?
+  properties       Property[]
+  tenantRequests   TenantRequest[]
+  landlordRequests LandlordRequest[]
+  applications     Application[]
+  messages         Message[] @relation("SenderMessages")
+  receivedMessages Message[] @relation("ReceiverMessages")
+  payments         Payment[]
+  deposits         Deposit[]
+  savedProperties  SavedProperty[]
+  notifications    Notification[]
+
+  @@index([email])
+  @@index([userType])
+}
+
+// UserType enum - using String in SQLite
+
+// 租客资料
+model TenantProfile {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  monthlyIncome   Float?
+  creditScore     Int?
+  employmentStatus String?
+  references      Json?      // 推荐人信息 (JSON)
+  preferences     Json?      // 偏好设置 (JSON)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// 房东资料
+model LandlordProfile {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyName     String?
+  licenseNumber   String?
+  verified        Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// 房源模型
+model Property {
+  id              String      @id @default(cuid())
+  landlordId      String
+  landlord        User        @relation(fields: [landlordId], references: [id])
+  title           String
+  description     String
+  address         String
+  city            String
+  state           String
+  zipCode         String
+  country         String      @default("US")
+  latitude        Float?
+  longitude       Float?
+  price           Float
+  deposit         Float
+  bedrooms        Int
+  bathrooms       Float
+  sqft            Int?
+  propertyType    String    // APARTMENT, HOUSE, CONDO, STUDIO, TOWNHOUSE, OTHER
+  status          String    @default("AVAILABLE") // AVAILABLE, OCCUPIED, MAINTENANCE, PENDING
+  images          Json        @default("[]") // JSON array
+  amenities       Json        @default("[]") // JSON array
+  petFriendly     Boolean     @default(false)
+  availableFrom   DateTime?
+  leaseDuration   Int?        // 月数
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  // 关联关系
+  applications    Application[]
+  savedProperties SavedProperty[]
+  deposits        Deposit[]
+  leases          Lease[]
+
+  @@index([landlordId])
+  @@index([city, state])
+  @@index([status])
+  @@index([latitude, longitude])
+}
+
+// PropertyType and PropertyStatus enums - using String in SQLite
+
+// 租客求租需求
+model TenantRequest {
+  id              String   @id @default(cuid())
+  tenantId        String
+  tenant          User     @relation(fields: [tenantId], references: [id])
+  query           String   // AI对话原始查询
+  parsedCriteria  Json     // 解析后的搜索条件 (JSON)
+  maxPrice        Float?
+  minPrice        Float?
+  maxDistance     Float?   // 公里数
+  minBedrooms     Int?
+  minBathrooms    Float?
+  city            String?
+  state           String?
+  minLeaseDuration Int?    // 最小租期（月）
+  petFriendly     Boolean?
+  amenities       Json        @default("[]") // JSON array
+  status          String    @default("ACTIVE") // ACTIVE, FULFILLED, CANCELLED, EXPIRED
+  searchResults   Json?       // 搜索结果 (JSON)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([status])
+}
+
+// 房东求租客需求
+model LandlordRequest {
+  id              String   @id @default(cuid())
+  landlordId      String
+  landlord        User     @relation(fields: [landlordId], references: [id])
+  propertyId      String?  // 关联的房源ID
+  query           String   // AI对话原始查询
+  parsedCriteria  Json     // 解析后的搜索条件 (JSON)
+  minRent         Float?
+  maxRent         Float?
+  minLeaseDuration Int?    // 最小租期（月）
+  requiredIncome  Float?   // 要求的最低收入
+  minCreditScore   Int?
+  city             String?
+  state            String?
+  status           String    @default("ACTIVE") // ACTIVE, FULFILLED, CANCELLED, EXPIRED
+  searchResults    Json?       // 搜索结果 (JSON)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([landlordId])
+  @@index([status])
+}
+
+// RequestStatus enum - using String in SQLite
+
+// 申请记录
+model Application {
+  id              String            @id @default(cuid())
+  tenantId        String
+  tenant          User              @relation(fields: [tenantId], references: [id])
+  propertyId      String
+  property        Property          @relation(fields: [propertyId], references: [id])
+  status          String    @default("PENDING") // PENDING, UNDER_REVIEW, APPROVED, REJECTED, WITHDRAWN
+  monthlyIncome   Float?
+  creditScore     Int?
+  depositAmount   Float
+  message         String?
+  appliedDate     DateTime          @default(now())
+  reviewedDate    DateTime?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  @@index([tenantId])
+  @@index([propertyId])
+  @@index([status])
+}
+
+// ApplicationStatus enum - using String in SQLite
+
+// 租赁合同
+model Lease {
+  id              String   @id @default(cuid())
+  propertyId      String
+  property        Property @relation(fields: [propertyId], references: [id])
+  tenantId        String
+  landlordId      String
+  startDate       DateTime
+  endDate         DateTime
+  monthlyRent     Float
+  depositAmount   Float
+  status          String    @default("ACTIVE") // ACTIVE, EXPIRED, TERMINATED, CANCELLED
+  documentUrl     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([tenantId])
+  @@index([landlordId])
+  @@index([propertyId])
+}
+
+// LeaseStatus enum - using String in SQLite
+
+// 押金记录
+model Deposit {
+  id              String        @id @default(cuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id])
+  propertyId      String
+  property        Property      @relation(fields: [propertyId], references: [id])
+  amount          Float
+  status          String    @default("HELD_IN_ESCROW") // HELD_IN_ESCROW, RETURNED, PARTIALLY_RETURNED, DISPUTED, FORFEITED
+  depositDate     DateTime      @default(now())
+  expectedReturn  DateTime?
+  actualReturn    DateTime?
+  returnAmount    Float?
+  deductions      Json?           // 扣除明细 (JSON)
+  disputeId       String?       @unique
+  dispute          Dispute?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([userId])
+  @@index([propertyId])
+  @@index([status])
+}
+
+// DepositStatus enum - using String in SQLite
+
+// 争议记录
+model Dispute {
+  id              String        @id @default(cuid())
+  depositId       String        @unique
+  deposit         Deposit       @relation(fields: [depositId], references: [id])
+  tenantId        String
+  landlordId      String
+  reason          String
+  tenantClaim     String?
+  landlordClaim   String?
+  status          String    @default("OPEN") // OPEN, UNDER_REVIEW, RESOLVED, CLOSED
+  resolution      String?
+  resolvedBy      String?       // 管理员ID
+  resolvedAt      DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([status])
+}
+
+// DisputeStatus enum - using String in SQLite
+
+// 支付记录
+model Payment {
+  id              String        @id @default(cuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id])
+  type            String    // RENT, DEPOSIT, MEMBERSHIP, SERVICE_FEE, REFUND
+  amount          Float
+  status          String    @default("PENDING") // PENDING, COMPLETED, FAILED, REFUNDED, CANCELLED
+  description     String?
+  propertyId      String?
+  transactionId   String?       @unique
+  paymentMethod   String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([type])
+}
+
+// PaymentType and PaymentStatus enums - using String in SQLite
+
+// 消息
+model Message {
+  id              String      @id @default(cuid())
+  senderId        String
+  sender          User        @relation("SenderMessages", fields: [senderId], references: [id])
+  receiverId      String
+  receiver        User        @relation("ReceiverMessages", fields: [receiverId], references: [id])
+  propertyId      String?
+  content         String
+  isRead          Boolean     @default(false)
+  createdAt       DateTime    @default(now())
+
+  @@index([senderId, receiverId])
+  @@index([receiverId, isRead])
+}
+
+// 保存的房源
+model SavedProperty {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+  propertyId      String
+  property        Property @relation(fields: [propertyId], references: [id])
+  createdAt       DateTime @default(now())
+
+  @@unique([userId, propertyId])
+  @@index([userId])
+}
+
+// 通知
+model Notification {
+  id              String           @id @default(cuid())
+  userId          String
+  user            User             @relation(fields: [userId], references: [id])
+  type            String    // APPLICATION_UPDATE, MESSAGE, PAYMENT, DEPOSIT, DISPUTE, SYSTEM
+  title           String
+  message         String
+  isRead          Boolean          @default(false)
+  link            String?
+  createdAt       DateTime         @default(now())
+
+  @@index([userId, isRead])
+}
+
+// NotificationType enum - using String in SQLite
+
+// 用户评价
+model Testimonial {
+  id              String   @id @default(cuid())
+  name            String
+  role            String   // Tenant, Landlord, Agent
+  content         String
+  rating          Int      @default(5)
+  avatar          String?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+}

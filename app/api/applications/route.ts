@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAuthUser } from '@/lib/auth'
-import { prisma } from '@/lib/db'
+import { getCurrentUser } from '@/lib/auth-adapter'
+import { getDatabaseAdapter } from '@/lib/db-adapter'
+import { trackEvent } from '@/lib/analytics'
 
 /**
  * 创建申请
  */
 export async function POST(request: NextRequest) {
   try {
-    const user = getAuthUser(request)
+    const user = await getCurrentUser(request)
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
@@ -25,10 +26,10 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const db = getDatabaseAdapter()
+    
     // 检查房源是否存在
-    const property = await prisma.property.findUnique({
-      where: { id: propertyId }
-    })
+    const property = await db.findById('properties', propertyId)
 
     if (!property) {
       return NextResponse.json(
@@ -38,42 +39,49 @@ export async function POST(request: NextRequest) {
     }
 
     // 检查是否已经申请过
-    const existingApplication = await prisma.application.findFirst({
-      where: {
-        tenantId: user.userId,
-        propertyId
-      }
+    const allApplications = await db.query('applications', {
+      tenantId: user.id,
+      propertyId
     })
 
-    if (existingApplication) {
+    if (allApplications.length > 0) {
       return NextResponse.json(
         { error: 'You have already applied for this property' },
         { status: 400 }
       )
     }
 
-    const application = await prisma.application.create({
-      data: {
-        tenantId: user.userId,
-        propertyId,
-        monthlyIncome: monthlyIncome ? parseFloat(monthlyIncome) : null,
-        creditScore: creditScore ? parseInt(creditScore) : null,
-        depositAmount: depositAmount ? parseFloat(depositAmount) : property.deposit,
-        message
-      },
-      include: {
-        property: true,
-        tenant: {
-          select: {
-            id: true,
-            name: true,
-            email: true
-          }
-        }
-      }
+    const application = await db.create('applications', {
+      tenantId: user.id,
+      propertyId,
+      monthlyIncome: monthlyIncome ? parseFloat(monthlyIncome) : null,
+      creditScore: creditScore ? parseInt(creditScore) : null,
+      depositAmount: depositAmount ? parseFloat(depositAmount) : property.deposit,
+      message,
+      status: 'PENDING',
+      appliedDate: new Date(),
     })
 
-    return NextResponse.json({ application })
+    // 加载关联数据
+    const tenant = await db.findUserById(user.id)
+    const applicationWithRelations = {
+      ...application,
+      property,
+      tenant: tenant ? {
+        id: tenant.id,
+        name: tenant.name,
+        email: tenant.email,
+      } : null,
+    }
+
+    // 埋点
+    await trackEvent({
+      type: 'APPLICATION_SUBMIT',
+      userId: user.id,
+      metadata: { propertyId, applicationId: application.id },
+    })
+
+    return NextResponse.json({ application: applicationWithRelations })
   } catch (error: any) {
     console.error('Create application error:', error)
     return NextResponse.json(
@@ -88,7 +96,7 @@ export async function POST(request: NextRequest) {
  */
 export async function GET(request: NextRequest) {
   try {
-    const user = getAuthUser(request)
+    const user = await getCurrentUser(request)
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
@@ -100,42 +108,54 @@ export async function GET(request: NextRequest) {
     const userType = searchParams.get('userType') // tenant 或 landlord
     const status = searchParams.get('status')
 
-    const dbUser = await prisma.user.findUnique({
-      where: { id: user.userId }
-    })
+    const db = getDatabaseAdapter()
+    const dbUser = await db.findUserById(user.id)
 
-    const where: any = {}
+    // 构建查询条件
+    let applications = await db.query('applications', {})
     
+    // 应用过滤
     if (userType === 'tenant' || dbUser?.userType === 'TENANT') {
-      where.tenantId = user.userId
+      applications = applications.filter((app: any) => app.tenantId === user.id)
     } else if (userType === 'landlord' || dbUser?.userType === 'LANDLORD') {
-      where.property = {
-        landlordId: user.userId
-      }
+      // 需要先获取该房东的所有房源
+      const properties = await db.query('properties', { landlordId: user.id })
+      const propertyIds = properties.map((p: any) => p.id)
+      applications = applications.filter((app: any) => propertyIds.includes(app.propertyId))
     }
 
     if (status) {
-      where.status = status.toUpperCase() as any
+      applications = applications.filter((app: any) => app.status === status.toUpperCase())
     }
 
-    const applications = await prisma.application.findMany({
-      where,
-      include: {
-        property: true,
-        tenant: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            phone: true,
-            tenantProfile: true
-          }
-        }
-      },
-      orderBy: { appliedDate: 'desc' }
+    // 排序
+    applications.sort((a: any, b: any) => {
+      const dateA = new Date(a.appliedDate || a.createdAt).getTime()
+      const dateB = new Date(b.appliedDate || b.createdAt).getTime()
+      return dateB - dateA
     })
 
-    return NextResponse.json({ applications })
+    // 加载关联数据
+    const applicationsWithRelations = await Promise.all(
+      applications.map(async (app: any) => {
+        const [property, tenant] = await Promise.all([
+          db.findById('properties', app.propertyId),
+          db.findUserById(app.tenantId),
+        ])
+        return {
+          ...app,
+          property,
+          tenant: tenant ? {
+            id: tenant.id,
+            name: tenant.name,
+            email: tenant.email,
+            phone: tenant.phone,
+          } : null,
+        }
+      })
+    )
+
+    return NextResponse.json({ applications: applicationsWithRelations })
   } catch (error: any) {
     console.error('Get applications error:', error)
     return NextResponse.json(

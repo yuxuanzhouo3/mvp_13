@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/db'
-import bcrypt from 'bcryptjs'
-import jwt from 'jsonwebtoken'
+import { login } from '@/lib/auth-adapter'
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,50 +13,18 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // 查找用户
-    const user = await prisma.user.findUnique({
-      where: { email }
-    })
-
-    if (!user) {
-      return NextResponse.json(
-        { error: '邮箱或密码错误' },
-        { status: 401 }
-      )
-    }
-
-    // 验证密码
-    const isValidPassword = await bcrypt.compare(password, user.password)
-
-    if (!isValidPassword) {
-      return NextResponse.json(
-        { error: '邮箱或密码错误' },
-        { status: 401 }
-      )
-    }
-
-    // 生成JWT token
-    const token = jwt.sign(
-      { userId: user.id, email: user.email },
-      process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '7d' }
-    )
+    // 使用统一的登录接口（自动根据环境变量选择 Supabase 或 JWT）
+    const result = await login(email, password)
 
     return NextResponse.json({
-      user: {
-        id: user.id,
-        email: user.email,
-        name: user.name,
-        userType: user.userType,
-        isPremium: user.isPremium
-      },
-      token
+      user: result.user,
+      token: result.token
     })
   } catch (error: any) {
     console.error('Login error:', error)
     return NextResponse.json(
-      { error: '登录失败', details: error.message },
-      { status: 500 }
+      { error: error.message || '登录失败', details: error.message },
+      { status: 401 }
     )
   }
 }

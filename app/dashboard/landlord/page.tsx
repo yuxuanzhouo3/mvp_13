@@ -42,7 +42,9 @@ export default function LandlordDashboard() {
       })
       if (propertiesRes.ok) {
         const propertiesData = await propertiesRes.json()
-        setStats(prev => ({ ...prev, totalProperties: propertiesData.properties?.length || 0 }))
+        // 使用 pagination.total 获取真实的总数，而不是当前页的数量
+        const totalProperties = propertiesData.pagination?.total || propertiesData.properties?.length || 0
+        setStats(prev => ({ ...prev, totalProperties }))
       }
 
       // Fetch applications

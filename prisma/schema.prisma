@@ -19,6 +19,12 @@ model User {
   userType      String    @default("TENANT") // TENANT, LANDLORD, AGENT, ADMIN
   isPremium     Boolean   @default(false)
   premiumExpiry DateTime?
+  // 订阅与配额字段（新增）
+  vipLevel            String?   // FREE, BASIC, PREMIUM, ENTERPRISE
+  subscriptionEndTime DateTime?
+  lastUsageDate      DateTime?
+  dailyQuota         Int?
+  monthlyQuota       Int?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -336,4 +342,19 @@ model Testimonial {
   avatar          String?
   isActive        Boolean  @default(true)
   createdAt       DateTime @default(now())
+}
+
+// 事件记录（用于数据埋点）
+model Event {
+  id        String   @id @default(cuid())
+  type      String   // USER_SIGNUP, PAYMENT, AI_SEARCH, etc.
+  userId    String?
+  region    String   // 'global' | 'china'
+  timestamp DateTime @default(now())
+  metadata  Json?    // 额外数据 (JSON)
+
+  @@index([type])
+  @@index([userId])
+  @@index([timestamp])
+  @@index([region])
 }

@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAuthUser } from '@/lib/auth'
-import { prisma } from '@/lib/db'
+import { getCurrentUser } from '@/lib/auth-adapter'
+import { getDatabaseAdapter } from '@/lib/db-adapter'
 
 /**
  * 创建房源
  */
 export async function POST(request: NextRequest) {
   try {
-    const user = getAuthUser(request)
+    const user = await getCurrentUser(request)
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
@@ -15,9 +15,8 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const dbUser = await prisma.user.findUnique({
-      where: { id: user.userId }
-    })
+    const db = getDatabaseAdapter()
+    const dbUser = await db.findUserById(user.id)
 
     if (dbUser?.userType !== 'LANDLORD') {
       return NextResponse.json(
@@ -50,30 +49,30 @@ export async function POST(request: NextRequest) {
       leaseDuration
     } = body
 
-    const property = await prisma.property.create({
-      data: {
-        landlordId: user.userId,
-        title,
-        description,
-        address,
-        city,
-        state,
-        zipCode: zipCode || '',
-        country: country || 'US',
-        latitude,
-        longitude,
-        price: parseFloat(price),
-        deposit: parseFloat(deposit),
-        bedrooms: parseInt(bedrooms),
-        bathrooms: parseFloat(bathrooms),
-        sqft: sqft ? parseInt(sqft) : null,
-        propertyType,
-        images: Array.isArray(images) ? JSON.stringify(images) : (images || '[]'),
-        amenities: Array.isArray(amenities) ? JSON.stringify(amenities) : (amenities || '[]'),
-        petFriendly: petFriendly || false,
-        availableFrom: availableFrom ? new Date(availableFrom) : null,
-        leaseDuration: leaseDuration ? parseInt(leaseDuration) : null
-      }
+    // 使用数据库适配器创建房源（统一接口）
+    const property = await db.create('properties', {
+      landlordId: user.id,
+      title,
+      description,
+      address,
+      city,
+      state,
+      zipCode: zipCode || '',
+      country: country || (process.env.NEXT_PUBLIC_APP_REGION === 'china' ? 'CN' : 'US'),
+      latitude,
+      longitude,
+      price: parseFloat(price),
+      deposit: parseFloat(deposit),
+      bedrooms: parseInt(bedrooms),
+      bathrooms: parseFloat(bathrooms),
+      sqft: sqft ? parseInt(sqft) : null,
+      propertyType,
+      images: Array.isArray(images) ? images : (images ? JSON.parse(images) : []),
+      amenities: Array.isArray(amenities) ? amenities : (amenities ? JSON.parse(amenities) : []),
+      petFriendly: petFriendly || false,
+      availableFrom: availableFrom ? new Date(availableFrom) : null,
+      leaseDuration: leaseDuration ? parseInt(leaseDuration) : null,
+      status: 'AVAILABLE',
     })
 
     return NextResponse.json({ property })
@@ -91,46 +90,70 @@ export async function POST(request: NextRequest) {
  */
 export async function GET(request: NextRequest) {
   try {
-    const user = getAuthUser(request)
+    const user = await getCurrentUser(request)
     const { searchParams } = new URL(request.url)
     const landlordId = searchParams.get('landlordId')
     const page = parseInt(searchParams.get('page') || '1')
     const limit = parseInt(searchParams.get('limit') || '20')
 
-    const where: any = {}
+    const db = getDatabaseAdapter()
+    
+    // 构建查询条件
+    const filters: any = {}
     if (landlordId) {
-      where.landlordId = landlordId
+      filters.landlordId = landlordId
     } else if (user) {
       // 如果未指定landlordId，只返回当前用户的房源
-      const dbUser = await prisma.user.findUnique({
-        where: { id: user.userId }
-      })
-      if (dbUser?.userType === 'LANDLORD') {
-        where.landlordId = user.userId
+      try {
+        const dbUser = await db.findUserById(user.id)
+        if (dbUser?.userType === 'LANDLORD') {
+          filters.landlordId = user.id
+          console.log('Querying properties for landlord:', user.id)
+        } else {
+          console.log('User is not a landlord, userType:', dbUser?.userType)
+        }
+      } catch (error: any) {
+        console.error('Error fetching user:', error)
+        // 如果查询用户失败，仍然尝试使用 user.id
+        filters.landlordId = user.id
       }
     }
+    
+    console.log('Properties query filters:', filters)
 
-    const [properties, total] = await Promise.all([
-      prisma.property.findMany({
-        where,
-        include: {
-          landlord: {
-            select: {
-              id: true,
-              name: true,
-              email: true
-            }
-          }
-        },
-        skip: (page - 1) * limit,
-        take: limit,
-        orderBy: { createdAt: 'desc' }
-      }),
-      prisma.property.count({ where })
-    ])
+    // 查询房源（使用数据库适配器，自动处理 Prisma 和 CloudBase 的差异）
+    // 先获取总数（不分页）
+    const allProperties = await db.query('properties', filters, {
+      orderBy: { createdAt: 'desc' }
+    })
+    const total = allProperties.length
+    console.log(`Found ${total} properties matching filters`)
+    
+    // 分页查询
+    const properties = await db.query('properties', filters, {
+      orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * limit,
+      take: limit
+    })
+    console.log(`Returning ${properties.length} properties for page ${page}`)
+    
+    // 为每个房源添加房东信息（如果需要）
+    const propertiesWithLandlord = await Promise.all(
+      properties.map(async (property: any) => {
+        const landlord = await db.findUserById(property.landlordId)
+        return {
+          ...property,
+          landlord: landlord ? {
+            id: landlord.id,
+            name: landlord.name,
+            email: landlord.email,
+          } : null,
+        }
+      })
+    )
 
     return NextResponse.json({
-      properties,
+      properties: propertiesWithLandlord,
       pagination: {
         page,
         limit,

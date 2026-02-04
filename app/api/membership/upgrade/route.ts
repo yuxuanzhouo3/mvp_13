@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAuthUser } from '@/lib/auth'
-import { prisma } from '@/lib/db'
+import { getCurrentUser } from '@/lib/auth-adapter'
+import { getDatabaseAdapter } from '@/lib/db-adapter'
+import { upgradeSubscription } from '@/lib/subscription-service'
+import { trackSubscriptionUpgrade, trackPayment } from '@/lib/analytics'
 
 /**
  * 升级为年费会员
  */
 export async function POST(request: NextRequest) {
   try {
-    const user = getAuthUser(request)
+    const user = await getCurrentUser(request)
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
@@ -16,40 +18,37 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json()
-    const { paymentMethod, transactionId } = body
+    const { paymentMethod, transactionId, tier = 'PREMIUM', durationMonths = 12 } = body
 
-    // 计算会员到期时间（1年后）
-    const premiumExpiry = new Date()
-    premiumExpiry.setFullYear(premiumExpiry.getFullYear() + 1)
+    // 使用订阅服务升级
+    const updatedUser = await upgradeSubscription(user.id, tier, durationMonths)
 
-    // 更新用户为会员
-    const updatedUser = await prisma.user.update({
-      where: { id: user.userId },
-      data: {
-        isPremium: true,
-        premiumExpiry
-      }
-    })
+    // 计算金额（根据订阅级别）
+    const amount = tier === 'BASIC' ? 9.99 : tier === 'PREMIUM' ? 29.99 : tier === 'ENTERPRISE' ? 99.99 : 0
 
     // 记录支付
-    await prisma.payment.create({
-      data: {
-        userId: user.userId,
-        type: 'MEMBERSHIP' as any,
-        amount: 99.99, // 年费价格
-        status: 'COMPLETED' as any,
-        transactionId,
-        paymentMethod,
-        description: 'Premium membership upgrade'
-      }
+    const db = getDatabaseAdapter()
+    await db.create('payments', {
+      userId: user.id,
+      type: 'MEMBERSHIP',
+      amount: amount * durationMonths,
+      status: 'COMPLETED',
+      transactionId,
+      paymentMethod,
+      description: `${tier} membership upgrade (${durationMonths} months)`,
     })
+
+    // 埋点
+    await trackPayment(user.id, amount * durationMonths, 'USD', paymentMethod, transactionId)
+    await trackSubscriptionUpgrade(user.id, user.vipLevel || 'FREE', tier, amount * durationMonths)
 
     return NextResponse.json({
       success: true,
       user: {
         id: updatedUser.id,
         isPremium: updatedUser.isPremium,
-        premiumExpiry: updatedUser.premiumExpiry
+        premiumExpiry: updatedUser.premiumExpiry,
+        vipLevel: updatedUser.vipLevel,
       },
       message: 'Membership upgraded successfully'
     })

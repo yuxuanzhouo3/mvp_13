@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAuthUser } from '@/lib/auth'
-import { prisma } from '@/lib/db'
+import { getCurrentUser } from '@/lib/auth-adapter'
+import { getDatabaseAdapter } from '@/lib/db-adapter'
 
 /**
  * Get saved properties for current user
  */
 export async function GET(request: NextRequest) {
   try {
-    const user = getAuthUser(request)
+    const user = await getCurrentUser(request)
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
@@ -15,41 +15,42 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const savedProperties = await prisma.savedProperty.findMany({
-      where: { userId: user.userId },
-      include: {
-        property: {
-          include: {
-            landlord: {
-              select: {
-                id: true,
-                name: true,
-                email: true
-              }
-            }
-          }
-        }
-      },
-      orderBy: { createdAt: 'desc' }
+    const db = getDatabaseAdapter()
+    const savedProperties = await db.query('savedProperties', { userId: user.id })
+
+    // 排序
+    savedProperties.sort((a: any, b: any) => {
+      const dateA = new Date(a.createdAt).getTime()
+      const dateB = new Date(b.createdAt).getTime()
+      return dateB - dateA
     })
 
-    const properties = savedProperties.map(sp => ({
-      id: sp.property.id,
-      title: sp.property.title,
-      location: `${sp.property.city}, ${sp.property.state}`,
-      price: sp.property.price,
-      beds: sp.property.bedrooms,
-      baths: sp.property.bathrooms,
-      sqft: sp.property.sqft || 0,
-      image: Array.isArray(sp.property.images) 
-        ? (sp.property.images[0] || '/placeholder.svg')
-        : (typeof sp.property.images === 'string' 
-          ? (JSON.parse(sp.property.images)?.[0] || '/placeholder.svg')
-          : '/placeholder.svg'),
-      status: sp.property.status?.toLowerCase() || 'available',
-    }))
+    // 加载房源信息
+    const properties = await Promise.all(
+      savedProperties.map(async (sp: any) => {
+        const property = await db.findById('properties', sp.propertyId)
+        if (!property) return null
 
-    return NextResponse.json({ properties })
+        const landlord = await db.findUserById(property.landlordId)
+        const images = Array.isArray(property.images) 
+          ? property.images 
+          : (typeof property.images === 'string' ? JSON.parse(property.images) : [])
+
+        return {
+          id: property.id,
+          title: property.title,
+          location: `${property.city}, ${property.state}`,
+          price: property.price,
+          beds: property.bedrooms,
+          baths: property.bathrooms,
+          sqft: property.sqft || 0,
+          image: images[0] || '/placeholder.svg',
+          status: property.status?.toLowerCase() || 'available',
+        }
+      })
+    )
+
+    return NextResponse.json({ properties: properties.filter(Boolean) })
   } catch (error: any) {
     console.error('Get saved properties error:', error)
     return NextResponse.json(
@@ -64,7 +65,7 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
-    const user = getAuthUser(request)
+    const user = await getCurrentUser(request)
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
@@ -82,15 +83,11 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const db = getDatabaseAdapter()
+
     // Check if already saved
-    const existing = await prisma.savedProperty.findUnique({
-      where: {
-        userId_propertyId: {
-          userId: user.userId,
-          propertyId
-        }
-      }
-    })
+    const allSaved = await db.query('savedProperties', { userId: user.id })
+    const existing = allSaved.find((sp: any) => sp.propertyId === propertyId)
 
     if (existing) {
       return NextResponse.json(
@@ -99,17 +96,18 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const savedProperty = await prisma.savedProperty.create({
-      data: {
-        userId: user.userId,
-        propertyId
-      },
-      include: {
-        property: true
-      }
+    const savedProperty = await db.create('savedProperties', {
+      userId: user.id,
+      propertyId,
     })
 
-    return NextResponse.json({ savedProperty })
+    const property = await db.findById('properties', propertyId)
+    const savedPropertyWithProperty = {
+      ...savedProperty,
+      property,
+    }
+
+    return NextResponse.json({ savedProperty: savedPropertyWithProperty })
   } catch (error: any) {
     console.error('Save property error:', error)
     return NextResponse.json(
@@ -124,7 +122,7 @@ export async function POST(request: NextRequest) {
  */
 export async function DELETE(request: NextRequest) {
   try {
-    const user = getAuthUser(request)
+    const user = await getCurrentUser(request)
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
@@ -142,14 +140,13 @@ export async function DELETE(request: NextRequest) {
       )
     }
 
-    await prisma.savedProperty.delete({
-      where: {
-        userId_propertyId: {
-          userId: user.userId,
-          propertyId
-        }
-      }
-    })
+    const db = getDatabaseAdapter()
+    const allSaved = await db.query('savedProperties', { userId: user.id })
+    const savedProperty = allSaved.find((sp: any) => sp.propertyId === propertyId)
+
+    if (savedProperty) {
+      await db.delete('savedProperties', savedProperty.id)
+    }
 
     return NextResponse.json({ success: true })
   } catch (error: any) {

@@ -20,32 +20,55 @@ export function PropertyManagement() {
 
   const fetchProperties = async () => {
     try {
+      setLoading(true)
       const token = localStorage.getItem("auth-token")
-      if (!token) return
+      if (!token) {
+        console.warn("No auth token found")
+        setLoading(false)
+        return
+      }
 
       const response = await fetch("/api/properties", {
         headers: { Authorization: `Bearer ${token}` },
       })
 
-      if (response.ok) {
-        const data = await response.json()
-        const formattedProperties = (data.properties || []).map((p: any) => ({
-          id: p.id,
-          title: p.title,
-          location: `${p.city}, ${p.state}`,
-          price: p.price,
-          beds: p.bedrooms,
-          baths: p.bathrooms,
-          sqft: p.sqft || 0,
-          image: typeof p.images === 'string' 
-            ? (JSON.parse(p.images)?.[0] || '/placeholder.svg')
-            : (p.images?.[0] || '/placeholder.svg'),
-          status: p.status?.toLowerCase() || 'available',
-        }))
-        setProperties(formattedProperties)
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        console.error("Failed to fetch properties:", response.status, errorData)
+        setProperties([])
+        setLoading(false)
+        return
       }
+
+      const data = await response.json()
+      console.log("Properties data received:", data)
+      
+      const formattedProperties = (data.properties || []).map((p: any) => ({
+        id: p.id,
+        title: p.title || 'Untitled Property',
+        location: p.city && p.state ? `${p.city}, ${p.state}` : (p.address || 'Location not specified'),
+        price: p.price || 0,
+        beds: p.bedrooms || 0,
+        baths: p.bathrooms || 0,
+        sqft: p.sqft || 0,
+        image: typeof p.images === 'string' 
+          ? (() => {
+              try {
+                const parsed = JSON.parse(p.images)
+                return Array.isArray(parsed) ? (parsed[0] || '/placeholder.svg') : '/placeholder.svg'
+              } catch {
+                return '/placeholder.svg'
+              }
+            })()
+          : (Array.isArray(p.images) ? (p.images[0] || '/placeholder.svg') : '/placeholder.svg'),
+        status: (p.status?.toLowerCase() || 'available'),
+      }))
+      
+      console.log(`Formatted ${formattedProperties.length} properties`)
+      setProperties(formattedProperties)
     } catch (error) {
       console.error("Failed to fetch properties:", error)
+      setProperties([])
     } finally {
       setLoading(false)
     }

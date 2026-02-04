@@ -1,15 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAuthUser } from '@/lib/auth'
+import { getCurrentUser } from '@/lib/auth-adapter'
 import { parseTenantQuery, parseLandlordQuery } from '@/lib/ai-service'
 import { searchRentalProperties, searchTenants } from '@/lib/search-service'
-import { prisma } from '@/lib/db'
+import { getDatabaseAdapter } from '@/lib/db-adapter'
+import { deductQuota } from '@/lib/subscription-service'
+import { trackAISearch } from '@/lib/analytics'
 
 /**
  * AI对话接口 - 处理租客和房东的自然语言查询
+ * 支持双版本（Supabase/CloudBase）
  */
 export async function POST(request: NextRequest) {
   try {
-    const user = getAuthUser(request)
+    const user = await getCurrentUser(request)
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
@@ -27,10 +30,18 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // 检查并扣除配额
+    const quotaResult = await deductQuota(user.id, 1)
+    if (!quotaResult.success) {
+      return NextResponse.json(
+        { error: quotaResult.message || '配额不足' },
+        { status: 403 }
+      )
+    }
+
     // 获取用户信息确认用户类型
-    const dbUser = await prisma.user.findUnique({
-      where: { id: user.userId }
-    })
+    const db = getDatabaseAdapter()
+    const dbUser = await db.findUserById(user.id)
 
     const actualUserType = userType || dbUser?.userType || 'TENANT'
 
@@ -38,7 +49,10 @@ export async function POST(request: NextRequest) {
       // 租客查询房源
       try {
         const criteria = await parseTenantQuery(query)
-        const results = await searchRentalProperties({ ...criteria, query }, user.userId)
+        const results = await searchRentalProperties({ ...criteria, query }, user.id)
+
+        // 埋点：AI 搜索
+        await trackAISearch(user.id, query, results?.reduce((sum: number, r: any) => sum + (r.totalCount || 0), 0) || 0)
 
         return NextResponse.json({
           success: true,
@@ -62,7 +76,10 @@ export async function POST(request: NextRequest) {
       // 房东查询租客
       try {
         const criteria = await parseLandlordQuery(query)
-        const results = await searchTenants({ ...criteria, query }, user.userId)
+        const results = await searchTenants({ ...criteria, query }, user.id)
+
+        // 埋点：AI 搜索
+        await trackAISearch(user.id, query, results?.length || 0)
 
         return NextResponse.json({
           success: true,

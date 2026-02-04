@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAuthUser } from '@/lib/auth'
-import { prisma } from '@/lib/db'
+import { getCurrentUser } from '@/lib/auth-adapter'
+import { getDatabaseAdapter } from '@/lib/db-adapter'
 
 /**
  * 获取单个房源详情
@@ -10,19 +10,8 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   try {
-    const property = await prisma.property.findUnique({
-      where: { id: params.id },
-      include: {
-        landlord: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            phone: true
-          }
-        }
-      }
-    })
+    const db = getDatabaseAdapter()
+    const property = await db.findById('properties', params.id)
 
     if (!property) {
       return NextResponse.json(
@@ -31,7 +20,19 @@ export async function GET(
       )
     }
 
-    return NextResponse.json({ property })
+    // 手动加载房东信息
+    const landlord = await db.findUserById(property.landlordId)
+    const propertyWithLandlord = {
+      ...property,
+      landlord: landlord ? {
+        id: landlord.id,
+        name: landlord.name,
+        email: landlord.email,
+        phone: landlord.phone,
+      } : null,
+    }
+
+    return NextResponse.json({ property: propertyWithLandlord })
   } catch (error: any) {
     console.error('Get property error:', error)
     return NextResponse.json(
@@ -49,7 +50,7 @@ export async function PATCH(
   { params }: { params: { id: string } }
 ) {
   try {
-    const user = getAuthUser(request)
+    const user = await getCurrentUser(request)
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
@@ -57,9 +58,8 @@ export async function PATCH(
       )
     }
 
-    const property = await prisma.property.findUnique({
-      where: { id: params.id }
-    })
+    const db = getDatabaseAdapter()
+    const property = await db.findById('properties', params.id)
 
     if (!property) {
       return NextResponse.json(
@@ -68,7 +68,7 @@ export async function PATCH(
       )
     }
 
-    if (property.landlordId !== user.userId) {
+    if (property.landlordId !== user.id) {
       return NextResponse.json(
         { error: 'Not authorized to update this property' },
         { status: 403 }
@@ -76,10 +76,7 @@ export async function PATCH(
     }
 
     const body = await request.json()
-    const updatedProperty = await prisma.property.update({
-      where: { id: params.id },
-      data: body
-    })
+    const updatedProperty = await db.update('properties', params.id, body)
 
     return NextResponse.json({ property: updatedProperty })
   } catch (error: any) {
@@ -99,7 +96,7 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    const user = getAuthUser(request)
+    const user = await getCurrentUser(request)
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
@@ -107,9 +104,8 @@ export async function DELETE(
       )
     }
 
-    const property = await prisma.property.findUnique({
-      where: { id: params.id }
-    })
+    const db = getDatabaseAdapter()
+    const property = await db.findById('properties', params.id)
 
     if (!property) {
       return NextResponse.json(
@@ -118,16 +114,14 @@ export async function DELETE(
       )
     }
 
-    if (property.landlordId !== user.userId) {
+    if (property.landlordId !== user.id) {
       return NextResponse.json(
         { error: 'Not authorized to delete this property' },
         { status: 403 }
       )
     }
 
-    await prisma.property.delete({
-      where: { id: params.id }
-    })
+    await db.delete('properties', params.id)
 
     return NextResponse.json({ success: true })
   } catch (error: any) {

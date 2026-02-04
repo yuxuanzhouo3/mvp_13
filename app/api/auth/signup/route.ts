@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/db'
-import bcrypt from 'bcryptjs'
-import jwt from 'jsonwebtoken'
+import { signUp } from '@/lib/auth-adapter'
+import { trackEvent } from '@/lib/analytics'
 
 export async function POST(request: NextRequest) {
   try {
@@ -15,65 +14,42 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // 检查用户是否已存在
-    const existingUser = await prisma.user.findUnique({
-      where: { email }
+    // 使用统一的注册接口（自动根据环境变量选择 Supabase 或 JWT）
+    const result = await signUp(email, password, {
+      name,
+      phone,
+      userType,
     })
 
-    if (existingUser) {
-      return NextResponse.json(
-        { error: '该邮箱已被注册' },
-        { status: 400 }
-      )
-    }
-
-    // 加密密码
-    const hashedPassword = await bcrypt.hash(password, 10)
-
-    // 创建用户
-    const user = await prisma.user.create({
-      data: {
+    // 埋点：用户注册
+    await trackEvent({
+      type: 'USER_SIGNUP',
+      userId: result.user.id,
+      metadata: {
+        userType,
         email,
-        password: hashedPassword,
-        name,
-        phone,
-        userType: userType || 'TENANT',
-        ...(userType === 'TENANT' && {
-          tenantProfile: {
-            create: {}
-          }
-        }),
-        ...(userType === 'LANDLORD' && {
-          landlordProfile: {
-            create: {}
-          }
-        })
       },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        userType: true,
-        isPremium: true
-      }
     })
-
-    // 生成JWT token
-    const token = jwt.sign(
-      { userId: user.id, email: user.email },
-      process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '7d' }
-    )
 
     return NextResponse.json({
-      user,
-      token
+      user: result.user,
+      token: result.token
     })
   } catch (error: any) {
     console.error('Signup error:', error)
+    // 提供更详细的错误信息
+    const errorMessage = error.message || '注册失败'
+    console.error('Signup error details:', {
+      message: errorMessage,
+      stack: error.stack,
+      name: error.name,
+    })
     return NextResponse.json(
-      { error: '注册失败', details: error.message },
-      { status: 500 }
+      { 
+        error: errorMessage,
+        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      },
+      { status: 400 }
     )
   }
 }

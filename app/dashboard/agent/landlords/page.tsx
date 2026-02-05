@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
+import { useTranslations } from 'next-intl'
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -14,6 +15,8 @@ import { useToast } from "@/hooks/use-toast"
 export default function AgentLandlordsPage() {
   const router = useRouter()
   const { toast } = useToast()
+  const t = useTranslations('dashboard')
+  const tCommon = useTranslations('common')
   const [landlords, setLandlords] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
@@ -38,8 +41,8 @@ export default function AgentLandlordsPage() {
     } catch (error) {
       console.error("Failed to fetch landlords:", error)
       toast({
-        title: "Error",
-        description: "Failed to load landlords",
+        title: tCommon('error'),
+        description: t('loadLandlordsFailed') || "Failed to load landlords",
         variant: "destructive",
       })
     } finally {
@@ -56,21 +59,21 @@ export default function AgentLandlordsPage() {
     <DashboardLayout userType="agent">
       <div className="space-y-6">
         <div>
-          <h1 className="text-3xl font-bold">Partner Landlords</h1>
-          <p className="text-muted-foreground">Manage your landlord relationships</p>
+          <h1 className="text-3xl font-bold">{t('partnerLandlords')}</h1>
+          <p className="text-muted-foreground">{t('manageLandlordRelationships') || "Manage your landlord relationships"}</p>
         </div>
 
         <Card>
           <CardHeader>
-            <CardTitle>Landlord Directory</CardTitle>
-            <CardDescription>Landlords you work with</CardDescription>
+            <CardTitle>{t('landlordDirectory') || "Landlord Directory"}</CardTitle>
+            <CardDescription>{t('landlordsYouWorkWith')}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="flex gap-4 mb-6">
               <div className="flex-1 relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search landlords..."
+                  placeholder={t('searchLandlords') || "Search landlords..."}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-10"
@@ -79,7 +82,7 @@ export default function AgentLandlordsPage() {
             </div>
 
             {loading ? (
-              <div className="text-center py-8 text-muted-foreground">Loading landlords...</div>
+              <div className="text-center py-8 text-muted-foreground">{tCommon('loading')}</div>
             ) : filteredLandlords.length > 0 ? (
               <div className="space-y-4">
                 {filteredLandlords.map((landlord: any) => (
@@ -109,9 +112,9 @@ export default function AgentLandlordsPage() {
                       <div className="text-right">
                         <div className="flex items-center text-sm">
                           <Home className="h-4 w-4 mr-1" />
-                          {landlord.propertyCount || 0} properties
+                          {landlord.propertyCount || 0} {t('properties')}
                         </div>
-                        <Badge variant="default" className="mt-1">Active</Badge>
+                        <Badge variant="default" className="mt-1">{t('active')}</Badge>
                       </div>
                       <Button
                         size="sm"
@@ -119,7 +122,7 @@ export default function AgentLandlordsPage() {
                         onClick={() => router.push(`/dashboard/agent/messages?userId=${landlord.id}`)}
                       >
                         <MessageSquare className="h-4 w-4 mr-1" />
-                        Message
+                        {t('messages')}
                       </Button>
                     </div>
                   </div>
@@ -127,8 +130,8 @@ export default function AgentLandlordsPage() {
               </div>
             ) : (
               <div className="text-center py-12 text-muted-foreground">
-                <p>No landlords found</p>
-                <p className="text-sm mt-2">Start networking with landlords to build partnerships</p>
+                <p>{t('noLandlordsFound') || "No landlords found"}</p>
+                <p className="text-sm mt-2">{t('startNetworkingWithLandlords') || "Start networking with landlords to build partnerships"}</p>
               </div>
             )}
           </CardContent>

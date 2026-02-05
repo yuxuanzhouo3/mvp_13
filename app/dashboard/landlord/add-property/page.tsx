@@ -1,6 +1,7 @@
 "use client"
 
 import { useRouter } from "next/navigation"
+import { useTranslations } from 'next-intl'
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -11,10 +12,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast"
 import { useState } from "react"
 import { X, Upload } from "lucide-react"
+import { getCurrencySymbol } from "@/lib/utils"
 
 export default function AddPropertyPage() {
   const router = useRouter()
   const { toast } = useToast()
+  const t = useTranslations('property')
+  const tCommon = useTranslations('common')
+  const currencySymbol = getCurrencySymbol()
   const [loading, setLoading] = useState(false)
   const [images, setImages] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
@@ -24,6 +29,7 @@ export default function AddPropertyPage() {
     address: "",
     city: "",
     state: "",
+    businessArea: "",
     zipCode: "",
     price: "",
     deposit: "",
@@ -40,8 +46,8 @@ export default function AddPropertyPage() {
 
     if (images.length + files.length > 5) {
       toast({
-        title: "Too many images",
-        description: "You can upload maximum 5 images",
+        title: tCommon('error'),
+        description: t('tooManyImages') || "You can upload maximum 5 images",
         variant: "destructive",
       })
       return
@@ -68,8 +74,8 @@ export default function AddPropertyPage() {
       }
     } catch (error: any) {
       toast({
-        title: "Upload failed",
-        description: error.message || "Failed to upload images",
+        title: tCommon('error'),
+        description: error.message || t('failedToUploadImages') || "Failed to upload images",
         variant: "destructive",
       })
       setUploading(false)
@@ -86,8 +92,8 @@ export default function AddPropertyPage() {
     const token = localStorage.getItem("auth-token")
     if (!token) {
       toast({
-        title: "Please Login",
-        description: "You need to be logged in to add properties",
+        title: tCommon('error'),
+        description: t('loginToAddProperties') || "You need to be logged in to add properties",
         variant: "destructive",
       })
       router.push("/auth/login")
@@ -117,16 +123,16 @@ export default function AddPropertyPage() {
       const data = await response.json()
       if (response.ok) {
         toast({
-          title: "Property Created",
-          description: "Your property has been successfully listed",
+          title: tCommon('success'),
+          description: t('propertyCreated') || "Your property has been successfully listed",
         })
         router.push("/dashboard/landlord")
       } else {
-        throw new Error(data.error || "Failed to create property")
+        throw new Error(data.details || data.error || t('createPropertyFailed') || "Failed to create property")
       }
     } catch (error: any) {
       toast({
-        title: "Error",
+        title: tCommon('error'),
         description: error.message,
         variant: "destructive",
       })
@@ -139,20 +145,20 @@ export default function AddPropertyPage() {
     <DashboardLayout userType="landlord">
       <div className="space-y-6">
         <div>
-          <h1 className="text-3xl font-bold">Add Property</h1>
-          <p className="text-muted-foreground">List a new property for rent</p>
+          <h1 className="text-3xl font-bold">{t('addProperty')}</h1>
+          <p className="text-muted-foreground">{t('listNewProperty') || "List a new property for rent"}</p>
         </div>
 
         <Card>
           <CardHeader>
-            <CardTitle>Property Details</CardTitle>
-            <CardDescription>Fill in the information about your property</CardDescription>
+            <CardTitle>{t('propertyDetails')}</CardTitle>
+            <CardDescription>{t('fillPropertyInfo') || "Fill in the information about your property"}</CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="title">Property Title *</Label>
+                  <Label htmlFor="title">{t('propertyTitle') || "Property Title"} *</Label>
                   <Input
                     id="title"
                     value={formData.title}
@@ -161,7 +167,7 @@ export default function AddPropertyPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="propertyType">Property Type *</Label>
+                  <Label htmlFor="propertyType">{t('propertyType') || "Property Type"} *</Label>
                   <Select
                     value={formData.propertyType}
                     onValueChange={(value) => setFormData({ ...formData, propertyType: value })}
@@ -170,18 +176,18 @@ export default function AddPropertyPage() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="APARTMENT">Apartment</SelectItem>
-                      <SelectItem value="HOUSE">House</SelectItem>
-                      <SelectItem value="CONDO">Condo</SelectItem>
-                      <SelectItem value="STUDIO">Studio</SelectItem>
-                      <SelectItem value="TOWNHOUSE">Townhouse</SelectItem>
+                      <SelectItem value="APARTMENT">{t('apartment') || "公寓"}</SelectItem>
+                      <SelectItem value="STUDIO">{t('studio') || "工作室"}</SelectItem>
+                      <SelectItem value="VILLA">{t('villa') || "别墅"}</SelectItem>
+                      <SelectItem value="LUXURY">{t('luxury') || "豪华公寓"}</SelectItem>
+                      <SelectItem value="TOWNHOUSE">{t('townhouse') || "联排住宅"}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="description">Description *</Label>
+                <Label htmlFor="description">{t('description')} *</Label>
                 <Textarea
                   id="description"
                   value={formData.description}
@@ -192,7 +198,7 @@ export default function AddPropertyPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="address">Address *</Label>
+                <Label htmlFor="address">{t('address')} *</Label>
                 <Input
                   id="address"
                   value={formData.address}
@@ -201,9 +207,9 @@ export default function AddPropertyPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="city">City *</Label>
+                  <Label htmlFor="city">{t('city')} *</Label>
                   <Input
                     id="city"
                     value={formData.city}
@@ -212,16 +218,26 @@ export default function AddPropertyPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="state">State *</Label>
+                  <Label htmlFor="state">{t('district') || t('state')} *</Label>
                   <Input
                     id="state"
                     value={formData.state}
                     onChange={(e) => setFormData({ ...formData, state: e.target.value })}
+                    placeholder={t('districtPlaceholder') || "行政区"}
                     required
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="zipCode">Zip Code</Label>
+                  <Label htmlFor="businessArea">{t('businessArea') || "商圈"}</Label>
+                  <Input
+                    id="businessArea"
+                    value={formData.businessArea || ""}
+                    onChange={(e) => setFormData({ ...formData, businessArea: e.target.value })}
+                    placeholder={t('businessAreaPlaceholder') || "商圈"}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="zipCode">{t('zipCode') || "Zip Code"}</Label>
                   <Input
                     id="zipCode"
                     value={formData.zipCode}
@@ -232,7 +248,7 @@ export default function AddPropertyPage() {
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="price">Monthly Rent ($) *</Label>
+                  <Label htmlFor="price">{t('monthlyRent') || "Monthly Rent"} ({currencySymbol}) *</Label>
                   <Input
                     id="price"
                     type="number"
@@ -242,7 +258,7 @@ export default function AddPropertyPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="deposit">Deposit ($) *</Label>
+                  <Label htmlFor="deposit">{t('deposit')} ({currencySymbol}) *</Label>
                   <Input
                     id="deposit"
                     type="number"
@@ -252,7 +268,7 @@ export default function AddPropertyPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="bedrooms">Bedrooms *</Label>
+                  <Label htmlFor="bedrooms">{t('bedrooms')} *</Label>
                   <Input
                     id="bedrooms"
                     type="number"
@@ -262,7 +278,7 @@ export default function AddPropertyPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="bathrooms">Bathrooms *</Label>
+                  <Label htmlFor="bathrooms">{t('bathrooms')} *</Label>
                   <Input
                     id="bathrooms"
                     type="number"
@@ -275,17 +291,18 @@ export default function AddPropertyPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="sqft">Square Feet</Label>
+                <Label htmlFor="sqft">{t('buildingArea') || t('sqft') || "建筑面积"}</Label>
                 <Input
                   id="sqft"
                   type="number"
                   value={formData.sqft}
                   onChange={(e) => setFormData({ ...formData, sqft: e.target.value })}
+                  placeholder={t('buildingAreaPlaceholder') || "平方米"}
                 />
               </div>
 
               <div className="space-y-2">
-                <Label>Property Images (1-5 images)</Label>
+                <Label>{t('uploadImages') || t('propertyImages') || "上传图片"} (1-5 {t('images')})</Label>
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                   {images.map((img, index) => (
                     <div key={index} className="relative">
@@ -309,7 +326,7 @@ export default function AddPropertyPage() {
                     <label className="flex items-center justify-center w-full h-32 border-2 border-dashed rounded-lg cursor-pointer hover:bg-muted/50">
                       <div className="text-center">
                         <Upload className="h-6 w-6 mx-auto mb-2 text-muted-foreground" />
-                        <span className="text-sm text-muted-foreground">Upload</span>
+                        <span className="text-sm text-muted-foreground">{t('upload') || "Upload"}</span>
                       </div>
                       <input
                         type="file"
@@ -323,7 +340,7 @@ export default function AddPropertyPage() {
                   )}
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  {images.length}/5 images uploaded
+                  {images.length}/5 {t('imagesUploaded') || "images uploaded"}
                 </p>
               </div>
 
@@ -335,11 +352,11 @@ export default function AddPropertyPage() {
                   onChange={(e) => setFormData({ ...formData, petFriendly: e.target.checked })}
                   className="h-4 w-4"
                 />
-                <Label htmlFor="petFriendly">Pet Friendly</Label>
+                <Label htmlFor="petFriendly">{t('petFriendly')}</Label>
               </div>
 
               <Button type="submit" className="w-full" size="lg" disabled={loading || uploading}>
-                {loading ? "Creating..." : uploading ? "Uploading..." : "Create Property"}
+                {loading ? (tCommon('loading')) : uploading ? (t('uploading') || "Uploading...") : (t('createProperty') || "Create Property")}
               </Button>
             </form>
           </CardContent>

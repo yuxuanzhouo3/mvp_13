@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
+import { useTranslations } from 'next-intl'
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -14,9 +15,12 @@ import { TenantApplications } from "@/components/dashboard/tenant-applications"
 import { PaymentHistory } from "@/components/dashboard/payment-history"
 import { MessageCenter } from "@/components/dashboard/message-center"
 import { AIChat } from "@/components/dashboard/ai-chat"
+import { getCurrencySymbol } from "@/lib/utils"
 
 export default function LandlordDashboard() {
   const router = useRouter()
+  const t = useTranslations('dashboard')
+  const tProperty = useTranslations('property')
   const [stats, setStats] = useState({
     totalProperties: 0,
     activeTenants: 0,
@@ -26,8 +30,21 @@ export default function LandlordDashboard() {
   const [recentActivity, setRecentActivity] = useState<any[]>([])
   const [tenants, setTenants] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [userName, setUserName] = useState("")
+  const currencySymbol = getCurrencySymbol()
 
   useEffect(() => {
+    const storedUser = localStorage.getItem("user")
+    if (storedUser) {
+      try {
+        const parsed = JSON.parse(storedUser)
+        if (parsed?.name) {
+          setUserName(parsed.name)
+        }
+      } catch {
+        setUserName("")
+      }
+    }
     fetchDashboardData()
   }, [])
 
@@ -84,25 +101,25 @@ export default function LandlordDashboard() {
 
   const statsCards = [
     {
-      title: "Total Properties",
+      title: t('totalProperties'),
       value: stats.totalProperties.toString(),
       change: "",
       icon: Home,
     },
     {
-      title: "Active Tenants",
+      title: t('activeTenants'),
       value: stats.activeTenants.toString(),
       change: "",
       icon: Users,
     },
     {
-      title: "Monthly Revenue",
-      value: `$${stats.monthlyRevenue.toLocaleString()}`,
+      title: t('monthlyRevenue'),
+      value: `${currencySymbol}${stats.monthlyRevenue.toLocaleString()}`,
       change: "",
       icon: DollarSign,
     },
     {
-      title: "Pending Issues",
+      title: t('pendingIssues'),
       value: stats.pendingIssues.toString(),
       change: "",
       icon: AlertCircle,
@@ -115,12 +132,12 @@ export default function LandlordDashboard() {
         {/* Header */}
         <div className="flex justify-between items-center">
           <div>
-            <h1 className="text-3xl font-bold">Property Management</h1>
-            <p className="text-muted-foreground">Manage your properties and tenants efficiently.</p>
+            <h1 className="text-3xl font-bold">{t('welcome')}{userName ? ` ${userName}` : ""}</h1>
+            <p className="text-muted-foreground">{t('manageProperties') || "高效管理您的房源与租客"}</p>
           </div>
           <Button onClick={() => router.push("/dashboard/landlord/add-property")}>
             <Plus className="mr-2 h-4 w-4" />
-            Add Property
+            {tProperty('addProperty')}
           </Button>
         </div>
 
@@ -146,8 +163,8 @@ export default function LandlordDashboard() {
         {recentActivity.length > 0 && (
           <Card>
             <CardHeader>
-              <CardTitle>Recent Activity</CardTitle>
-              <CardDescription>Latest updates from your properties</CardDescription>
+              <CardTitle>{t('recentActivity')}</CardTitle>
+              <CardDescription>{t('latestUpdates')}</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
@@ -173,12 +190,12 @@ export default function LandlordDashboard() {
         {/* Main Content Tabs */}
         <Tabs defaultValue="ai-search" className="space-y-6">
           <TabsList>
-            <TabsTrigger value="ai-search">AI Smart Search</TabsTrigger>
-            <TabsTrigger value="properties">Properties</TabsTrigger>
-            <TabsTrigger value="applications">Applications</TabsTrigger>
-            <TabsTrigger value="tenants">Tenants</TabsTrigger>
-            <TabsTrigger value="payments">Payments</TabsTrigger>
-            <TabsTrigger value="messages">Messages</TabsTrigger>
+            <TabsTrigger value="ai-search">{t('aiSmartSearch')}</TabsTrigger>
+            <TabsTrigger value="properties">{tProperty('title')}</TabsTrigger>
+            <TabsTrigger value="applications">{t('applications')}</TabsTrigger>
+            <TabsTrigger value="tenants">{t('tenants')}</TabsTrigger>
+            <TabsTrigger value="payments">{t('payments')}</TabsTrigger>
+            <TabsTrigger value="messages">{t('messages')}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="ai-search" className="space-y-6">
@@ -196,8 +213,8 @@ export default function LandlordDashboard() {
           <TabsContent value="tenants" className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>Current Tenants</CardTitle>
-                <CardDescription>Manage your tenant relationships</CardDescription>
+                <CardTitle>{t('currentTenants')}</CardTitle>
+                <CardDescription>{t('manageTenantRelationships')}</CardDescription>
               </CardHeader>
               <CardContent>
                 {tenants.length > 0 ? (
@@ -234,7 +251,7 @@ export default function LandlordDashboard() {
                               </div>
                             )}
                             <Badge variant={tenant.source === 'lease' ? 'default' : 'secondary'} className="mt-1">
-                              {tenant.source === 'lease' ? 'Active Lease' : 'Approved'}
+                              {tenant.source === 'lease' ? (t('activeLease') || 'Active Lease') : (t('approved') || 'Approved')}
                             </Badge>
                           </div>
                           <Button
@@ -243,7 +260,7 @@ export default function LandlordDashboard() {
                             onClick={() => router.push(`/dashboard/landlord/messages?userId=${tenant.id}`)}
                           >
                             <MessageSquare className="h-4 w-4 mr-1" />
-                            Message
+                            {t('messages')}
                           </Button>
                         </div>
                       </div>
@@ -251,7 +268,7 @@ export default function LandlordDashboard() {
                   </div>
                 ) : (
                   <div className="text-center py-8 text-muted-foreground">
-                    No active tenants yet. Start accepting applications!
+                    {t('noActiveTenants')}
                   </div>
                 )}
               </CardContent>

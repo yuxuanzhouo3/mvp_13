@@ -1,11 +1,14 @@
 "use client"
 
+import { useTranslations } from 'next-intl'
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { Card, CardContent } from "@/components/ui/card"
 import { PropertyCard } from "@/components/dashboard/property-card"
 import { useState, useEffect } from "react"
 
 export default function SavedPropertiesPage() {
+  const t = useTranslations('dashboard')
+  const tCommon = useTranslations('common')
   const [savedProperties, setSavedProperties] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -39,14 +42,14 @@ export default function SavedPropertiesPage() {
     <DashboardLayout userType="tenant">
       <div className="space-y-6">
         <div>
-          <h1 className="text-3xl font-bold">Saved Properties</h1>
-          <p className="text-muted-foreground">Properties you've saved for later</p>
+          <h1 className="text-3xl font-bold">{t('savedProperties')}</h1>
+          <p className="text-muted-foreground">{t('savedPropertiesDesc') || "Properties you've saved for later"}</p>
         </div>
 
         {loading ? (
           <Card>
             <CardContent className="p-12 text-center">
-              <p className="text-muted-foreground">Loading...</p>
+              <p className="text-muted-foreground">{tCommon('loading')}</p>
             </CardContent>
           </Card>
         ) : savedProperties.length > 0 ? (
@@ -58,7 +61,7 @@ export default function SavedPropertiesPage() {
         ) : (
           <Card>
             <CardContent className="p-12 text-center">
-              <p className="text-muted-foreground">No saved properties yet. Start searching and save your favorites!</p>
+              <p className="text-muted-foreground">{t('noSavedProperties') || "No saved properties yet. Start searching and save your favorites!"}</p>
             </CardContent>
           </Card>
         )}

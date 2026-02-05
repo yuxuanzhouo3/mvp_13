@@ -1,16 +1,22 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useTranslations } from 'next-intl'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Download, CreditCard, Shield } from "lucide-react"
+import { getCurrencySymbol } from "@/lib/utils"
 
 interface PaymentHistoryProps {
   userType: "tenant" | "landlord"
 }
 
 export function PaymentHistory({ userType }: PaymentHistoryProps) {
+  const t = useTranslations('dashboard')
+  const tPayment = useTranslations('payment')
+  const tCommon = useTranslations('common')
+  const currencySymbol = getCurrencySymbol()
   const [payments, setPayments] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -44,11 +50,11 @@ export function PaymentHistory({ userType }: PaymentHistoryProps) {
         <CardHeader>
           <CardTitle className="flex items-center space-x-2">
             <CreditCard className="h-5 w-5" />
-            <span>Payment History</span>
+            <span>{tPayment('title')}</span>
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="text-center py-8 text-muted-foreground">Loading payments...</div>
+          <div className="text-center py-8 text-muted-foreground">{tCommon('loading')}</div>
         </CardContent>
       </Card>
     )
@@ -59,12 +65,12 @@ export function PaymentHistory({ userType }: PaymentHistoryProps) {
       <CardHeader>
         <CardTitle className="flex items-center space-x-2">
           <CreditCard className="h-5 w-5" />
-          <span>Payment History</span>
+          <span>{tPayment('title')}</span>
         </CardTitle>
         <CardDescription>
           {userType === "tenant"
-            ? "Track your rent payments and deposit status"
-            : "Monitor incoming payments and deposits"}
+            ? (t('trackRentPayments') || "Track your rent payments and deposit status")
+            : (t('monitorPayments') || "Monitor incoming payments and deposits")}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -87,7 +93,7 @@ export function PaymentHistory({ userType }: PaymentHistoryProps) {
                 </div>
 
                 <div className="text-right">
-                  <div className="font-semibold text-lg">${payment.amount.toLocaleString()}</div>
+                  <div className="font-semibold text-lg">{currencySymbol}{payment.amount.toLocaleString()}</div>
                   <div className="flex items-center space-x-2">
                     <Badge variant={payment.status === "COMPLETED" ? "default" : "secondary"}>
                       {payment.status.replace("_", " ").toLowerCase()}
@@ -101,7 +107,7 @@ export function PaymentHistory({ userType }: PaymentHistoryProps) {
             ))}
           </div>
         ) : (
-          <div className="text-center py-8 text-muted-foreground">No payments found.</div>
+          <div className="text-center py-8 text-muted-foreground">{t('noPaymentsFound')}</div>
         )}
       </CardContent>
     </Card>

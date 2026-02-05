@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useTranslations } from 'next-intl'
 import { Card, CardContent } from "@/components/ui/card"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Star } from "lucide-react"
@@ -15,6 +16,8 @@ interface Testimonial {
 }
 
 export function TestimonialsSection() {
+  const t = useTranslations('landing')
+  const tCommon = useTranslations('common')
   const [testimonials, setTestimonials] = useState<Testimonial[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -45,14 +48,14 @@ export function TestimonialsSection() {
     <section className="py-20 lg:py-32">
       <div className="container">
         <div className="mx-auto max-w-2xl text-center mb-16">
-          <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">Trusted by Thousands</h2>
+          <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">{t('trustedByThousands')}</h2>
           <p className="mt-4 text-lg text-muted-foreground">
-            See what our users say about their experience with RentGuard.
+            {t('trustedByThousandsDesc')}
           </p>
         </div>
 
         {loading ? (
-          <div className="text-center text-muted-foreground">Loading testimonials...</div>
+          <div className="text-center text-muted-foreground">{tCommon('loading')}</div>
         ) : (
           <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-3">
             {testimonials.map((testimonial) => (

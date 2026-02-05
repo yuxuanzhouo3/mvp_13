@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
+import { useTranslations } from 'next-intl'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -11,6 +12,8 @@ import { Input } from "@/components/ui/input"
 
 export function PropertyManagement() {
   const router = useRouter()
+  const t = useTranslations('property')
+  const tCommon = useTranslations('common')
   const [properties, setProperties] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -80,18 +83,18 @@ export function PropertyManagement() {
         <CardHeader>
           <div className="flex justify-between items-center">
             <div>
-              <CardTitle>Property Portfolio</CardTitle>
-              <CardDescription>Manage all your rental properties</CardDescription>
+              <CardTitle>{t('title')}</CardTitle>
+              <CardDescription>{t('noPropertiesDesc')}</CardDescription>
             </div>
             <Button onClick={() => router.push("/dashboard/landlord/add-property")}>
               <Plus className="mr-2 h-4 w-4" />
-              Add Property
+              {t('addProperty')}
             </Button>
           </div>
         </CardHeader>
         <CardContent>
           {loading ? (
-            <div className="text-center py-8 text-muted-foreground">Loading properties...</div>
+            <div className="text-center py-8 text-muted-foreground">{tCommon('loading')}</div>
           ) : properties.length > 0 ? (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {properties.map((property) => (
@@ -118,7 +121,7 @@ export function PropertyManagement() {
             </div>
           ) : (
             <div className="text-center py-8 text-muted-foreground">
-              No properties yet. Click "Add Property" to create your first property.
+              {t('noProperties')}. {t('noPropertiesDesc')}
             </div>
           )}
         </CardContent>

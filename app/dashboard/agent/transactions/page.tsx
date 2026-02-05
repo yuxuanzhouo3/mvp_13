@@ -1,16 +1,21 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useTranslations } from 'next-intl'
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { FileText, DollarSign, Calendar, Home } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { getCurrencySymbol } from "@/lib/utils"
 
 export default function AgentTransactionsPage() {
   const { toast } = useToast()
+  const t = useTranslations('dashboard')
+  const tCommon = useTranslations('common')
   const [transactions, setTransactions] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const currencySymbol = getCurrencySymbol()
 
   useEffect(() => {
     fetchTransactions()
@@ -40,21 +45,21 @@ export default function AgentTransactionsPage() {
     <DashboardLayout userType="agent">
       <div className="space-y-6">
         <div>
-          <h1 className="text-3xl font-bold">Transactions</h1>
-          <p className="text-muted-foreground">Track all your deals and transactions</p>
+          <h1 className="text-3xl font-bold">{t('transactions')}</h1>
+          <p className="text-muted-foreground">{t('trackDealsAndTransactions') || "Track all your deals and transactions"}</p>
         </div>
 
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center space-x-2">
               <FileText className="h-5 w-5" />
-              <span>Transaction History</span>
+              <span>{t('transactionHistory') || "Transaction History"}</span>
             </CardTitle>
-            <CardDescription>All your completed and pending deals</CardDescription>
+            <CardDescription>{t('allCompletedAndPendingDeals') || "All your completed and pending deals"}</CardDescription>
           </CardHeader>
           <CardContent>
             {loading ? (
-              <div className="text-center py-8 text-muted-foreground">Loading transactions...</div>
+              <div className="text-center py-8 text-muted-foreground">{tCommon('loading')}</div>
             ) : transactions.length > 0 ? (
               <div className="space-y-4">
                 {transactions.map((transaction: any) => (
@@ -64,7 +69,7 @@ export default function AgentTransactionsPage() {
                         <Home className="h-5 w-5 text-primary" />
                       </div>
                       <div>
-                        <h3 className="font-semibold">{transaction.property?.title || "Property Deal"}</h3>
+                        <h3 className="font-semibold">{transaction.property?.title || (t('propertyDeal') || "Property Deal")}</h3>
                         <div className="text-sm text-muted-foreground">
                           {transaction.tenant?.name} → {transaction.landlord?.name}
                         </div>
@@ -77,10 +82,10 @@ export default function AgentTransactionsPage() {
                     <div className="text-right">
                       <div className="flex items-center font-semibold text-lg">
                         <DollarSign className="h-4 w-4" />
-                        {transaction.amount?.toLocaleString() || 0}
+                        {currencySymbol}{transaction.amount?.toLocaleString() || 0}
                       </div>
                       <Badge variant={transaction.status === "COMPLETED" ? "default" : "secondary"}>
-                        {transaction.status?.replace("_", " ") || "Pending"}
+                        {transaction.status?.replace("_", " ") || (t('pending') || "Pending")}
                       </Badge>
                     </div>
                   </div>
@@ -88,8 +93,8 @@ export default function AgentTransactionsPage() {
               </div>
             ) : (
               <div className="text-center py-12 text-muted-foreground">
-                <p>No transactions yet</p>
-                <p className="text-sm mt-2">Complete deals to see them here</p>
+                <p>{t('noTransactionsYet') || "No transactions yet"}</p>
+                <p className="text-sm mt-2">{t('completeDealsToSee') || "Complete deals to see them here"}</p>
               </div>
             )}
           </CardContent>

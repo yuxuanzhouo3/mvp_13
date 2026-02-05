@@ -12,7 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-adapter'
-import { getDatabaseAdapter, getAppRegion } from '@/lib/db-adapter'
+import { getDatabaseAdapter, getAppRegion, createDatabaseAdapter } from '@/lib/db-adapter'
 import jwt from 'jsonwebtoken'
 
 // 检查是否为管理员
@@ -136,12 +136,9 @@ async function getStatsForRegion(
   region: 'global' | 'china',
   period: 'day' | 'month' | 'all'
 ): Promise<any> {
-  // 临时切换环境变量（仅用于查询）
-  const originalRegion = process.env.NEXT_PUBLIC_APP_REGION
-  process.env.NEXT_PUBLIC_APP_REGION = region
-
+  // 为指定区域创建独立的数据库适配器实例，避免修改环境变量
+  const db = createDatabaseAdapter(region)
   try {
-    const db = getDatabaseAdapter()
     const now = new Date()
 
     // 计算时间范围
@@ -178,10 +175,7 @@ async function getStatsForRegion(
       devices,
     }
   } finally {
-    // 恢复原始环境变量
-    if (originalRegion) {
-      process.env.NEXT_PUBLIC_APP_REGION = originalRegion
-    }
+    // 无需恢复环境变量
   }
 }
 

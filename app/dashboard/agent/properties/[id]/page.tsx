@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { MapPin, Bed, Bath, Square, ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react"
 import Image from "next/image"
 import { useToast } from "@/hooks/use-toast"
+import { getCurrencySymbol } from "@/lib/utils"
 
 export default function AgentPropertyDetailPage() {
   const params = useParams()
@@ -17,6 +18,7 @@ export default function AgentPropertyDetailPage() {
   const [property, setProperty] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [currentImageIndex, setCurrentImageIndex] = useState(0)
+  const currencySymbol = getCurrencySymbol()
 
   useEffect(() => {
     if (params.id) {
@@ -244,7 +246,7 @@ export default function AgentPropertyDetailPage() {
             <Card>
               <CardHeader>
                 <CardTitle className="text-2xl">
-                  ${property.price.toLocaleString()}
+                  {currencySymbol}{property.price.toLocaleString()}
                   <span className="text-lg font-normal text-muted-foreground">/month</span>
                 </CardTitle>
               </CardHeader>
@@ -252,7 +254,7 @@ export default function AgentPropertyDetailPage() {
                 <div className="space-y-2">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Deposit:</span>
-                    <span className="font-semibold">${property.deposit.toLocaleString()}</span>
+                    <span className="font-semibold">{currencySymbol}{property.deposit.toLocaleString()}</span>
                   </div>
                   {property.availableFrom && (
                     <div className="flex justify-between">

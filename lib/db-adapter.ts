@@ -102,24 +102,31 @@ export class SupabaseAdapter implements DatabaseAdapter {
     // 如果密码为空（Supabase 用户），使用随机密码占位
     const password = data.password || `supabase_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
     
+    // 构建用户数据，phone 字段只有在有值时才添加
+    const userData: any = {
+      email: data.email,
+      password: password,
+      name: data.name,
+      userType: data.userType || 'TENANT',
+      isPremium: false,
+      vipLevel: 'FREE',
+      dailyQuota: 10,
+      monthlyQuota: 100,
+      ...(data.userType === 'TENANT' && {
+        tenantProfile: { create: {} }
+      }),
+      ...(data.userType === 'LANDLORD' && {
+        landlordProfile: { create: {} }
+      }),
+    }
+    
+    // 只有当 phone 有值时才添加该字段（避免唯一索引冲突）
+    if (data.phone && data.phone.trim() !== '') {
+      userData.phone = data.phone.trim()
+    }
+    
     const user = await prisma.user.create({
-      data: {
-        email: data.email,
-        password: password,
-        name: data.name,
-        phone: data.phone,
-        userType: data.userType || 'TENANT',
-        isPremium: false,
-        vipLevel: 'FREE',
-        dailyQuota: 10,
-        monthlyQuota: 100,
-        ...(data.userType === 'TENANT' && {
-          tenantProfile: { create: {} }
-        }),
-        ...(data.userType === 'LANDLORD' && {
-          landlordProfile: { create: {} }
-        }),
-      },
+      data: userData,
       include: {
         tenantProfile: true,
         landlordProfile: true,
@@ -388,7 +395,7 @@ export class CloudBaseAdapter implements DatabaseAdapter {
   async findUserById(id: string): Promise<UnifiedUser | null> {
     const result = await cloudbaseDb
       .collection('users')
-      .doc(id)
+      .doc(String(id))
       .get()
     
     if (!result.data) return null
@@ -403,19 +410,24 @@ export class CloudBaseAdapter implements DatabaseAdapter {
     phone?: string
     userType?: string
   }): Promise<UnifiedUser> {
-    const userData = {
+    // 构建用户数据，phone 字段只有在有值时才添加（避免唯一索引冲突）
+    const userData: any = {
       email: data.email,
       password: data.password,
       name: data.name,
-      phone: data.phone || null,
       userType: data.userType || 'TENANT',
       isPremium: false,
       vipLevel: 'FREE',
       dailyQuota: 10, // 免费用户每日配额
       monthlyQuota: 100, // 免费用户每月配额
-      lastUsageDate: null,
       createdAt: new Date(),
       updatedAt: new Date(),
+    }
+    
+    // 只有当 phone 有值时才添加该字段（避免 CloudBase 唯一索引冲突）
+    // CloudBase 的唯一索引不允许多个 null 值，所以不设置该字段而不是设置为 null
+    if (data.phone && data.phone.trim() !== '') {
+      userData.phone = data.phone.trim()
     }
     
     const result = await cloudbaseDb
@@ -450,7 +462,7 @@ export class CloudBaseAdapter implements DatabaseAdapter {
     
     await cloudbaseDb
       .collection('users')
-      .doc(id)
+      .doc(String(id))
       .update(updateData)
     
     const updated = await this.findUserById(id)
@@ -476,7 +488,7 @@ export class CloudBaseAdapter implements DatabaseAdapter {
   async findById<T = any>(collection: string, id: string): Promise<T | null> {
     const result = await cloudbaseDb
       .collection(collection)
-      .doc(id)
+      .doc(String(id))
       .get()
     
     return (result.data as T) || null
@@ -501,7 +513,7 @@ export class CloudBaseAdapter implements DatabaseAdapter {
   async update<T = any>(collection: string, id: string, data: any): Promise<T> {
     await cloudbaseDb
       .collection(collection)
-      .doc(id)
+      .doc(String(id))
       .update({
         ...data,
         updatedAt: new Date(),
@@ -513,7 +525,7 @@ export class CloudBaseAdapter implements DatabaseAdapter {
   async delete(collection: string, id: string): Promise<boolean> {
     await cloudbaseDb
       .collection(collection)
-      .doc(id)
+      .doc(String(id))
       .remove()
     
     return true
@@ -556,19 +568,20 @@ export class CloudBaseAdapter implements DatabaseAdapter {
 
 // 导出统一的数据库适配器实例
 let adapterInstance: DatabaseAdapter | null = null
+let adapterRegion: 'global' | 'china' | null = null
 
 export function getDatabaseAdapter(): DatabaseAdapter {
-  if (adapterInstance) {
+  const region = getAppRegion()
+  if (adapterInstance && adapterRegion === region) {
     return adapterInstance
   }
-  
-  const region = getAppRegion()
   
   if (region === 'china') {
     adapterInstance = new CloudBaseAdapter()
   } else {
     adapterInstance = new SupabaseAdapter()
   }
+  adapterRegion = region
   
   return adapterInstance
 }

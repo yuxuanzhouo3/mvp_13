@@ -2,16 +2,22 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
+import { useTranslations } from 'next-intl'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Check, X, Eye, MessageSquare } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { getCurrencySymbol } from "@/lib/utils"
 
 export function TenantApplications() {
   const router = useRouter()
   const { toast } = useToast()
+  const t = useTranslations('dashboard')
+  const tApplication = useTranslations('application')
+  const tCommon = useTranslations('common')
+  const currencySymbol = getCurrencySymbol()
   const [applications, setApplications] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -55,17 +61,17 @@ export function TenantApplications() {
 
       if (response.ok) {
         toast({
-          title: "Application approved",
-          description: "The application has been approved successfully",
+          title: tCommon('success'),
+          description: tApplication('approved') || "The application has been approved successfully",
         })
         fetchApplications()
       } else {
-        throw new Error("Failed to approve application")
+        throw new Error(tCommon('error') || "Failed to approve application")
       }
     } catch (error: any) {
       toast({
-        title: "Error",
-        description: error.message || "Failed to approve application",
+        title: tCommon('error'),
+        description: error.message || tCommon('error'),
         variant: "destructive",
       })
     }
@@ -87,17 +93,17 @@ export function TenantApplications() {
 
       if (response.ok) {
         toast({
-          title: "Application declined",
-          description: "The application has been declined",
+          title: tCommon('success'),
+          description: tApplication('rejected') || "The application has been declined",
         })
         fetchApplications()
       } else {
-        throw new Error("Failed to decline application")
+        throw new Error(tCommon('error') || "Failed to decline application")
       }
     } catch (error: any) {
       toast({
-        title: "Error",
-        description: error.message || "Failed to decline application",
+        title: tCommon('error'),
+        description: error.message || tCommon('error'),
         variant: "destructive",
       })
     }
@@ -107,11 +113,11 @@ export function TenantApplications() {
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Tenant Applications</CardTitle>
-          <CardDescription>Review and manage rental applications</CardDescription>
+          <CardTitle>{t('tenantApplications')}</CardTitle>
+          <CardDescription>{t('reviewAndManageApplications')}</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="text-center py-8 text-muted-foreground">Loading applications...</div>
+          <div className="text-center py-8 text-muted-foreground">{tCommon('loading')}</div>
         </CardContent>
       </Card>
     )
@@ -119,8 +125,8 @@ export function TenantApplications() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Tenant Applications</CardTitle>
-        <CardDescription>Review and manage rental applications</CardDescription>
+        <CardTitle>{t('tenantApplications')}</CardTitle>
+        <CardDescription>{t('reviewAndManageApplications')}</CardDescription>
       </CardHeader>
       <CardContent>
         {applications.length > 0 ? (
@@ -173,14 +179,14 @@ export function TenantApplications() {
                   </div>
                   <div className="space-y-1">
                     <p className="text-sm font-medium">Deposit Amount</p>
-                    <p className="text-sm text-muted-foreground">${(application.depositAmount || 0).toLocaleString()}</p>
+                    <p className="text-sm text-muted-foreground">{currencySymbol}{(application.depositAmount || 0).toLocaleString()}</p>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                   <div className="space-y-1">
                     <p className="text-sm font-medium">Monthly Income</p>
-                    <p className="text-sm text-muted-foreground">${(application.monthlyIncome || application.tenant?.tenantProfile?.monthlyIncome || 0).toLocaleString()}</p>
+                    <p className="text-sm text-muted-foreground">{currencySymbol}{(application.monthlyIncome || application.tenant?.tenantProfile?.monthlyIncome || 0).toLocaleString()}</p>
                   </div>
                   <div className="space-y-1">
                     <p className="text-sm font-medium">Credit Score</p>
@@ -195,7 +201,7 @@ export function TenantApplications() {
                     onClick={() => router.push(`/properties/${application.propertyId}`)}
                   >
                     <Eye className="mr-2 h-4 w-4" />
-                    View Details
+                    {tCommon('view') || "View Details"}
                   </Button>
                   <Button 
                     size="sm" 
@@ -203,7 +209,7 @@ export function TenantApplications() {
                     onClick={() => router.push(`/dashboard/landlord/messages?userId=${application.tenantId}`)}
                   >
                     <MessageSquare className="mr-2 h-4 w-4" />
-                    Message
+                    {t('messages')}
                   </Button>
                   {application.status === "PENDING" && (
                     <>
@@ -213,7 +219,7 @@ export function TenantApplications() {
                         onClick={() => handleApprove(application.id)}
                       >
                         <Check className="mr-2 h-4 w-4" />
-                        Approve
+                        {tApplication('approved') || "Approve"}
                       </Button>
                       <Button 
                         size="sm" 
@@ -221,7 +227,7 @@ export function TenantApplications() {
                         onClick={() => handleDecline(application.id)}
                       >
                         <X className="mr-2 h-4 w-4" />
-                        Decline
+                        {tApplication('rejected') || "Decline"}
                       </Button>
                     </>
                   )}
@@ -230,7 +236,7 @@ export function TenantApplications() {
             ))}
           </div>
         ) : (
-          <div className="text-center py-8 text-muted-foreground">No applications found.</div>
+          <div className="text-center py-8 text-muted-foreground">{t('noApplicationsFound')}</div>
         )}
       </CardContent>
     </Card>

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Shield, Clock, CheckCircle, AlertTriangle, Gavel, FileText } from "lucide-react"
+import { getCurrencySymbol } from "@/lib/utils"
 
 const depositStatus = {
   totalAmount: 2800,
@@ -17,38 +18,38 @@ const depositStatus = {
   expectedReturn: "2024-12-31",
 }
 
-const timeline = [
-  {
-    date: "2023-12-15",
-    title: "Deposit Received",
-    description: "Security deposit of $2,800 received and held in escrow",
-    status: "completed",
-    icon: CheckCircle,
-  },
-  {
-    date: "2023-12-16",
-    title: "Lease Agreement Signed",
-    description: "Digital lease agreement executed by both parties",
-    status: "completed",
-    icon: FileText,
-  },
-  {
-    date: "2024-01-01",
-    title: "Tenancy Started",
-    description: "Tenant moved in, deposit protection period active",
-    status: "completed",
-    icon: CheckCircle,
-  },
-  {
-    date: "2024-12-31",
-    title: "Lease End Date",
-    description: "Expected lease termination and deposit review",
-    status: "pending",
-    icon: Clock,
-  },
-]
-
 export default function DepositProtectionPage() {
+  const currencySymbol = getCurrencySymbol()
+  const timeline = [
+    {
+      date: "2023-12-15",
+      title: "Deposit Received",
+      description: `Security deposit of ${currencySymbol}2,800 received and held in escrow`,
+      status: "completed",
+      icon: CheckCircle,
+    },
+    {
+      date: "2023-12-16",
+      title: "Lease Agreement Signed",
+      description: "Digital lease agreement executed by both parties",
+      status: "completed",
+      icon: FileText,
+    },
+    {
+      date: "2024-01-01",
+      title: "Tenancy Started",
+      description: "Tenant moved in, deposit protection period active",
+      status: "completed",
+      icon: CheckCircle,
+    },
+    {
+      date: "2024-12-31",
+      title: "Lease End Date",
+      description: "Expected lease termination and deposit review",
+      status: "pending",
+      icon: Clock,
+    },
+  ]
   return (
     <div className="min-h-screen bg-background">
       <Header />
@@ -83,11 +84,11 @@ export default function DepositProtectionPage() {
             <CardContent className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="text-center">
-                  <div className="text-3xl font-bold text-primary">${depositStatus.totalAmount.toLocaleString()}</div>
+                  <div className="text-3xl font-bold text-primary">{currencySymbol}{depositStatus.totalAmount.toLocaleString()}</div>
                   <div className="text-sm text-muted-foreground">Total Deposit</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-3xl font-bold text-green-600">${depositStatus.heldAmount.toLocaleString()}</div>
+                  <div className="text-3xl font-bold text-green-600">{currencySymbol}{depositStatus.heldAmount.toLocaleString()}</div>
                   <div className="text-sm text-muted-foreground">Held in Escrow</div>
                 </div>
                 <div className="text-center">

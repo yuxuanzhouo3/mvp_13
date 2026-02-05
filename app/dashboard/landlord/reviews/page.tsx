@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useTranslations } from 'next-intl'
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -13,6 +14,9 @@ import { useToast } from "@/hooks/use-toast"
 
 export default function ReviewsPage() {
   const { toast } = useToast()
+  const t = useTranslations('dashboard')
+  const tCommon = useTranslations('common')
+  const tAuth = useTranslations('auth')
   const [reviews, setReviews] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -56,8 +60,8 @@ export default function ReviewsPage() {
 
     if (!formData.content.trim()) {
       toast({
-        title: "Error",
-        description: "Please write your review",
+        title: tCommon('error'),
+        description: t('pleaseWriteReview') || "Please write your review",
         variant: "destructive",
       })
       return
@@ -75,20 +79,20 @@ export default function ReviewsPage() {
 
       if (response.ok) {
         toast({
-          title: "Thank you!",
-          description: "Your review has been submitted successfully.",
+          title: tCommon('success'),
+          description: t('reviewSubmitted') || "Your review has been submitted successfully.",
         })
         setFormData(prev => ({ ...prev, content: "", rating: 5 }))
         setShowForm(false)
         fetchReviews()
       } else {
         const data = await response.json()
-        throw new Error(data.error || "Failed to submit review")
+        throw new Error(data.error || t('submitReviewFailed') || "Failed to submit review")
       }
     } catch (error: any) {
       toast({
-        title: "Error",
-        description: error.message || "Failed to submit review",
+        title: tCommon('error'),
+        description: error.message || tCommon('error'),
         variant: "destructive",
       })
     } finally {
@@ -114,47 +118,47 @@ export default function ReviewsPage() {
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Reviews</h1>
-            <p className="text-muted-foreground">Share your experience and read what others say</p>
+            <h1 className="text-3xl font-bold">{t('reviews')}</h1>
+            <p className="text-muted-foreground">{t('shareExperience') || "Share your experience and read what others say"}</p>
           </div>
           <Button onClick={() => setShowForm(!showForm)}>
-            {showForm ? "Cancel" : "Write a Review"}
+            {showForm ? tCommon('cancel') : (t('writeReview') || "Write a Review")}
           </Button>
         </div>
 
         {showForm && (
           <Card>
             <CardHeader>
-              <CardTitle>Write Your Review</CardTitle>
-              <CardDescription>Share your experience with RentGuard</CardDescription>
+              <CardTitle>{t('writeReview') || "Write Your Review"}</CardTitle>
+              <CardDescription>{t('shareExperienceWithRentGuard') || "Share your experience with RentGuard"}</CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="name">Your Name</Label>
+                    <Label htmlFor="name">{tAuth('name')}</Label>
                     <Input
                       id="name"
                       value={formData.name}
                       onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      placeholder="Enter your name"
+                      placeholder={tAuth('name')}
                       required
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="role">Your Role</Label>
+                    <Label htmlFor="role">{t('yourRole') || "Your Role"}</Label>
                     <Input
                       id="role"
                       value={formData.role}
                       onChange={(e) => setFormData({ ...formData, role: e.target.value })}
-                      placeholder="e.g., Landlord"
+                      placeholder={t('rolePlaceholder') || "e.g., Landlord"}
                       required
                     />
                   </div>
                 </div>
 
                 <div className="space-y-2">
-                  <Label>Rating</Label>
+                  <Label>{t('rating') || "Rating"}</Label>
                   <div className="flex space-x-2">
                     {[1, 2, 3, 4, 5].map((star) => (
                       <button
@@ -176,19 +180,19 @@ export default function ReviewsPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="content">Your Review</Label>
+                  <Label htmlFor="content">{t('yourReview') || "Your Review"}</Label>
                   <Textarea
                     id="content"
                     value={formData.content}
                     onChange={(e) => setFormData({ ...formData, content: e.target.value })}
-                    placeholder="Share your experience with RentGuard..."
+                    placeholder={t('shareExperiencePlaceholder') || "Share your experience with RentGuard..."}
                     rows={4}
                     required
                   />
                 </div>
 
                 <Button type="submit" disabled={submitting}>
-                  {submitting ? "Submitting..." : "Submit Review"}
+                  {submitting ? tCommon('loading') : (t('submitReview') || "Submit Review")}
                 </Button>
               </form>
             </CardContent>
@@ -198,7 +202,7 @@ export default function ReviewsPage() {
         {loading ? (
           <Card>
             <CardContent className="p-12 text-center">
-              <p className="text-muted-foreground">Loading reviews...</p>
+              <p className="text-muted-foreground">{tCommon('loading')}</p>
             </CardContent>
           </Card>
         ) : reviews.length > 0 ? (
@@ -232,7 +236,7 @@ export default function ReviewsPage() {
         ) : (
           <Card>
             <CardContent className="p-12 text-center">
-              <p className="text-muted-foreground">No reviews yet. Be the first to share your experience!</p>
+              <p className="text-muted-foreground">{t('noReviewsYet') || "No reviews yet. Be the first to share your experience!"}</p>
             </CardContent>
           </Card>
         )}

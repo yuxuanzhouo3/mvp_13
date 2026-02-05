@@ -1,15 +1,20 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useTranslations } from 'next-intl'
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { DollarSign, TrendingUp, Calendar, Download } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useToast } from "@/hooks/use-toast"
+import { getCurrencySymbol } from "@/lib/utils"
 
 export default function AgentEarningsPage() {
   const { toast } = useToast()
+  const t = useTranslations('dashboard')
+  const tCommon = useTranslations('common')
+  const currencySymbol = getCurrencySymbol()
   const [earnings, setEarnings] = useState<any[]>([])
   const [stats, setStats] = useState({
     totalEarnings: 0,
@@ -52,12 +57,12 @@ export default function AgentEarningsPage() {
       <div className="space-y-6">
         <div className="flex justify-between items-center">
           <div>
-            <h1 className="text-3xl font-bold">Earnings</h1>
-            <p className="text-muted-foreground">Track your commission and income</p>
+            <h1 className="text-3xl font-bold">{t('earnings')}</h1>
+            <p className="text-muted-foreground">{t('trackCommission') || "Track your commission and income"}</p>
           </div>
           <Button variant="outline">
             <Download className="mr-2 h-4 w-4" />
-            Export Report
+            {t('exportReport') || "Export Report"}
           </Button>
         </div>
 
@@ -67,8 +72,8 @@ export default function AgentEarningsPage() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Total Earnings</p>
-                  <p className="text-2xl font-bold">${stats.totalEarnings.toLocaleString()}</p>
+                  <p className="text-sm font-medium text-muted-foreground">{t('totalEarnings') || "Total Earnings"}</p>
+                  <p className="text-2xl font-bold">{currencySymbol}{stats.totalEarnings.toLocaleString()}</p>
                 </div>
                 <DollarSign className="h-8 w-8 text-primary" />
               </div>
@@ -78,8 +83,8 @@ export default function AgentEarningsPage() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">This Month</p>
-                  <p className="text-2xl font-bold">${stats.thisMonth.toLocaleString()}</p>
+                  <p className="text-sm font-medium text-muted-foreground">{t('thisMonth') || "This Month"}</p>
+                  <p className="text-2xl font-bold">{currencySymbol}{stats.thisMonth.toLocaleString()}</p>
                 </div>
                 <TrendingUp className="h-8 w-8 text-green-500" />
               </div>
@@ -89,8 +94,8 @@ export default function AgentEarningsPage() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Pending Payouts</p>
-                  <p className="text-2xl font-bold">${stats.pendingPayouts.toLocaleString()}</p>
+                  <p className="text-sm font-medium text-muted-foreground">{t('pendingPayouts') || "Pending Payouts"}</p>
+                  <p className="text-2xl font-bold">{currencySymbol}{stats.pendingPayouts.toLocaleString()}</p>
                 </div>
                 <Calendar className="h-8 w-8 text-yellow-500" />
               </div>
@@ -100,20 +105,20 @@ export default function AgentEarningsPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Earnings History</CardTitle>
-            <CardDescription>Your commission payments</CardDescription>
+            <CardTitle>{t('earningsHistory') || "Earnings History"}</CardTitle>
+            <CardDescription>{t('commissionPayments') || "Your commission payments"}</CardDescription>
           </CardHeader>
           <CardContent>
             {loading ? (
-              <div className="text-center py-8 text-muted-foreground">Loading earnings...</div>
+              <div className="text-center py-8 text-muted-foreground">{tCommon('loading')}</div>
             ) : earnings.length > 0 ? (
               <div className="space-y-4">
                 {earnings.map((earning: any, index: number) => (
                   <div key={index} className="flex items-center justify-between p-4 border rounded-lg">
                     <div>
-                      <h3 className="font-semibold">{earning.description || "Commission Payment"}</h3>
+                      <h3 className="font-semibold">{earning.description || (t('commissionPayment') || "Commission Payment")}</h3>
                       <div className="text-sm text-muted-foreground">
-                        {earning.property?.title || "Property Deal"}
+                        {earning.property?.title || (t('propertyDeal') || "Property Deal")}
                       </div>
                       <div className="flex items-center text-sm text-muted-foreground">
                         <Calendar className="h-3 w-3 mr-1" />
@@ -122,10 +127,10 @@ export default function AgentEarningsPage() {
                     </div>
                     <div className="text-right">
                       <div className="font-semibold text-lg text-green-600">
-                        +${earning.amount?.toLocaleString() || 0}
+                        +{currencySymbol}{earning.amount?.toLocaleString() || 0}
                       </div>
                       <Badge variant={earning.status === "PAID" ? "default" : "secondary"}>
-                        {earning.status || "Pending"}
+                        {earning.status || t('pending') || "Pending"}
                       </Badge>
                     </div>
                   </div>
@@ -133,8 +138,8 @@ export default function AgentEarningsPage() {
               </div>
             ) : (
               <div className="text-center py-12 text-muted-foreground">
-                <p>No earnings yet</p>
-                <p className="text-sm mt-2">Complete deals to start earning commissions</p>
+                <p>{t('noEarningsYet') || "No earnings yet"}</p>
+                <p className="text-sm mt-2">{t('completeDealsToEarn') || "Complete deals to start earning commissions"}</p>
               </div>
             )}
           </CardContent>

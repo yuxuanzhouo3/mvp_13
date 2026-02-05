@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useTranslations } from 'next-intl'
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -12,9 +13,14 @@ import { PropertyCard } from "@/components/dashboard/property-card"
 import { PaymentHistory } from "@/components/dashboard/payment-history"
 import { MessageCenter } from "@/components/dashboard/message-center"
 import { AIChat } from "@/components/dashboard/ai-chat"
+import { getCurrencySymbol } from "@/lib/utils"
 
 
 export default function TenantDashboard() {
+  const t = useTranslations('dashboard')
+  const tHero = useTranslations('hero')
+  const tCommon = useTranslations('common')
+  const currencySymbol = getCurrencySymbol()
   const [searchQuery, setSearchQuery] = useState("")
   const [savedProperties, setSavedProperties] = useState<any[]>([])
   const [searchResults, setSearchResults] = useState<any[]>([])
@@ -87,8 +93,8 @@ export default function TenantDashboard() {
       <div className="space-y-8">
         {/* Header */}
         <div>
-          <h1 className="text-3xl font-bold">Welcome back, {userName || "User"}!</h1>
-          <p className="text-muted-foreground">Find your ideal home with secure deposit protection.</p>
+          <h1 className="text-3xl font-bold">{t('welcome')} {userName || tCommon('user')}!</h1>
+          <p className="text-muted-foreground">{t('findIdealHome') || "Find your ideal home with secure deposit protection."}</p>
         </div>
 
         {/* Quick Actions */}
@@ -98,8 +104,8 @@ export default function TenantDashboard() {
               <div className="flex items-center space-x-2">
                 <Search className="h-5 w-5 text-primary" />
                 <div>
-                  <div className="font-semibold">Search Properties</div>
-                  <div className="text-sm text-muted-foreground">Find your next home</div>
+                  <div className="font-semibold">{t('searchProperties') || "Search Properties"}</div>
+                  <div className="text-sm text-muted-foreground">{t('findNextHome') || "Find your next home"}</div>
                 </div>
               </div>
             </CardContent>
@@ -110,8 +116,8 @@ export default function TenantDashboard() {
               <div className="flex items-center space-x-2">
                 <Heart className="h-5 w-5 text-primary" />
                 <div>
-                  <div className="font-semibold">Saved Properties</div>
-                  <div className="text-sm text-muted-foreground">{stats.savedCount} saved</div>
+                  <div className="font-semibold">{t('savedProperties')}</div>
+                  <div className="text-sm text-muted-foreground">{stats.savedCount} {t('saved') || "saved"}</div>
                 </div>
               </div>
             </CardContent>
@@ -122,8 +128,8 @@ export default function TenantDashboard() {
               <div className="flex items-center space-x-2">
                 <Calendar className="h-5 w-5 text-primary" />
                 <div>
-                  <div className="font-semibold">Viewings</div>
-                  <div className="text-sm text-muted-foreground">{stats.viewingsCount} scheduled</div>
+                  <div className="font-semibold">{t('viewings') || "Viewings"}</div>
+                  <div className="text-sm text-muted-foreground">{stats.viewingsCount} {t('scheduled') || "scheduled"}</div>
                 </div>
               </div>
             </CardContent>
@@ -134,8 +140,8 @@ export default function TenantDashboard() {
               <div className="flex items-center space-x-2">
                 <MessageSquare className="h-5 w-5 text-primary" />
                 <div>
-                  <div className="font-semibold">Messages</div>
-                  <div className="text-sm text-muted-foreground">{stats.unreadMessages} unread</div>
+                  <div className="font-semibold">{t('messages')}</div>
+                  <div className="text-sm text-muted-foreground">{stats.unreadMessages} {t('unread') || "unread"}</div>
                 </div>
               </div>
             </CardContent>
@@ -145,12 +151,12 @@ export default function TenantDashboard() {
         {/* Main Content */}
         <Tabs defaultValue="ai-search" className="space-y-6">
           <TabsList>
-            <TabsTrigger value="ai-search">AI Smart Search</TabsTrigger>
-            <TabsTrigger value="search">Search Properties</TabsTrigger>
-            <TabsTrigger value="saved">Saved Properties</TabsTrigger>
-            <TabsTrigger value="applications">Applications</TabsTrigger>
-            <TabsTrigger value="payments">Payments</TabsTrigger>
-            <TabsTrigger value="messages">Messages</TabsTrigger>
+            <TabsTrigger value="ai-search">{t('aiSmartSearch')}</TabsTrigger>
+            <TabsTrigger value="search">{t('search')}</TabsTrigger>
+            <TabsTrigger value="saved">{t('savedProperties')}</TabsTrigger>
+            <TabsTrigger value="applications">{t('applications')}</TabsTrigger>
+            <TabsTrigger value="payments">{t('payments')}</TabsTrigger>
+            <TabsTrigger value="messages">{t('messages')}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="ai-search" className="space-y-6">
@@ -165,18 +171,18 @@ export default function TenantDashboard() {
                   <div className="flex-1 flex items-center space-x-2">
                     <MapPin className="h-4 w-4 text-muted-foreground" />
                     <Input
-                      placeholder="Enter city, neighborhood, or address"
+                      placeholder={tHero('searchPlaceholder')}
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
                     />
                   </div>
                   <Button variant="outline">
                     <Filter className="mr-2 h-4 w-4" />
-                    Filters
+                    {tCommon('filter') || "Filters"}
                   </Button>
                   <Button onClick={async () => {
                     if (!searchQuery.trim()) {
-                      alert("Please enter search content")
+                      alert(tCommon('error') || "Please enter search content")
                       return
                     }
                     const token = localStorage.getItem("auth-token")
@@ -220,7 +226,7 @@ export default function TenantDashboard() {
             ) : (
               <Card>
                 <CardContent className="p-12 text-center">
-                  <p className="text-muted-foreground">Enter search criteria and click search to find properties</p>
+                  <p className="text-muted-foreground">{t('enterSearchCriteria') || "Enter search criteria and click search to find properties"}</p>
                 </CardContent>
               </Card>
             )}
@@ -229,8 +235,8 @@ export default function TenantDashboard() {
           <TabsContent value="saved" className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>Saved Properties</CardTitle>
-                <CardDescription>Properties you've saved for later</CardDescription>
+                <CardTitle>{t('savedProperties')}</CardTitle>
+                <CardDescription>{t('savedPropertiesDesc')}</CardDescription>
               </CardHeader>
               <CardContent>
                 {savedProperties.length > 0 ? (
@@ -240,7 +246,7 @@ export default function TenantDashboard() {
                     ))}
                   </div>
                 ) : (
-                  <p className="text-center text-muted-foreground py-8">No saved properties yet. Start searching and save your favorites!</p>
+                  <p className="text-center text-muted-foreground py-8">{t('noSavedProperties')}</p>
                 )}
               </CardContent>
             </Card>
@@ -249,8 +255,8 @@ export default function TenantDashboard() {
           <TabsContent value="applications" className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>Rental Applications</CardTitle>
-                <CardDescription>Track your application status</CardDescription>
+                <CardTitle>{t('rentalApplications') || t('applications')}</CardTitle>
+                <CardDescription>{t('trackApplicationStatus')}</CardDescription>
               </CardHeader>
               <CardContent>
                 {applications.length > 0 ? (
@@ -258,17 +264,17 @@ export default function TenantDashboard() {
                     {applications.map((application) => (
                       <div key={application.id} className="flex items-center justify-between p-4 border rounded-lg">
                         <div>
-                          <div className="font-semibold">{application.property?.title || "Property"}</div>
+                          <div className="font-semibold">{application.property?.title || t('property')}</div>
                           <div className="text-sm text-muted-foreground">
-                            Applied on {new Date(application.appliedDate).toLocaleDateString()}
+                            {t('appliedOn')} {new Date(application.appliedDate).toLocaleDateString()}
                           </div>
                           <div className="text-sm text-muted-foreground">
-                            Deposit: ${application.depositAmount?.toLocaleString() || 0}
+                            {t('deposit')}: {currencySymbol}{application.depositAmount?.toLocaleString() || 0}
                           </div>
                         </div>
                         <div className="text-right">
                           <Badge variant={application.status === "APPROVED" ? "default" : "secondary"}>
-                            {application.status?.replace("_", " ").toLowerCase() || "pending"}
+                            {application.status?.replace("_", " ").toLowerCase() || t('pending')}
                           </Badge>
                           <div className="mt-2">
                             <Button 
@@ -276,7 +282,7 @@ export default function TenantDashboard() {
                               variant="outline"
                               onClick={() => window.location.href = `/properties/${application.propertyId}`}
                             >
-                              View Details
+                              {tCommon('viewDetails') || tCommon('view')}
                             </Button>
                           </div>
                         </div>
@@ -284,7 +290,7 @@ export default function TenantDashboard() {
                     ))}
                   </div>
                 ) : (
-                  <p className="text-center text-muted-foreground py-8">No applications yet. Start applying to properties!</p>
+                  <p className="text-center text-muted-foreground py-8">{t('noApplicationsYet')}</p>
                 )}
               </CardContent>
             </Card>

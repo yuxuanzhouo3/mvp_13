@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react"
 import { useSearchParams } from "next/navigation"
+import { useTranslations } from 'next-intl'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -42,6 +43,9 @@ interface CurrentUser {
 export function MessageCenter() {
   const searchParams = useSearchParams()
   const { toast } = useToast()
+  const t = useTranslations('dashboard')
+  const tMessage = useTranslations('message')
+  const tCommon = useTranslations('common')
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
@@ -283,8 +287,8 @@ export function MessageCenter() {
     
     if (!currentUser?.id) {
       toast({
-        title: "Error",
-        description: "Please login to send messages",
+        title: tCommon('error'),
+        description: tMessage('noMessages') || "Please login to send messages",
         variant: "destructive",
       })
       return
@@ -347,8 +351,8 @@ export function MessageCenter() {
         ))
         
         toast({
-          title: "Sent",
-          description: "Message sent successfully",
+          title: tCommon('success'),
+          description: tMessage('send') || "Message sent successfully",
         })
       } else {
         throw new Error(data.error || "Failed to send message")
@@ -359,8 +363,8 @@ export function MessageCenter() {
       setMessages(prev => prev.filter(msg => msg.id !== tempId))
       setMessageInput(messageToSend)
       toast({
-        title: "Error",
-        description: error.message || "Failed to send message",
+        title: tCommon('error'),
+        description: error.message || tCommon('error'),
         variant: "destructive",
       })
     } finally {
@@ -376,8 +380,8 @@ export function MessageCenter() {
     }
     setRefreshing(false)
     toast({
-      title: "Refreshed",
-      description: "Messages updated",
+      title: tCommon('success'),
+      description: tMessage('title') || "Messages updated",
     })
   }
 
@@ -438,7 +442,7 @@ export function MessageCenter() {
           <div className="flex items-center justify-between">
             <CardTitle className="flex items-center space-x-2">
               <MessageSquare className="h-5 w-5" />
-              <span>Messages</span>
+              <span>{t('messages')}</span>
             </CardTitle>
             <Button 
               size="sm" 
@@ -450,12 +454,12 @@ export function MessageCenter() {
             </Button>
           </div>
           <CardDescription>
-            {currentUser ? `Logged in as: ${currentUser.name}` : 'Your conversations'}
+            {currentUser ? (t('loggedInAs') || `Logged in as: ${currentUser.name}`) : (t('yourConversations') || 'Your conversations')}
           </CardDescription>
         </CardHeader>
         <CardContent className="p-0">
           {loading ? (
-            <div className="p-4 text-center text-muted-foreground">Loading conversations...</div>
+            <div className="p-4 text-center text-muted-foreground">{tCommon('loading')}</div>
           ) : conversations.length > 0 ? (
             <div className="space-y-1">
               {conversations.map((conversation) => (
@@ -482,7 +486,7 @@ export function MessageCenter() {
                     </div>
                     <div className="flex items-center justify-between">
                       <div className="text-sm text-muted-foreground truncate">
-                        {conversation.lastMessage || "Start a conversation"}
+                        {conversation.lastMessage || (t('startConversation') || "Start a conversation")}
                       </div>
                       {conversation.unread > 0 && (
                         <Badge className="ml-2 h-5 w-5 flex items-center justify-center p-0 text-xs">
@@ -495,7 +499,7 @@ export function MessageCenter() {
               ))}
             </div>
           ) : (
-            <div className="p-4 text-center text-muted-foreground">No conversations yet.</div>
+            <div className="p-4 text-center text-muted-foreground">{t('noConversationsYet')}</div>
           )}
         </CardContent>
       </Card>
@@ -560,14 +564,14 @@ export function MessageCenter() {
                   })}
                 </div>
               ) : (
-                <div className="text-center text-muted-foreground py-8">No messages yet. Start the conversation!</div>
+                <div className="text-center text-muted-foreground py-8">{t('noMessagesYet') || "No messages yet. Start the conversation!"}</div>
               )}
             </div>
 
             <div className="border-t p-4">
               <div className="flex space-x-2">
                 <Input 
-                  placeholder="Type your message..." 
+                  placeholder={t('typeMessage') || "Type your message..."} 
                   className="flex-1" 
                   value={messageInput}
                   onChange={(e) => setMessageInput(e.target.value)}
@@ -587,7 +591,7 @@ export function MessageCenter() {
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center text-muted-foreground">
-            Select a conversation to start messaging
+            {t('selectConversation') || "Select a conversation to start messaging"}
           </div>
         )}
       </Card>

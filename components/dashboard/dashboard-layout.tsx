@@ -4,6 +4,7 @@ import type React from "react"
 import { useState, useEffect } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
+import { useTranslations } from 'next-intl'
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
@@ -55,91 +56,94 @@ interface DashboardLayoutProps {
   userType: "tenant" | "landlord" | "agent" | "admin"
 }
 
-const navigationItems = {
-  tenant: [
-    {
-      title: "Search",
-      items: [
-        { title: "Find Properties", url: "/dashboard/tenant", icon: Search },
-        { title: "Saved Properties", url: "/dashboard/tenant/saved", icon: Heart },
-        { title: "Applications", url: "/dashboard/tenant/applications", icon: FileText },
-      ],
-    },
-    {
-      title: "Account",
-      items: [
-        { title: "Payments", url: "/dashboard/tenant/payments", icon: CreditCard },
-        { title: "Messages", url: "/dashboard/tenant/messages", icon: MessageSquare },
-        { title: "Reviews", url: "/dashboard/tenant/reviews", icon: Star },
-        { title: "Settings", url: "/dashboard/tenant/settings", icon: Settings },
-      ],
-    },
-  ],
-  landlord: [
-    {
-      title: "Properties",
-      items: [
-        { title: "Dashboard", url: "/dashboard/landlord", icon: Home },
-        { title: "Add Property", url: "/dashboard/landlord/add-property", icon: Plus },
-        { title: "Applications", url: "/dashboard/landlord/applications", icon: FileText },
-        { title: "Tenants", url: "/dashboard/landlord/tenants", icon: Users },
-      ],
-    },
-    {
-      title: "Business",
-      items: [
-        { title: "Payments", url: "/dashboard/landlord/payments", icon: CreditCard },
-        { title: "Analytics", url: "/dashboard/landlord/analytics", icon: BarChart3 },
-        { title: "Messages", url: "/dashboard/landlord/messages", icon: MessageSquare },
-        { title: "Reviews", url: "/dashboard/landlord/reviews", icon: Star },
-        { title: "Settings", url: "/dashboard/landlord/settings", icon: Settings },
-      ],
-    },
-  ],
-  agent: [
-    {
-      title: "Management",
-      items: [
-        { title: "Dashboard", url: "/dashboard/agent", icon: Home },
-        { title: "Properties", url: "/dashboard/agent/properties", icon: Home },
-        { title: "Landlords", url: "/dashboard/agent/landlords", icon: Users },
-        { title: "Tenants", url: "/dashboard/agent/tenants", icon: Users },
-      ],
-    },
-    {
-      title: "Business",
-      items: [
-        { title: "Transactions", url: "/dashboard/agent/transactions", icon: CreditCard },
-        { title: "Earnings", url: "/dashboard/agent/earnings", icon: BarChart3 },
-        { title: "Messages", url: "/dashboard/agent/messages", icon: MessageSquare },
-        { title: "Reviews", url: "/dashboard/agent/reviews", icon: Star },
-        { title: "Settings", url: "/dashboard/agent/settings", icon: Settings },
-      ],
-    },
-  ],
-  admin: [
-    {
-      title: "Management",
-      items: [
-        { title: "Dashboard", url: "/dashboard/admin", icon: BarChart3 },
-        { title: "Users", url: "/dashboard/admin/users", icon: Users },
-        { title: "Properties", url: "/dashboard/admin/properties", icon: Home },
-        { title: "Disputes", url: "/dashboard/admin/disputes", icon: Gavel },
-      ],
-    },
-    {
-      title: "System",
-      items: [
-        { title: "Analytics", url: "/dashboard/admin/analytics", icon: BarChart3 },
-        { title: "Settings", url: "/dashboard/admin/settings", icon: Settings },
-      ],
-    },
-  ],
-}
-
 export function DashboardLayout({ children, userType }: DashboardLayoutProps) {
   const pathname = usePathname()
   const router = useRouter()
+  const t = useTranslations('dashboard')
+  const tCommon = useTranslations('common')
+  
+  const navigationItems = {
+    tenant: [
+      {
+        title: t('search'),
+        items: [
+          { title: t('search'), url: "/dashboard/tenant", icon: Search },
+          { title: t('savedProperties'), url: "/dashboard/tenant/saved", icon: Heart },
+          { title: t('applications'), url: "/dashboard/tenant/applications", icon: FileText },
+        ],
+      },
+      {
+        title: tCommon('user'),
+        items: [
+          { title: t('payments'), url: "/dashboard/tenant/payments", icon: CreditCard },
+          { title: t('messages'), url: "/dashboard/tenant/messages", icon: MessageSquare },
+          { title: t('reviews'), url: "/dashboard/tenant/reviews", icon: Star },
+          { title: t('settings'), url: "/dashboard/tenant/settings", icon: Settings },
+        ],
+      },
+    ],
+    landlord: [
+      {
+        title: t('properties'),
+        items: [
+          { title: t('title'), url: "/dashboard/landlord", icon: Home },
+          { title: t('properties'), url: "/dashboard/landlord/add-property", icon: Plus },
+          { title: t('applications'), url: "/dashboard/landlord/applications", icon: FileText },
+          { title: t('tenants'), url: "/dashboard/landlord/tenants", icon: Users },
+        ],
+      },
+      {
+        title: t('payments'),
+        items: [
+          { title: t('payments'), url: "/dashboard/landlord/payments", icon: CreditCard },
+          { title: t('analytics'), url: "/dashboard/landlord/analytics", icon: BarChart3 },
+          { title: t('messages'), url: "/dashboard/landlord/messages", icon: MessageSquare },
+          { title: t('reviews'), url: "/dashboard/landlord/reviews", icon: Star },
+          { title: t('settings'), url: "/dashboard/landlord/settings", icon: Settings },
+        ],
+      },
+    ],
+    agent: [
+      {
+        title: t('properties'),
+        items: [
+          { title: t('title'), url: "/dashboard/agent", icon: Home },
+          { title: t('properties'), url: "/dashboard/agent/properties", icon: Home },
+          { title: t('landlords'), url: "/dashboard/agent/landlords", icon: Users },
+          { title: t('tenants'), url: "/dashboard/agent/tenants", icon: Users },
+        ],
+      },
+      {
+        title: t('payments'),
+        items: [
+          { title: t('transactions'), url: "/dashboard/agent/transactions", icon: CreditCard },
+          { title: t('earnings'), url: "/dashboard/agent/earnings", icon: BarChart3 },
+          { title: t('messages'), url: "/dashboard/agent/messages", icon: MessageSquare },
+          { title: t('reviews'), url: "/dashboard/agent/reviews", icon: Star },
+          { title: t('settings'), url: "/dashboard/agent/settings", icon: Settings },
+        ],
+      },
+    ],
+    admin: [
+      {
+        title: t('properties'),
+        items: [
+          { title: t('title'), url: "/dashboard/admin", icon: BarChart3 },
+          { title: t('users'), url: "/dashboard/admin/users", icon: Users },
+          { title: t('properties'), url: "/dashboard/admin/properties", icon: Home },
+          { title: "Disputes", url: "/dashboard/admin/disputes", icon: Gavel },
+        ],
+      },
+      {
+        title: "System",
+        items: [
+          { title: t('analytics'), url: "/dashboard/admin/analytics", icon: BarChart3 },
+          { title: t('settings'), url: "/dashboard/admin/settings", icon: Settings },
+        ],
+      },
+    ],
+  }
+  
   const navigation = navigationItems[userType]
   const [unreadCount, setUnreadCount] = useState(0)
   const [notifications, setNotifications] = useState<any[]>([])
@@ -282,24 +286,24 @@ export function DashboardLayout({ children, userType }: DashboardLayoutProps) {
                     </SidebarMenuButton>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent side="top" className="w-[--radix-popper-anchor-width]">
-                    <DropdownMenuLabel>My Account</DropdownMenuLabel>
+                    <DropdownMenuLabel>{t('myAccount')}</DropdownMenuLabel>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem asChild>
                       <Link href={getSettingsUrl()}>
                         <User className="mr-2 h-4 w-4" />
-                        Profile
+                        {tCommon('profile')}
                       </Link>
                     </DropdownMenuItem>
                     <DropdownMenuItem asChild>
                       <Link href={getSettingsUrl()}>
                         <Settings className="mr-2 h-4 w-4" />
-                        Settings
+                        {t('settings')}
                       </Link>
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem onClick={handleLogout}>
                       <LogOut className="mr-2 h-4 w-4" />
-                      Log out
+                      {tCommon('logout')}
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -325,7 +329,7 @@ export function DashboardLayout({ children, userType }: DashboardLayoutProps) {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end" className="w-80">
-                  <DropdownMenuLabel>Notifications</DropdownMenuLabel>
+                  <DropdownMenuLabel>{t('notifications')}</DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   {notifications.length > 0 ? (
                     <>
@@ -349,11 +353,11 @@ export function DashboardLayout({ children, userType }: DashboardLayoutProps) {
                       ))}
                       <DropdownMenuSeparator />
                       <DropdownMenuItem onClick={() => handleMarkAsRead()}>
-                        Mark all as read
+                        {t('markAllAsRead')}
                       </DropdownMenuItem>
                     </>
                   ) : (
-                    <DropdownMenuItem disabled>No new notifications</DropdownMenuItem>
+                    <DropdownMenuItem disabled>{t('noNewNotifications')}</DropdownMenuItem>
                   )}
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -362,7 +366,7 @@ export function DashboardLayout({ children, userType }: DashboardLayoutProps) {
                 onClick={handleLogout}
               >
                 <LogOut className="mr-2 h-4 w-4" />
-                Logout
+                {tCommon('logout')}
               </Button>
               <ModeToggle />
             </div>

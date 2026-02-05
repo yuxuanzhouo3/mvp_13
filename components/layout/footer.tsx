@@ -1,31 +1,36 @@
+"use client"
+
 import Link from "next/link"
+import { useTranslations } from 'next-intl'
 import { Shield, Facebook, Twitter, Instagram, Linkedin } from "lucide-react"
 
 export function Footer() {
+  const t = useTranslations('footer')
+
   const footerLinks = {
-    "For Renters": [
-      { name: "Find Homes", href: "/search" },
-      { name: "How it Works", href: "/how-it-works" },
-      { name: "Deposit Protection", href: "/deposit-protection" },
-      { name: "Renter Resources", href: "/resources/renters" },
+    [t('forRenters')]: [
+      { name: t('findHomes'), href: "/search" },
+      { name: t('howItWorks'), href: "/how-it-works" },
+      { name: t('depositProtection'), href: "/deposit-protection" },
+      { name: t('renterResources'), href: "/resources/renters" },
     ],
-    "For Landlords": [
-      { name: "List Property", href: "/list-property" },
-      { name: "Landlord Tools", href: "/tools" },
-      { name: "Pricing", href: "/pricing" },
-      { name: "Success Stories", href: "/success-stories" },
+    [t('forLandlords')]: [
+      { name: t('listProperty'), href: "/list-property" },
+      { name: t('landlordTools'), href: "/tools" },
+      { name: t('pricing'), href: "/pricing" },
+      { name: t('successStories'), href: "/success-stories" },
     ],
-    Support: [
-      { name: "Help Center", href: "/help" },
-      { name: "Contact Us", href: "/contact" },
-      { name: "Dispute Resolution", href: "/dispute-resolution" },
-      { name: "Write a Review", href: "/testimonial" },
+    [t('support')]: [
+      { name: t('helpCenter'), href: "/help" },
+      { name: t('contactUs'), href: "/contact" },
+      { name: t('disputeResolution'), href: "/dispute-resolution" },
+      { name: t('writeReview'), href: "/testimonial" },
     ],
-    Company: [
-      { name: "About Us", href: "/about" },
-      { name: "Careers", href: "/careers" },
-      { name: "Press", href: "/press" },
-      { name: "Legal", href: "/legal" },
+    [t('company')]: [
+      { name: t('aboutUs'), href: "/about" },
+      { name: t('careers'), href: "/careers" },
+      { name: t('press'), href: "/press" },
+      { name: t('legal'), href: "/legal" },
     ],
   }
 
@@ -39,7 +44,7 @@ export function Footer() {
               <span className="text-2xl font-bold">RentGuard</span>
             </Link>
             <p className="text-muted-foreground mb-6 max-w-sm">
-              Secure house rentals with deposit protection, dispute resolution, and seamless payment processing.
+              {t('description')}
             </p>
             <div className="flex space-x-4">
               <Link href="#" className="text-muted-foreground hover:text-primary">
@@ -74,16 +79,16 @@ export function Footer() {
         </div>
 
         <div className="border-t mt-12 pt-8 flex flex-col sm:flex-row justify-between items-center">
-          <p className="text-muted-foreground text-sm">© 2024 RentGuard. All rights reserved.</p>
+          <p className="text-muted-foreground text-sm">{t('copyright')}</p>
           <div className="flex space-x-6 mt-4 sm:mt-0">
             <Link href="/privacy" className="text-muted-foreground hover:text-primary text-sm">
-              Privacy Policy
+              {t('privacyPolicy')}
             </Link>
             <Link href="/terms" className="text-muted-foreground hover:text-primary text-sm">
-              Terms of Service
+              {t('termsOfService')}
             </Link>
             <Link href="/cookies" className="text-muted-foreground hover:text-primary text-sm">
-              Cookie Policy
+              {t('cookiePolicy')}
             </Link>
           </div>
         </div>

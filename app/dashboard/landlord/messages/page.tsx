@@ -1,17 +1,22 @@
 "use client"
 
+import { Suspense } from "react"
+import { useTranslations } from 'next-intl'
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { MessageCenter } from "@/components/dashboard/message-center"
 
 export default function MessagesPage() {
+  const t = useTranslations('dashboard')
   return (
     <DashboardLayout userType="landlord">
       <div className="space-y-6">
         <div>
-          <h1 className="text-3xl font-bold">Messages</h1>
-          <p className="text-muted-foreground">Communicate with tenants and applicants</p>
+          <h1 className="text-3xl font-bold">{t('messages')}</h1>
+          <p className="text-muted-foreground">{t('communicateWithTenants') || "Communicate with tenants and applicants"}</p>
         </div>
-        <MessageCenter />
+        <Suspense fallback={<div />}>
+          <MessageCenter />
+        </Suspense>
       </div>
     </DashboardLayout>
   )

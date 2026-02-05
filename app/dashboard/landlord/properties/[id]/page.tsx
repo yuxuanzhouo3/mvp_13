@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { MapPin, Bed, Bath, Square, Edit, ArrowLeft, X, Upload, ChevronLeft, ChevronRight } from "lucide-react"
 import Image from "next/image"
 import { useToast } from "@/hooks/use-toast"
+import { getCurrencySymbol } from "@/lib/utils"
 
 export default function LandlordPropertyDetailPage() {
   const params = useParams()
@@ -25,6 +26,7 @@ export default function LandlordPropertyDetailPage() {
   const [images, setImages] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
   const [currentImageIndex, setCurrentImageIndex] = useState(0)
+  const currencySymbol = getCurrencySymbol()
   const [formData, setFormData] = useState({
     title: "",
     description: "",
@@ -331,7 +333,7 @@ export default function LandlordPropertyDetailPage() {
 
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="price">Monthly Rent ($) *</Label>
+                    <Label htmlFor="price">Monthly Rent ({currencySymbol}) *</Label>
                     <Input
                       id="price"
                       type="number"
@@ -341,7 +343,7 @@ export default function LandlordPropertyDetailPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="deposit">Deposit ($) *</Label>
+                    <Label htmlFor="deposit">Deposit ({currencySymbol}) *</Label>
                     <Input
                       id="deposit"
                       type="number"
@@ -602,7 +604,7 @@ export default function LandlordPropertyDetailPage() {
               <Card>
                 <CardHeader>
                   <CardTitle className="text-2xl">
-                    ${property.price.toLocaleString()}
+                    {currencySymbol}{property.price.toLocaleString()}
                     <span className="text-lg font-normal text-muted-foreground">/month</span>
                   </CardTitle>
                 </CardHeader>
@@ -610,7 +612,7 @@ export default function LandlordPropertyDetailPage() {
                   <div className="space-y-2">
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Deposit:</span>
-                      <span className="font-semibold">${property.deposit.toLocaleString()}</span>
+                      <span className="font-semibold">{currencySymbol}{property.deposit.toLocaleString()}</span>
                     </div>
                     {property.availableFrom && (
                       <div className="flex justify-between">

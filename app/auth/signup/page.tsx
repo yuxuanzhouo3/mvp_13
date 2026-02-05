@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
+import { useTranslations } from 'next-intl'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -15,6 +16,8 @@ import { useToast } from "@/hooks/use-toast"
 export default function SignUpPage() {
   const router = useRouter()
   const { toast } = useToast()
+  const t = useTranslations('auth')
+  const tCommon = useTranslations('common')
   const [userType, setUserType] = useState<"tenant" | "landlord" | "agent">("tenant")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -25,8 +28,8 @@ export default function SignUpPage() {
   const handleSignup = async () => {
     if (password !== confirmPassword) {
       toast({
-        title: "Passwords do not match",
-        description: "Please make sure both passwords are the same",
+        title: t('passwordsNotMatch'),
+        description: t('passwordsNotMatch'),
         variant: "destructive",
       })
       return
@@ -34,8 +37,8 @@ export default function SignUpPage() {
 
     if (password.length < 6) {
       toast({
-        title: "Password too short",
-        description: "Password must be at least 6 characters",
+        title: t('passwordTooShort'),
+        description: t('passwordTooShort'),
         variant: "destructive",
       })
       return
@@ -59,7 +62,7 @@ export default function SignUpPage() {
       const data = await response.json()
 
       if (!response.ok) {
-        throw new Error(data.error || "Signup failed")
+        throw new Error(data.error || t('signupFailed'))
       }
 
       // 保存 token
@@ -69,8 +72,8 @@ export default function SignUpPage() {
       }
 
       toast({
-        title: "Signup successful",
-        description: "Welcome to RentGuard!",
+        title: tCommon('success'),
+        description: t('signupSuccessful') || "Welcome to RentGuard!",
       })
 
       // 根据用户类型跳转
@@ -85,8 +88,8 @@ export default function SignUpPage() {
       }
     } catch (error: any) {
       toast({
-        title: "Signup failed",
-        description: error.message || "Please check your input",
+        title: t('signupFailed'),
+        description: error.message || t('signupFailed'),
         variant: "destructive",
       })
     } finally {
@@ -101,19 +104,19 @@ export default function SignUpPage() {
           <div className="flex justify-center mb-4">
             <Shield className="h-12 w-12 text-primary" />
           </div>
-          <CardTitle className="text-2xl">Create Your Account</CardTitle>
-          <CardDescription>Join RentGuard for secure rentals and deposit protection</CardDescription>
+          <CardTitle className="text-2xl">{t('signupTitle')}</CardTitle>
+          <CardDescription>{t('signupDescription')}</CardDescription>
         </CardHeader>
 
         <CardContent className="space-y-6">
           {/* User Type Selection */}
           <div>
-            <Label className="text-sm font-medium mb-3 block">I am a:</Label>
+            <Label className="text-sm font-medium mb-3 block">{t('iAmA')}</Label>
             <Tabs value={userType} onValueChange={(value) => setUserType(value as any)} className="w-full">
               <TabsList className="grid w-full grid-cols-3">
-                <TabsTrigger value="tenant">Tenant</TabsTrigger>
-                <TabsTrigger value="landlord">Landlord</TabsTrigger>
-                <TabsTrigger value="agent">Agent</TabsTrigger>
+                <TabsTrigger value="tenant">{t('tenant')}</TabsTrigger>
+                <TabsTrigger value="landlord">{t('landlord')}</TabsTrigger>
+                <TabsTrigger value="agent">{t('agent')}</TabsTrigger>
               </TabsList>
             </Tabs>
           </div>
@@ -122,11 +125,11 @@ export default function SignUpPage() {
           <div className="space-y-3">
             <Button variant="outline" className="w-full bg-transparent" size="lg">
               <Chrome className="mr-2 h-4 w-4" />
-              Continue with Google
+              {t('continueWithGoogle')}
             </Button>
             <Button variant="outline" className="w-full bg-transparent" size="lg">
               <Apple className="mr-2 h-4 w-4" />
-              Continue with Apple
+              {t('continueWithApple')}
             </Button>
           </div>
 
@@ -135,46 +138,46 @@ export default function SignUpPage() {
               <Separator className="w-full" />
             </div>
             <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-background px-2 text-muted-foreground">Or continue with</span>
+              <span className="bg-background px-2 text-muted-foreground">{t('orContinueWith')}</span>
             </div>
           </div>
 
           {/* Email/Phone Tabs */}
           <Tabs defaultValue="email" className="w-full">
             <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="email">Email</TabsTrigger>
-              <TabsTrigger value="phone">Phone</TabsTrigger>
+              <TabsTrigger value="email">{t('email')}</TabsTrigger>
+              <TabsTrigger value="phone">{t('phone')}</TabsTrigger>
             </TabsList>
 
             <TabsContent value="email" className="space-y-4 mt-4">
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="email">{t('email')}</Label>
                 <Input 
                   id="email" 
                   type="email" 
-                  placeholder="Enter your email"
+                  placeholder={t('email')}
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="password">Password</Label>
+                <Label htmlFor="password">{t('password')}</Label>
                 <Input 
                   id="password" 
                   type="password" 
-                  placeholder="Create a password"
+                  placeholder={t('password')}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="confirm-password">Confirm Password</Label>
+                <Label htmlFor="confirm-password">{t('confirmPassword')}</Label>
                 <Input 
                   id="confirm-password" 
                   type="password" 
-                  placeholder="Confirm your password"
+                  placeholder={t('confirmPassword')}
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   required
@@ -184,12 +187,12 @@ export default function SignUpPage() {
 
             <TabsContent value="phone" className="space-y-4 mt-4">
               <div className="space-y-2">
-                <Label htmlFor="phone">Phone Number</Label>
-                <Input id="phone" type="tel" placeholder="Enter your phone number" />
+                <Label htmlFor="phone">{t('phoneNumber')}</Label>
+                <Input id="phone" type="tel" placeholder={t('phoneNumber')} />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="verification">Verification Code</Label>
-                <Input id="verification" placeholder="Enter verification code" />
+                <Label htmlFor="verification">{t('verificationCode')}</Label>
+                <Input id="verification" placeholder={t('verificationCode')} />
               </div>
             </TabsContent>
           </Tabs>
@@ -200,24 +203,24 @@ export default function SignUpPage() {
             onClick={handleSignup}
             disabled={loading}
           >
-            {loading ? "Creating account..." : "Create Account"}
+            {loading ? tCommon('loading') : t('signupTitle')}
           </Button>
 
           <div className="text-center text-sm">
-            <span className="text-muted-foreground">Already have an account? </span>
+            <span className="text-muted-foreground">{t('alreadyHaveAccount')} </span>
             <Link href="/auth/login" className="text-primary hover:underline">
-              Sign in
+              {t('signIn')}
             </Link>
           </div>
 
           <div className="text-xs text-muted-foreground text-center">
-            By creating an account, you agree to our{" "}
+            {t('agreeToTerms')}{" "}
             <Link href="/terms" className="text-primary hover:underline">
-              Terms of Service
+              {t('termsOfService')}
             </Link>{" "}
-            and{" "}
+            {t('and')}{" "}
             <Link href="/privacy" className="text-primary hover:underline">
-              Privacy Policy
+              {t('privacyPolicy')}
             </Link>
           </div>
         </CardContent>

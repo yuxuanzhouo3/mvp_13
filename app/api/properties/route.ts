@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-adapter'
+import { getAuthUser } from '@/lib/auth'
 import { getDatabaseAdapter } from '@/lib/db-adapter'
 
 /**
@@ -7,20 +8,96 @@ import { getDatabaseAdapter } from '@/lib/db-adapter'
  */
 export async function POST(request: NextRequest) {
   try {
-    const user = await getCurrentUser(request)
+    const db = getDatabaseAdapter()
+
+    let user = await getCurrentUser(request)
+
+    // 如果 getCurrentUser 失败，尝试使用 legacy auth
     if (!user) {
+      const legacyAuth = getAuthUser(request)
+      if (legacyAuth) {
+        try {
+          const legacyDbUser =
+            (await db.findUserById(legacyAuth.userId)) ||
+            (legacyAuth.email ? await db.findUserByEmail(legacyAuth.email) : null)
+          if (legacyDbUser) {
+            user = {
+              id: legacyDbUser.id,
+              email: legacyDbUser.email,
+              name: legacyDbUser.name,
+              userType: legacyDbUser.userType,
+              isPremium: legacyDbUser.isPremium,
+              vipLevel: legacyDbUser.vipLevel || (legacyDbUser.isPremium ? 'PREMIUM' : 'FREE'),
+            }
+          }
+        } catch (dbError: any) {
+          // 如果数据库查询失败，但 legacy auth 有效，尝试从 JWT token 中提取 userType
+          console.warn('Database query failed but legacy auth is valid:', dbError.message)
+          // 尝试从 JWT token 中提取 userType
+          let userType = 'TENANT' // 默认值
+          try {
+            const jwt = require('jsonwebtoken')
+            const authHeader = request.headers.get('authorization')
+            if (authHeader && authHeader.startsWith('Bearer ')) {
+              const token = authHeader.substring(7)
+              try {
+                const decoded = jwt.verify(
+                  token,
+                  process.env.JWT_SECRET || 'your-secret-key'
+                ) as { userId: string; email: string; userType?: string }
+                userType = decoded.userType || 'TENANT'
+              } catch (verifyError) {
+                // JWT 验证失败，使用默认值
+                console.warn('Failed to verify JWT token:', verifyError)
+              }
+            }
+          } catch (jwtError) {
+            // JWT 解析失败，使用默认值
+            console.warn('Failed to extract userType from JWT token:', jwtError)
+          }
+          user = {
+            id: legacyAuth.userId,
+            email: legacyAuth.email,
+            name: legacyAuth.email.split('@')[0],
+            userType: userType, // 从 JWT token 中获取
+            isPremium: false,
+            vipLevel: 'FREE',
+          }
+        }
+      }
+    }
+
+    if (
+      !user ||
+      user.id === undefined ||
+      user.id === null ||
+      (typeof user.id !== 'string' && typeof user.id !== 'number')
+    ) {
+      console.error('Unauthorized: No valid user found', { user })
       return NextResponse.json(
-        { error: 'Unauthorized' },
+        { error: 'Unauthorized - 请先登录' },
         { status: 401 }
       )
     }
 
-    const db = getDatabaseAdapter()
-    const dbUser = await db.findUserById(user.id)
+    // 验证用户类型，如果数据库不可用，使用 user 对象中的 userType
+    let dbUser = null
+    let userType = user.userType
+    try {
+      dbUser = (await db.findUserById(user.id)) ||
+        (user.email ? await db.findUserByEmail(user.email) : null)
+      if (dbUser) {
+        userType = dbUser.userType
+      }
+    } catch (dbError: any) {
+      console.warn('Database query failed, using user object userType:', dbError.message)
+      // 如果数据库不可用，使用 user 对象中的 userType（从 JWT token 中获取）
+      userType = user.userType || 'TENANT'
+    }
 
-    if (dbUser?.userType !== 'LANDLORD') {
+    if (userType !== 'LANDLORD') {
       return NextResponse.json(
-        { error: 'Only landlords can create properties' },
+        { error: 'Only landlords can create properties - 只有房东可以创建房源' },
         { status: 403 }
       )
     }
@@ -32,6 +109,7 @@ export async function POST(request: NextRequest) {
       address,
       city,
       state,
+      businessArea,
       zipCode,
       country,
       latitude,
@@ -49,23 +127,38 @@ export async function POST(request: NextRequest) {
       leaseDuration
     } = body
 
-    // 使用数据库适配器创建房源（统一接口）
-    const property = await db.create('properties', {
+    const parsedPrice = typeof price === 'number' ? price : parseFloat(price)
+    const parsedDeposit = typeof deposit === 'number' ? deposit : parseFloat(deposit)
+    const parsedBedrooms = typeof bedrooms === 'number' ? bedrooms : parseInt(bedrooms)
+    const parsedBathrooms = typeof bathrooms === 'number' ? bathrooms : parseFloat(bathrooms)
+    const parsedSqft = sqft === null || sqft === undefined || sqft === ''
+      ? null
+      : (typeof sqft === 'number' ? sqft : parseInt(sqft))
+
+    if (!Number.isFinite(parsedPrice) || !Number.isFinite(parsedDeposit) || !Number.isFinite(parsedBedrooms) || !Number.isFinite(parsedBathrooms)) {
+      return NextResponse.json(
+        { error: 'Invalid property data' },
+        { status: 400 }
+      )
+    }
+
+    const propertyData = {
       landlordId: user.id,
       title,
       description,
       address,
       city,
       state,
+      businessArea: businessArea || '',
       zipCode: zipCode || '',
       country: country || (process.env.NEXT_PUBLIC_APP_REGION === 'china' ? 'CN' : 'US'),
       latitude,
       longitude,
-      price: parseFloat(price),
-      deposit: parseFloat(deposit),
-      bedrooms: parseInt(bedrooms),
-      bathrooms: parseFloat(bathrooms),
-      sqft: sqft ? parseInt(sqft) : null,
+      price: parsedPrice,
+      deposit: parsedDeposit,
+      bedrooms: parsedBedrooms,
+      bathrooms: parsedBathrooms,
+      sqft: parsedSqft,
       propertyType,
       images: Array.isArray(images) ? images : (images ? JSON.parse(images) : []),
       amenities: Array.isArray(amenities) ? amenities : (amenities ? JSON.parse(amenities) : []),
@@ -73,7 +166,34 @@ export async function POST(request: NextRequest) {
       availableFrom: availableFrom ? new Date(availableFrom) : null,
       leaseDuration: leaseDuration ? parseInt(leaseDuration) : null,
       status: 'AVAILABLE',
-    })
+    }
+
+    const sanitizedPropertyData = Object.fromEntries(
+      Object.entries(propertyData).filter(([, value]) => value !== undefined)
+    )
+
+    // 使用数据库适配器创建房源（统一接口）
+    let property
+    try {
+      property = await db.create('properties', sanitizedPropertyData)
+    } catch (dbError: any) {
+      const errorMsg = String(dbError?.message || '')
+      const lower = errorMsg.toLowerCase()
+      // 如果数据库连接失败，返回更友好的错误信息
+      if (
+        lower.includes("can't reach database server") ||
+        lower.includes('can\\u2019t reach database server') ||
+        lower.includes('maxclients') ||
+        lower.includes('max clients reached') ||
+        lower.includes('pool_size')
+      ) {
+        return NextResponse.json(
+          { error: '数据库连接失败，请稍后重试', details: 'Database connection pool exhausted' },
+          { status: 503 }
+        )
+      }
+      throw dbError
+    }
 
     return NextResponse.json({ property })
   } catch (error: any) {

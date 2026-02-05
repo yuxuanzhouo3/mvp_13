@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useTranslations } from 'next-intl'
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -11,6 +12,9 @@ import { useToast } from "@/hooks/use-toast"
 
 export default function SettingsPage() {
   const { toast } = useToast()
+  const t = useTranslations('dashboard')
+  const tCommon = useTranslations('common')
+  const tAuth = useTranslations('auth')
   const [loading, setLoading] = useState(false)
   const [formData, setFormData] = useState({
     name: "",
@@ -38,8 +42,8 @@ export default function SettingsPage() {
       const token = localStorage.getItem("auth-token")
       if (!token) {
         toast({
-          title: "Error",
-          description: "Please login again",
+          title: tCommon('error'),
+          description: t('pleaseLoginAgain') || "Please login again",
           variant: "destructive",
         })
         return
@@ -62,18 +66,18 @@ export default function SettingsPage() {
         const data = await response.json()
         localStorage.setItem("user", JSON.stringify(data.user))
         toast({
-          title: "Success",
-          description: "Profile updated successfully",
+          title: tCommon('success'),
+          description: t('profileUpdated') || "Profile updated successfully",
         })
         window.dispatchEvent(new Event("storage"))
       } else {
         const data = await response.json()
-        throw new Error(data.error || "Failed to update profile")
+        throw new Error(data.error || t('updateProfileFailed') || "Failed to update profile")
       }
     } catch (error: any) {
       toast({
-        title: "Error",
-        description: error.message || "Failed to save settings",
+        title: tCommon('error'),
+        description: error.message || t('saveSettingsFailed') || "Failed to save settings",
         variant: "destructive",
       })
     } finally {
@@ -90,14 +94,14 @@ export default function SettingsPage() {
     <DashboardLayout userType="landlord">
       <div className="space-y-6">
         <div>
-          <h1 className="text-3xl font-bold">Settings</h1>
-          <p className="text-muted-foreground">Manage your account settings and preferences</p>
+          <h1 className="text-3xl font-bold">{t('settings')}</h1>
+          <p className="text-muted-foreground">{t('manageAccountSettings') || "Manage your account settings and preferences"}</p>
         </div>
 
         <Card>
           <CardHeader>
-            <CardTitle>Profile Information</CardTitle>
-            <CardDescription>Update your personal information</CardDescription>
+            <CardTitle>{t('profileInformation') || "Profile Information"}</CardTitle>
+            <CardDescription>{t('updatePersonalInfo') || "Update your personal information"}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="flex items-center space-x-4">
@@ -106,54 +110,54 @@ export default function SettingsPage() {
                 <AvatarFallback className="text-xl">{getInitials(formData.name)}</AvatarFallback>
               </Avatar>
               <div>
-                <div className="font-semibold">{formData.name || "User"}</div>
+                <div className="font-semibold">{formData.name || tCommon('user')}</div>
                 <div className="text-sm text-muted-foreground">{formData.email}</div>
               </div>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="name">Name</Label>
+              <Label htmlFor="name">{tAuth('name')}</Label>
               <Input
                 id="name"
-                placeholder="Your name"
+                placeholder={tAuth('name')}
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email">{tAuth('email')}</Label>
               <Input
                 id="email"
                 type="email"
-                placeholder="your.email@example.com"
+                placeholder={tAuth('email')}
                 value={formData.email}
                 disabled
                 className="bg-muted"
               />
-              <p className="text-xs text-muted-foreground">Email cannot be changed</p>
+              <p className="text-xs text-muted-foreground">{t('emailCannotBeChanged') || "Email cannot be changed"}</p>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="phone">Phone</Label>
+              <Label htmlFor="phone">{tAuth('phone')}</Label>
               <Input
                 id="phone"
                 type="tel"
-                placeholder="+1 (555) 000-0000"
+                placeholder={tAuth('phone')}
                 value={formData.phone}
                 onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
               />
             </div>
             <Button onClick={handleSave} disabled={loading}>
-              {loading ? "Saving..." : "Save Changes"}
+              {loading ? tCommon('loading') : (t('saveChanges') || "Save Changes")}
             </Button>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Notification Preferences</CardTitle>
-            <CardDescription>Choose how you want to be notified</CardDescription>
+            <CardTitle>{t('notificationPreferences') || "Notification Preferences"}</CardTitle>
+            <CardDescription>{t('chooseNotificationMethod') || "Choose how you want to be notified"}</CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground">Notification settings coming soon</p>
+            <p className="text-sm text-muted-foreground">{t('notificationSettingsComingSoon') || "Notification settings coming soon"}</p>
           </CardContent>
         </Card>
       </div>

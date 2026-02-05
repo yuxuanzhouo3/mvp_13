@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/db'
+import { getDatabaseAdapter } from '@/lib/db-adapter'
 
 /**
  * Get testimonials for the landing page
  */
 export async function GET(request: NextRequest) {
   try {
-    // Try to get testimonials from database
-    const testimonials = await prisma.testimonial.findMany({
-      where: { isActive: true },
+    // 使用数据库适配器，自动根据环境变量选择正确的数据库
+    const db = getDatabaseAdapter()
+    
+    // 查询testimonials（使用数据库适配器，自动处理 Prisma 和 CloudBase 的差异）
+    const testimonials = await db.query('testimonials', { isActive: true }, {
       orderBy: { createdAt: 'desc' },
       take: 6
     })
@@ -36,15 +38,18 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const testimonial = await prisma.testimonial.create({
-      data: {
-        name,
-        role,
-        content,
-        rating: parseInt(rating),
-        avatar: avatar || null,
-        isActive: true
-      }
+    // 使用数据库适配器
+    const db = getDatabaseAdapter()
+    
+    const testimonial = await db.create('testimonials', {
+      name,
+      role,
+      content,
+      rating: parseInt(rating),
+      avatar: avatar || null,
+      isActive: true,
+      createdAt: new Date(),
+      updatedAt: new Date(),
     })
 
     return NextResponse.json({ testimonial })

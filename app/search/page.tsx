@@ -1,7 +1,9 @@
 "use client"
 
+import { Suspense } from "react"
 import { useState, useEffect } from "react"
 import { useSearchParams } from "next/navigation"
+import { useTranslations } from 'next-intl'
 import { Header } from "@/components/layout/header"
 import { Footer } from "@/components/layout/footer"
 import { Card, CardContent } from "@/components/ui/card"
@@ -11,9 +13,12 @@ import { Search, MapPin } from "lucide-react"
 import { PropertyCard } from "@/components/dashboard/property-card"
 import { useToast } from "@/hooks/use-toast"
 
-export default function SearchPage() {
+function SearchContent() {
   const searchParams = useSearchParams()
   const { toast } = useToast()
+  const t = useTranslations('search')
+  const tCommon = useTranslations('common')
+  const tHero = useTranslations('hero')
   const [searchQuery, setSearchQuery] = useState("")
   const [properties, setProperties] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
@@ -60,7 +65,7 @@ export default function SearchPage() {
   const handleSearch = async () => {
     if (!searchQuery.trim()) {
       toast({
-        title: "请输入搜索内容",
+        title: t('enterSearchContent') || tCommon('error'),
         variant: "destructive",
       })
       return
@@ -98,8 +103,8 @@ export default function SearchPage() {
       <main className="container py-12">
         <div className="space-y-6">
           <div>
-            <h1 className="text-3xl font-bold">Search Properties</h1>
-            <p className="text-muted-foreground">Find your ideal home</p>
+            <h1 className="text-3xl font-bold">{t('title')}</h1>
+            <p className="text-muted-foreground">{t('subtitle')}</p>
           </div>
 
           <Card>
@@ -108,7 +113,7 @@ export default function SearchPage() {
                 <div className="flex-1 flex items-center space-x-2">
                   <MapPin className="h-4 w-4 text-muted-foreground" />
                   <Input
-                    placeholder="Enter city, neighborhood, or address"
+                    placeholder={tHero('searchPlaceholder')}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     onKeyPress={(e) => e.key === "Enter" && handleSearch()}
@@ -116,7 +121,7 @@ export default function SearchPage() {
                 </div>
                 <Button onClick={() => handleSearch()} disabled={loading}>
                   <Search className="mr-2 h-4 w-4" />
-                  {loading ? "搜索中..." : "Search"}
+                  {loading ? tCommon('loading') : tCommon('search')}
                 </Button>
               </div>
             </CardContent>
@@ -148,7 +153,7 @@ export default function SearchPage() {
           {properties.length === 0 && !loading && (
             <Card>
               <CardContent className="p-12 text-center">
-                <p className="text-muted-foreground">No properties found. Try a different search.</p>
+                <p className="text-muted-foreground">{t('noPropertiesFound')}</p>
               </CardContent>
             </Card>
           )}
@@ -156,5 +161,13 @@ export default function SearchPage() {
       </main>
       <Footer />
     </div>
+  )
+}
+
+export default function SearchPage() {
+  return (
+    <Suspense fallback={<div />}>
+      <SearchContent />
+    </Suspense>
   )
 }

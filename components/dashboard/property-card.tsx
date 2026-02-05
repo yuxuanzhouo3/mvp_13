@@ -8,6 +8,8 @@ import { Badge } from "@/components/ui/badge"
 import { Heart, MapPin, Bed, Bath, Square, Eye, MessageSquare } from "lucide-react"
 import Image from "next/image"
 import { useToast } from "@/hooks/use-toast"
+import { useTranslations } from 'next-intl'
+import { getCurrencySymbol } from "@/lib/utils"
 
 interface Property {
   id: string | number
@@ -30,6 +32,10 @@ interface PropertyCardProps {
 export function PropertyCard({ property, showSaveButton = true, showManagementActions = false }: PropertyCardProps) {
   const router = useRouter()
   const { toast } = useToast()
+  const t = useTranslations('dashboard')
+  const tProperty = useTranslations('property')
+  const currencySymbol = getCurrencySymbol()
+  const tCommon = useTranslations('common')
   const [isSaved, setIsSaved] = useState(false)
   const [saving, setSaving] = useState(false)
 
@@ -60,8 +66,8 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
     const token = localStorage.getItem("auth-token")
     if (!token) {
       toast({
-        title: "Please login",
-        description: "You need to login to save properties",
+        title: tCommon('error'),
+        description: t('loginToAddProperties') || "You need to login to save properties",
         variant: "destructive",
       })
       return
@@ -78,8 +84,8 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
         if (response.ok) {
           setIsSaved(false)
           toast({
-            title: "Removed",
-            description: "Property removed from saved list",
+            title: tCommon('success'),
+            description: t('removedFromSaved') || "Property removed from saved list",
           })
         }
       } else {
@@ -95,18 +101,18 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
         if (response.ok) {
           setIsSaved(true)
           toast({
-            title: "Saved",
-            description: "Property added to saved list",
+            title: tCommon('success'),
+            description: t('addedToSaved') || "Property added to saved list",
           })
         } else {
           const data = await response.json()
-          throw new Error(data.error || "Failed to save property")
+          throw new Error(data.error || (t('savePropertyFailed') || "Failed to save property"))
         }
       }
     } catch (error: any) {
       toast({
-        title: "Error",
-        description: error.message || "Failed to save property",
+        title: tCommon('error'),
+        description: error.message || (t('savePropertyFailed') || "Failed to save property"),
         variant: "destructive",
       })
     } finally {
@@ -164,7 +170,7 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
         <div className="flex items-start justify-between mb-2">
           <h3 className="font-semibold text-lg line-clamp-1 flex-1 mr-2" title={property.title}>{property.title}</h3>
           <span className="text-xl font-bold text-primary whitespace-nowrap">
-            ${property.price.toLocaleString()}
+            {currencySymbol}{property.price.toLocaleString()}
             <span className="text-sm font-normal text-muted-foreground">/mo</span>
           </span>
         </div>
@@ -177,15 +183,15 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
         <div className="flex items-center space-x-4 text-sm text-muted-foreground mb-4">
           <div className="flex items-center whitespace-nowrap">
             <Bed className="h-4 w-4 mr-1" />
-            {property.beds} bed{property.beds > 1 ? "s" : ""}
+            {property.beds} {tProperty('bedrooms')}
           </div>
           <div className="flex items-center whitespace-nowrap">
             <Bath className="h-4 w-4 mr-1" />
-            {property.baths} bath{property.baths > 1 ? "s" : ""}
+            {property.baths} {tProperty('bathrooms')}
           </div>
           <div className="flex items-center whitespace-nowrap">
             <Square className="h-4 w-4 mr-1" />
-            {property.sqft} sqft
+            {property.sqft} {tProperty('sqft') || tProperty('buildingArea')}
           </div>
         </div>
 
@@ -195,7 +201,7 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
             <div className="flex space-x-2">
               <Button size="sm" variant="outline" className="flex-1 bg-transparent" onClick={handleViewDetails}>
                 <Eye className="mr-2 h-4 w-4" />
-                View
+                {tCommon('view') || t('viewDetails')}
               </Button>
               <Button 
                 size="sm" 
@@ -205,8 +211,8 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
                   const token = localStorage.getItem("auth-token")
                   if (!token) {
                     toast({
-                      title: "Please login",
-                      description: "You need to login to send messages",
+                      title: tCommon('error'),
+                      description: t('noMessagesYet') || "You need to login to send messages",
                       variant: "destructive",
                     })
                     router.push("/auth/login")
@@ -248,19 +254,19 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
                     }
                   } catch (error: any) {
                     toast({
-                      title: "Error",
-                      description: error.message || "Failed to load property information",
+                      title: tCommon('error'),
+                      description: error.message || (t('loadPropertyFailed') || "Failed to load property information"),
                       variant: "destructive",
                     })
                   }
                 }}
               >
                 <MessageSquare className="mr-2 h-4 w-4" />
-                Messages
+                {t('messages')}
               </Button>
             </div>
           ) : (
-            <Button className="w-full" onClick={handleViewDetails}>View Details</Button>
+            <Button className="w-full" onClick={handleViewDetails}>{t('viewDetails') || tCommon('view')}</Button>
           )}
         </div>
       </CardContent>

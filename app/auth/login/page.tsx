@@ -1,18 +1,22 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
+import { useTranslations } from 'next-intl'
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Shield } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
 export default function LoginPage() {
   const router = useRouter()
   const { toast } = useToast()
+  const t = useTranslations('auth')
+  const tCommon = useTranslations('common')
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
@@ -22,27 +26,30 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
+      // 不传递 region，让后端根据环境变量自动判断
       const response = await fetch("/api/auth/login", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ email, password }),
       })
 
       const data = await response.json()
 
       if (!response.ok) {
-        throw new Error(data.error || "Login failed")
+        throw new Error(data.error || t('loginFailed'))
       }
 
-      // 保存 token
+      // 保存 token 和用户信息
       if (data.token) {
         localStorage.setItem("auth-token", data.token)
         localStorage.setItem("user", JSON.stringify(data.user))
       }
 
       toast({
-        title: "Login successful",
-        description: "Welcome back!",
+        title: tCommon('success'),
+        description: t('loginSuccessful'),
       })
 
       // 根据用户类型跳转
@@ -57,8 +64,8 @@ export default function LoginPage() {
       }
     } catch (error: any) {
       toast({
-        title: "Login failed",
-        description: error.message || "Please check your email and password",
+        title: t('loginFailed'),
+        description: error.message || t('invalidCredentials'),
         variant: "destructive",
       })
     } finally {
@@ -73,43 +80,43 @@ export default function LoginPage() {
           <div className="flex justify-center mb-4">
             <Shield className="h-12 w-12 text-primary" />
           </div>
-          <CardTitle className="text-2xl">Welcome Back</CardTitle>
-          <CardDescription>Sign in to your RentGuard account</CardDescription>
+          <CardTitle className="text-2xl">{t('loginTitle')}</CardTitle>
+          <CardDescription>{t('loginDescription')}</CardDescription>
         </CardHeader>
 
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="email">{t('email')}</Label>
               <Input
                 id="email"
                 type="email"
-                placeholder="Enter your email"
+                placeholder={t('email')}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <Label htmlFor="password">{t('password')}</Label>
               <Input
                 id="password"
                 type="password"
-                placeholder="Enter your password"
+                placeholder={t('password')}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
               />
             </div>
             <Button type="submit" className="w-full" size="lg" disabled={loading}>
-              {loading ? "Signing in..." : "Sign In"}
+              {loading ? t('signingIn') : t('signIn')}
             </Button>
           </form>
 
           <div className="mt-6 text-center text-sm">
-            <span className="text-muted-foreground">Don't have an account? </span>
+            <span className="text-muted-foreground">{t('dontHaveAccount')} </span>
             <Link href="/auth/signup" className="text-primary hover:underline">
-              Sign up
+              {tCommon('signup')}
             </Link>
           </div>
         </CardContent>

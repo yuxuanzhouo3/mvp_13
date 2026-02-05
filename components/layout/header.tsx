@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import Link from "next/link"
+import { useTranslations } from 'next-intl'
 import { Button } from "@/components/ui/button"
 import { ModeToggle } from "@/components/mode-toggle"
 import { Menu, Shield } from "lucide-react"
@@ -9,12 +10,14 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 
 export function Header() {
   const [isOpen, setIsOpen] = useState(false)
+  const t = useTranslations('common')
+  const tNav = useTranslations('navigation')
 
   const navigation = [
-    { name: "Find Homes", href: "/search" },
-    { name: "List Property", href: "/list-property" },
-    { name: "How it Works", href: "/how-it-works" },
-    { name: "Deposit Protection", href: "/deposit-protection" },
+    { name: tNav('findHomes'), href: "/search" },
+    { name: tNav('listProperty'), href: "/list-property" },
+    { name: tNav('howItWorks'), href: "/how-it-works" },
+    { name: tNav('depositProtection'), href: "/deposit-protection" },
   ]
 
   return (
@@ -38,10 +41,10 @@ export function Header() {
           <ModeToggle />
           <div className="hidden md:flex items-center space-x-2">
             <Button variant="ghost" asChild>
-              <Link href="/auth/login">Login</Link>
+              <Link href="/auth/login">{t('login')}</Link>
             </Button>
             <Button asChild>
-              <Link href="/auth/signup">Sign Up</Link>
+              <Link href="/auth/signup">{t('signup')}</Link>
             </Button>
           </div>
 
@@ -66,10 +69,10 @@ export function Header() {
                 ))}
                 <div className="flex flex-col space-y-2 pt-4">
                   <Button variant="ghost" asChild>
-                    <Link href="/auth/login">Login</Link>
+                    <Link href="/auth/login">{t('login')}</Link>
                   </Button>
                   <Button asChild>
-                    <Link href="/auth/signup">Sign Up</Link>
+                    <Link href="/auth/signup">{t('signup')}</Link>
                   </Button>
                 </div>
               </nav>

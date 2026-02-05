@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
+import { useTranslations } from 'next-intl'
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -15,6 +16,8 @@ import { useToast } from "@/hooks/use-toast"
 export default function AgentDashboard() {
   const router = useRouter()
   const { toast } = useToast()
+  const t = useTranslations('dashboard')
+  const tCommon = useTranslations('common')
   const [stats, setStats] = useState({
     totalProperties: 0,
     totalLandlords: 0,
@@ -39,8 +42,8 @@ export default function AgentDashboard() {
       // Verify user is an agent
       if (user.userType !== "AGENT") {
         toast({
-          title: "Access Denied",
-          description: "This page is only for agents",
+          title: tCommon('error'),
+          description: t('accessDenied') || "This page is only for agents",
           variant: "destructive",
         })
         if (user.userType === "TENANT") {
@@ -113,8 +116,8 @@ export default function AgentDashboard() {
         {/* Header */}
         <div className="flex justify-between items-center">
           <div>
-            <h1 className="text-3xl font-bold">Welcome back, {userName}!</h1>
-            <p className="text-muted-foreground">Manage your properties, landlords, and tenants efficiently.</p>
+            <h1 className="text-3xl font-bold">{t('welcomeBackAgent', { name: userName }) || `${t('welcome')}, ${userName}!`}</h1>
+            <p className="text-muted-foreground">{t('manageEfficiently') || "Manage your properties, landlords, and tenants efficiently."}</p>
           </div>
         </div>
 
@@ -124,9 +127,9 @@ export default function AgentDashboard() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Total Properties</p>
+                  <p className="text-sm font-medium text-muted-foreground">{t('totalProperties')}</p>
                   <p className="text-2xl font-bold">{stats.totalProperties}</p>
-                  <p className="text-xs text-muted-foreground mt-1">Properties under management</p>
+                  <p className="text-xs text-muted-foreground mt-1">{t('propertiesUnderManagement') || "Properties under management"}</p>
                 </div>
                 <Building className="h-8 w-8 text-primary" />
               </div>
@@ -136,9 +139,9 @@ export default function AgentDashboard() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Landlords</p>
+                  <p className="text-sm font-medium text-muted-foreground">{t('landlords')}</p>
                   <p className="text-2xl font-bold">{stats.totalLandlords}</p>
-                  <p className="text-xs text-muted-foreground mt-1">Partner landlords</p>
+                  <p className="text-xs text-muted-foreground mt-1">{t('partnerLandlords') || "Partner landlords"}</p>
                 </div>
                 <Users className="h-8 w-8 text-primary" />
               </div>
@@ -148,9 +151,9 @@ export default function AgentDashboard() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Tenants Served</p>
+                  <p className="text-sm font-medium text-muted-foreground">{t('tenantsServed') || "Tenants Served"}</p>
                   <p className="text-2xl font-bold">{stats.totalTenants}</p>
-                  <p className="text-xs text-muted-foreground mt-1">Active tenant relationships</p>
+                  <p className="text-xs text-muted-foreground mt-1">{t('activeTenantRelationships') || "Active tenant relationships"}</p>
                 </div>
                 <Users className="h-8 w-8 text-primary" />
               </div>
@@ -160,9 +163,9 @@ export default function AgentDashboard() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Unread Messages</p>
+                  <p className="text-sm font-medium text-muted-foreground">{t('unreadMessages') || "Unread Messages"}</p>
                   <p className="text-2xl font-bold">{stats.unreadMessages}</p>
-                  <p className="text-xs text-muted-foreground mt-1">New messages</p>
+                  <p className="text-xs text-muted-foreground mt-1">{t('newMessages') || "New messages"}</p>
                 </div>
                 <MessageSquare className="h-8 w-8 text-primary" />
               </div>
@@ -173,8 +176,8 @@ export default function AgentDashboard() {
         {/* Recent Activity */}
         <Card>
           <CardHeader>
-            <CardTitle>Recent Activity</CardTitle>
-            <CardDescription>Latest updates from your network</CardDescription>
+            <CardTitle>{t('recentActivity')}</CardTitle>
+            <CardDescription>{t('latestUpdatesFromNetwork') || "Latest updates from your network"}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
@@ -194,7 +197,7 @@ export default function AgentDashboard() {
                   </div>
                 ))
               ) : (
-                <div className="text-center py-8 text-muted-foreground">No recent activity</div>
+                <div className="text-center py-8 text-muted-foreground">{t('noRecentActivity') || "No recent activity"}</div>
               )}
             </div>
           </CardContent>
@@ -203,21 +206,21 @@ export default function AgentDashboard() {
         {/* Main Content Tabs */}
         <Tabs defaultValue="properties" className="space-y-6">
           <TabsList>
-            <TabsTrigger value="properties">Properties</TabsTrigger>
-            <TabsTrigger value="landlords">Landlords</TabsTrigger>
-            <TabsTrigger value="tenants">Tenants</TabsTrigger>
-            <TabsTrigger value="messages">Messages</TabsTrigger>
+            <TabsTrigger value="properties">{t('properties')}</TabsTrigger>
+            <TabsTrigger value="landlords">{t('landlords')}</TabsTrigger>
+            <TabsTrigger value="tenants">{t('tenants')}</TabsTrigger>
+            <TabsTrigger value="messages">{t('messages')}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="properties">
             <Card>
               <CardHeader>
-                <CardTitle>Managed Properties</CardTitle>
-                <CardDescription>Properties under your management</CardDescription>
+                <CardTitle>{t('managedProperties') || "Managed Properties"}</CardTitle>
+                <CardDescription>{t('propertiesUnderManagement') || "Properties under your management"}</CardDescription>
               </CardHeader>
               <CardContent>
                 {loading ? (
-                  <div className="text-center py-8 text-muted-foreground">Loading properties...</div>
+                  <div className="text-center py-8 text-muted-foreground">{tCommon('loading')}</div>
                 ) : properties.length > 0 ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {properties.map((property: any) => (
@@ -242,7 +245,7 @@ export default function AgentDashboard() {
                   </div>
                 ) : (
                   <div className="text-center py-8 text-muted-foreground">
-                    No properties yet. Start by connecting with landlords.
+                    {t('noPropertiesYet') || "No properties yet. Start by connecting with landlords."}
                   </div>
                 )}
               </CardContent>
@@ -253,12 +256,12 @@ export default function AgentDashboard() {
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle>Partner Landlords</CardTitle>
-                  <CardDescription>Landlords you work with</CardDescription>
+                  <CardTitle>{t('partnerLandlords') || "Partner Landlords"}</CardTitle>
+                  <CardDescription>{t('landlordsYouWorkWith') || "Landlords you work with"}</CardDescription>
                 </div>
                 {landlords.length > 4 && (
                   <Button variant="outline" onClick={() => router.push("/dashboard/agent/landlords")}>
-                    View All
+                    {tCommon('view') || "View All"}
                   </Button>
                 )}
               </CardHeader>
@@ -281,20 +284,20 @@ export default function AgentDashboard() {
                           variant="outline"
                           onClick={() => router.push(`/dashboard/agent/messages?userId=${landlord.id}`)}
                         >
-                          Message
+                          {t('messages')}
                         </Button>
                       </div>
                     ))}
                   </div>
                 ) : (
                   <div className="text-center py-8 text-muted-foreground">
-                    No landlords yet
+                    {t('noLandlordsYet') || "No landlords yet"}
                   </div>
                 )}
                 {landlords.length > 0 && landlords.length <= 4 && (
                   <div className="mt-4 text-center">
                     <Button variant="outline" onClick={() => router.push("/dashboard/agent/landlords")}>
-                      View All Landlords
+                      {t('viewAllLandlords') || "View All Landlords"}
                     </Button>
                   </div>
                 )}
@@ -306,12 +309,12 @@ export default function AgentDashboard() {
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle>Tenant Clients</CardTitle>
-                  <CardDescription>Tenants you're helping find homes</CardDescription>
+                  <CardTitle>{t('tenantClients') || "Tenant Clients"}</CardTitle>
+                  <CardDescription>{t('tenantsYouHelping') || "Tenants you're helping find homes"}</CardDescription>
                 </div>
                 {tenants.length > 4 && (
                   <Button variant="outline" onClick={() => router.push("/dashboard/agent/tenants")}>
-                    View All
+                    {tCommon('view') || "View All"}
                   </Button>
                 )}
               </CardHeader>
@@ -334,20 +337,20 @@ export default function AgentDashboard() {
                           variant="outline"
                           onClick={() => router.push(`/dashboard/agent/messages?userId=${tenant.id}`)}
                         >
-                          Message
+                          {t('messages')}
                         </Button>
                       </div>
                     ))}
                   </div>
                 ) : (
                   <div className="text-center py-8 text-muted-foreground">
-                    No tenants yet
+                    {t('noTenantsYet') || "No tenants yet"}
                   </div>
                 )}
                 {tenants.length > 0 && tenants.length <= 4 && (
                   <div className="mt-4 text-center">
                     <Button variant="outline" onClick={() => router.push("/dashboard/agent/tenants")}>
-                      View All Tenants
+                      {t('viewAllTenants') || "View All Tenants"}
                     </Button>
                   </div>
                 )}

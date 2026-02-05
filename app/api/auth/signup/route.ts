@@ -39,6 +39,29 @@ export async function POST(request: NextRequest) {
     console.error('Signup error:', error)
     // 提供更详细的错误信息
     const errorMessage = error.message || '注册失败'
+    const lower = errorMessage.toLowerCase()
+    
+    // 检查是否是数据库连接问题
+    if (
+      lower.includes("can't reach database server") ||
+      lower.includes('can\\u2019t reach database server') ||
+      lower.includes('maxclients') ||
+      lower.includes('max clients reached') ||
+      lower.includes('pool_size') ||
+      lower.includes("can't reach") ||
+      lower.includes('connection') ||
+      lower.includes('timeout') ||
+      lower.includes('pooler')
+    ) {
+      return NextResponse.json(
+        { 
+          error: '数据库连接失败，请稍后重试',
+          details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        },
+        { status: 503 }
+      )
+    }
+    
     console.error('Signup error details:', {
       message: errorMessage,
       stack: error.stack,

@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useTranslations } from 'next-intl'
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -12,6 +13,9 @@ import { useToast } from "@/hooks/use-toast"
 
 export default function AgentSettingsPage() {
   const { toast } = useToast()
+  const t = useTranslations('dashboard')
+  const tCommon = useTranslations('common')
+  const tAuth = useTranslations('auth')
   const [loading, setLoading] = useState(false)
   const [formData, setFormData] = useState({
     name: "",
@@ -43,8 +47,8 @@ export default function AgentSettingsPage() {
       const token = localStorage.getItem("auth-token")
       if (!token) {
         toast({
-          title: "Error",
-          description: "Please login again",
+          title: tCommon('error'),
+          description: t('pleaseLoginAgain') || "Please login again",
           variant: "destructive",
         })
         return
@@ -67,18 +71,18 @@ export default function AgentSettingsPage() {
         const data = await response.json()
         localStorage.setItem("user", JSON.stringify(data.user))
         toast({
-          title: "Success",
-          description: "Profile updated successfully",
+          title: tCommon('success'),
+          description: t('profileUpdated') || "Profile updated successfully",
         })
         window.dispatchEvent(new Event("storage"))
       } else {
         const data = await response.json()
-        throw new Error(data.error || "Failed to update profile")
+        throw new Error(data.error || t('updateProfileFailed') || "Failed to update profile")
       }
     } catch (error: any) {
       toast({
-        title: "Error",
-        description: error.message || "Failed to save settings",
+        title: tCommon('error'),
+        description: error.message || t('saveSettingsFailed') || "Failed to save settings",
         variant: "destructive",
       })
     } finally {
@@ -95,14 +99,14 @@ export default function AgentSettingsPage() {
     <DashboardLayout userType="agent">
       <div className="space-y-6">
         <div>
-          <h1 className="text-3xl font-bold">Settings</h1>
-          <p className="text-muted-foreground">Manage your account settings</p>
+          <h1 className="text-3xl font-bold">{t('settings')}</h1>
+          <p className="text-muted-foreground">{t('manageAccountSettings') || "Manage your account settings"}</p>
         </div>
 
         <Card>
           <CardHeader>
-            <CardTitle>Profile Information</CardTitle>
-            <CardDescription>Update your personal and business information</CardDescription>
+            <CardTitle>{t('profileInformation') || "Profile Information"}</CardTitle>
+            <CardDescription>{t('updatePersonalAndBusinessInfo') || "Update your personal and business information"}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
             <div className="flex items-center space-x-4">
@@ -111,14 +115,14 @@ export default function AgentSettingsPage() {
                 <AvatarFallback className="text-xl">{getInitials(formData.name)}</AvatarFallback>
               </Avatar>
               <div>
-                <div className="font-semibold">{formData.name || "User"}</div>
+                <div className="font-semibold">{formData.name || tCommon('user')}</div>
                 <div className="text-sm text-muted-foreground">{formData.email}</div>
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="name">Full Name</Label>
+                <Label htmlFor="name">{t('fullName') || "Full Name"}</Label>
                 <Input
                   id="name"
                   value={formData.name}
@@ -126,7 +130,7 @@ export default function AgentSettingsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
+                <Label htmlFor="email">{tAuth('email')}</Label>
                 <Input
                   id="email"
                   type="email"
@@ -134,13 +138,13 @@ export default function AgentSettingsPage() {
                   disabled
                   className="bg-muted"
                 />
-                <p className="text-xs text-muted-foreground">Email cannot be changed</p>
+                <p className="text-xs text-muted-foreground">{t('emailCannotBeChanged') || "Email cannot be changed"}</p>
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="phone">Phone</Label>
+                <Label htmlFor="phone">{tAuth('phone')}</Label>
                 <Input
                   id="phone"
                   value={formData.phone}
@@ -148,50 +152,50 @@ export default function AgentSettingsPage() {
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="companyName">Company Name</Label>
+                <Label htmlFor="companyName">{t('companyName') || "Company Name"}</Label>
                 <Input
                   id="companyName"
                   value={formData.companyName}
                   onChange={(e) => setFormData({ ...formData, companyName: e.target.value })}
-                  placeholder="Your real estate company"
+                  placeholder={t('realEstateCompanyPlaceholder') || "Your real estate company"}
                 />
               </div>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="licenseNumber">License Number</Label>
+              <Label htmlFor="licenseNumber">{t('licenseNumber') || "License Number"}</Label>
               <Input
                 id="licenseNumber"
                 value={formData.licenseNumber}
                 onChange={(e) => setFormData({ ...formData, licenseNumber: e.target.value })}
-                placeholder="Your real estate license number"
+                placeholder={t('licenseNumberPlaceholder') || "Your real estate license number"}
               />
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="bio">Bio</Label>
+              <Label htmlFor="bio">{t('bio') || "Bio"}</Label>
               <Textarea
                 id="bio"
                 value={formData.bio}
                 onChange={(e) => setFormData({ ...formData, bio: e.target.value })}
-                placeholder="Tell clients about yourself..."
+                placeholder={t('bioPlaceholder') || "Tell clients about yourself..."}
                 rows={4}
               />
             </div>
 
             <Button onClick={handleSave} disabled={loading}>
-              {loading ? "Saving..." : "Save Changes"}
+              {loading ? tCommon('loading') : (t('saveChanges') || "Save Changes")}
             </Button>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Notification Preferences</CardTitle>
-            <CardDescription>Choose how you want to be notified</CardDescription>
+            <CardTitle>{t('notificationPreferences') || "Notification Preferences"}</CardTitle>
+            <CardDescription>{t('chooseNotificationMethod') || "Choose how you want to be notified"}</CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground">Notification settings coming soon</p>
+            <p className="text-sm text-muted-foreground">{t('notificationSettingsComingSoon') || "Notification settings coming soon"}</p>
           </CardContent>
         </Card>
       </div>

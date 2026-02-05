@@ -56,6 +56,11 @@ export async function getCurrentUser(request: NextRequest): Promise<AuthUser | n
  */
 async function getCurrentUserFromSupabase(request: NextRequest): Promise<AuthUser | null> {
   try {
+    // 检查 Supabase 是否已初始化
+    if (!supabaseAdmin) {
+      return null
+    }
+
     const authHeader = request.headers.get('authorization')
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return null
@@ -257,6 +262,12 @@ export async function signUpWithSupabase(
   password: string,
   metadata?: { name?: string; phone?: string; userType?: string }
 ): Promise<AuthResult> {
+  // 检查 Supabase 是否已初始化
+  if (!supabaseAdmin) {
+    console.warn('Supabase not initialized, falling back to JWT registration')
+    return await signUpWithJWT(email, password, metadata)
+  }
+
   // 先尝试 Supabase 注册；若遇到限流或数据库连接问题则降级为"数据库 + JWT"
   let data, error
   try {
@@ -461,6 +472,12 @@ export async function loginWithSupabase(
   email: string,
   password: string
 ): Promise<AuthResult> {
+  // 检查 Supabase 是否已初始化
+  if (!supabaseAdmin) {
+    console.warn('Supabase not initialized, falling back to JWT login')
+    return await loginWithJWT(email, password)
+  }
+
   // 先尝试 Supabase 登录；若失败（比如用户是降级注册的，仅在本地数据库存在）则改用 JWT 登录
   let data, error
   try {
@@ -823,6 +840,10 @@ export async function loginWithOAuth(provider: 'google' | 'github'): Promise<{ u
   
   if (region !== 'global') {
     throw new Error('OAuth 登录仅在国际版支持')
+  }
+
+  if (!supabase) {
+    throw new Error('Supabase 未初始化，无法使用 OAuth 登录')
   }
 
   const { data, error } = await supabase.auth.signInWithOAuth({

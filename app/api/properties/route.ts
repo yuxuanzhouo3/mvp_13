@@ -12,10 +12,34 @@ export async function POST(request: NextRequest) {
 
     let user = await getCurrentUser(request)
 
-    // 如果 getCurrentUser 失败，尝试使用 legacy auth
+    // 如果 getCurrentUser 失败，尝试使用 legacy auth 并从 JWT token 中提取完整信息
     if (!user) {
       const legacyAuth = getAuthUser(request)
       if (legacyAuth) {
+        // 尝试从 JWT token 中提取完整用户信息（包括 userType）
+        let userType = 'TENANT' // 默认值
+        try {
+          const jwt = require('jsonwebtoken')
+          const authHeader = request.headers.get('authorization')
+          if (authHeader && authHeader.startsWith('Bearer ')) {
+            const token = authHeader.substring(7)
+            try {
+              const decoded = jwt.verify(
+                token,
+                process.env.JWT_SECRET || 'your-secret-key'
+              ) as { userId: string; email: string; userType?: string }
+              userType = decoded.userType || 'TENANT'
+            } catch (verifyError) {
+              // JWT 验证失败，使用默认值
+              console.warn('Failed to verify JWT token:', verifyError)
+            }
+          }
+        } catch (jwtError) {
+          // JWT 解析失败，使用默认值
+          console.warn('Failed to extract userType from JWT token:', jwtError)
+        }
+
+        // 尝试从数据库获取用户信息
         try {
           const legacyDbUser =
             (await db.findUserById(legacyAuth.userId)) ||
@@ -29,32 +53,20 @@ export async function POST(request: NextRequest) {
               isPremium: legacyDbUser.isPremium,
               vipLevel: legacyDbUser.vipLevel || (legacyDbUser.isPremium ? 'PREMIUM' : 'FREE'),
             }
+          } else {
+            // 数据库中没有找到用户，但 JWT token 有效，使用 token 中的信息
+            user = {
+              id: legacyAuth.userId,
+              email: legacyAuth.email,
+              name: legacyAuth.email.split('@')[0],
+              userType: userType, // 从 JWT token 中获取
+              isPremium: false,
+              vipLevel: 'FREE',
+            }
           }
         } catch (dbError: any) {
-          // 如果数据库查询失败，但 legacy auth 有效，尝试从 JWT token 中提取 userType
+          // 如果数据库查询失败，但 legacy auth 有效，使用 JWT token 中的信息
           console.warn('Database query failed but legacy auth is valid:', dbError.message)
-          // 尝试从 JWT token 中提取 userType
-          let userType = 'TENANT' // 默认值
-          try {
-            const jwt = require('jsonwebtoken')
-            const authHeader = request.headers.get('authorization')
-            if (authHeader && authHeader.startsWith('Bearer ')) {
-              const token = authHeader.substring(7)
-              try {
-                const decoded = jwt.verify(
-                  token,
-                  process.env.JWT_SECRET || 'your-secret-key'
-                ) as { userId: string; email: string; userType?: string }
-                userType = decoded.userType || 'TENANT'
-              } catch (verifyError) {
-                // JWT 验证失败，使用默认值
-                console.warn('Failed to verify JWT token:', verifyError)
-              }
-            }
-          } catch (jwtError) {
-            // JWT 解析失败，使用默认值
-            console.warn('Failed to extract userType from JWT token:', jwtError)
-          }
           user = {
             id: legacyAuth.userId,
             email: legacyAuth.email,

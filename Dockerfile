@@ -40,6 +40,9 @@ ENV NEXT_PUBLIC_APP_REGION=china
 # 填入你 .env 文件里的那个 ID
 ENV NEXT_PUBLIC_CLOUDBASE_ENV_ID=homes-8ghqrqte660fbf1d
 
+# 添加一个假的 DATABASE_URL 以骗过 Prisma 的构建检查
+ENV DATABASE_URL="postgresql://dummy:dummy@localhost:5432/dummy"
+
 # 生成 Prisma Client (如果有)
 RUN if [ -f prisma/schema.prisma ]; then \
       npx prisma generate || echo "Prisma generate skipped"; \

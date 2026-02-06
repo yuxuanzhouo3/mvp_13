@@ -2,24 +2,30 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-adapter'
 import { getDatabaseAdapter } from '@/lib/db-adapter'
 
+// 定义 Next.js 15 的 params 类型
+type Props = {
+  params: Promise<{ id: string }>
+}
+
 /**
  * 获取单个房源详情
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  props: Props
 ) {
+  // 1. 在 Next.js 15 中，必须先 await params
+  const params = await props.params;
+  
   try {
     const db = getDatabaseAdapter()
     
-    // 对于 CloudBase，可能需要使用 query 方法查询
     const region = process.env.NEXT_PUBLIC_APP_REGION || 'global'
     
     console.log('Fetching property:', params.id, 'Region:', region)
     
     let property
     if (region === 'china') {
-      // CloudBase: 先尝试使用 findById，如果失败则使用 query
       try {
         property = await db.findById('properties', params.id)
         if (property) {
@@ -31,7 +37,6 @@ export async function GET(
         console.log('FindById failed, trying query method:', findError.message)
       }
       
-      // 如果 findById 失败或返回 null，使用 query 方法查询所有房源，然后过滤
       if (!property) {
         try {
           const allProperties = await db.query('properties', {})
@@ -40,34 +45,21 @@ export async function GET(
           if (allProperties.length === 0) {
             console.warn('No properties found in database')
           } else {
-            // 尝试多种ID匹配方式
             property = allProperties.find((p: any) => {
-              // 支持多种ID字段格式
               const pId = String(p.id || p._id || p.propertyId || '')
               const searchId = String(params.id || '')
-              const match = pId === searchId
-              if (match) {
-                console.log('Property matched:', { pId, searchId, title: p.title })
-              }
-              return match
+              return pId === searchId
             })
             
             if (!property) {
               console.log('Property not found in query results. Search ID:', params.id)
-              console.log('Available IDs (first 10):', 
-                allProperties.slice(0, 10).map((p: any) => ({ 
-                  id: p.id, 
-                  _id: p._id, 
-                  propertyId: p.propertyId,
-                  title: p.title 
-                })))
             }
           }
         } catch (queryError: any) {
           console.error('Query error:', queryError)
-          // 如果 query 也失败，尝试直接使用 findById 的原始方法
           try {
-            const { db: cloudbaseDb } = await import('./cloudbase')
+            // ✅ 修正点：使用 @/lib/cloudbase 绝对路径
+            const { db: cloudbaseDb } = await import('@/lib/cloudbase')
             const result = await cloudbaseDb
               .collection('properties')
               .doc(String(params.id))
@@ -86,24 +78,18 @@ export async function GET(
         }
       }
     } else {
-      // Supabase: 使用 findById
       property = await db.findById('properties', params.id)
     }
 
     if (!property) {
-      console.error('Property not found:', params.id, 'Region:', region)
       return NextResponse.json(
         { error: 'Property not found' },
         { status: 404 }
       )
     }
     
-    console.log('Property found:', property.id || property._id, property.title)
-
-    // 手动加载房东信息
     const landlordId = property.landlordId || property.landlord?._id || property.landlord?.id
     if (!landlordId) {
-      console.error('Property has no landlordId:', property)
       return NextResponse.json(
         { error: 'Property landlord not found' },
         { status: 404 }
@@ -136,8 +122,9 @@ export async function GET(
  */
 export async function PATCH(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  props: Props
 ) {
+  const params = await props.params; // await params
   try {
     const user = await getCurrentUser(request)
     if (!user) {
@@ -182,8 +169,9 @@ export async function PATCH(
  */
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  props: Props
 ) {
+  const params = await props.params; // await params
   try {
     const user = await getCurrentUser(request)
     if (!user) {

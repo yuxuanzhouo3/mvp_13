@@ -18,7 +18,7 @@ RUN npm install -g pnpm --registry=https://registry.npmmirror.com
 
 # 安装依赖
 RUN if [ -f pnpm-lock.yaml ]; then \
-      pnpm install --frozen-lockfile; \
+      pnpm install --no-frozen-lockfile; \
     else \
       npm ci; \
     fi

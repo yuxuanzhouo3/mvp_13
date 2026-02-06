@@ -58,6 +58,34 @@ export default function AgentDashboard() {
     fetchDashboardData()
   }, [])
 
+  const localizeRelativeTime = (time?: string) => {
+    if (process.env.NEXT_PUBLIC_APP_REGION !== 'china' || !time) return time || ''
+    const v = (time || '').toLowerCase()
+    return v
+      .replace(/just now/g, '刚刚')
+      .replace(/(\d+)\s*minutes?\s*ago/g, '$1 分钟前')
+      .replace(/(\d+)\s*hours?\s*ago/g, '$1 小时前')
+      .replace(/(\d+)\s*days?\s*ago/g, '$1 天前')
+      .replace(/(\d+)\s*months?\s*ago/g, '$1 个月前')
+  }
+
+  const localizeStatus = (status?: string) => {
+    const s = (status || '').toLowerCase()
+    if (process.env.NEXT_PUBLIC_APP_REGION !== 'china') return status || ''
+    switch (s) {
+      case 'success':
+        return tCommon('success')
+      case 'pending':
+        return t('pending')
+      case 'completed':
+        return tCommon('success')
+      case 'failed':
+        return t('failed') || '失败'
+      default:
+        return status || ''
+    }
+  }
+
   const fetchDashboardData = async () => {
     try {
       const token = localStorage.getItem("auth-token")
@@ -198,11 +226,11 @@ export default function AgentDashboard() {
                       <div className="w-2 h-2 rounded-full bg-primary"></div>
                       <div>
                         <div className="font-medium">{activity.message}</div>
-                        <div className="text-sm text-muted-foreground">{activity.time}</div>
+                        <div className="text-sm text-muted-foreground">{localizeRelativeTime(activity.time)}</div>
                       </div>
                     </div>
                     <Badge variant={activity.type === "success" ? "default" : "secondary"}>
-                      {activity.status}
+                      {localizeStatus(activity.status)}
                     </Badge>
                   </div>
                 ))

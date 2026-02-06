@@ -21,6 +21,7 @@ export default function LandlordDashboard() {
   const router = useRouter()
   const t = useTranslations('dashboard')
   const tProperty = useTranslations('property')
+  const tApplication = useTranslations('application')
   const [stats, setStats] = useState({
     totalProperties: 0,
     activeTenants: 0,
@@ -74,12 +75,17 @@ export default function LandlordDashboard() {
         setStats(prev => ({ ...prev, activeTenants: applications.filter((a: any) => a.status === 'APPROVED').length }))
         
         // Set recent activity from applications
+        const regionIsChina = process.env.NEXT_PUBLIC_APP_REGION === 'china'
         const recent = applications.slice(0, 3).map((app: any, index: number) => ({
           id: app.id,
           type: "application",
-          message: `New application for ${app.property?.title || 'Property'}`,
-          time: index === 0 ? "2 hours ago" : index === 1 ? "1 day ago" : "2 days ago",
-          status: app.status?.toLowerCase() || "pending",
+          message: regionIsChina 
+            ? t('newApplicationForProperty', { title: app.property?.title || t('property') })
+            : `New application for ${app.property?.title || 'Property'}`,
+          time: regionIsChina 
+            ? (index === 0 ? "2 小时前" : index === 1 ? "1 天前" : "2 天前")
+            : (index === 0 ? "2 hours ago" : index === 1 ? "1 day ago" : "2 days ago"),
+          status: app.status || "PENDING",
         }))
         setRecentActivity(recent)
       }
@@ -177,8 +183,24 @@ export default function LandlordDashboard() {
                         <div className="text-sm text-muted-foreground">{activity.time}</div>
                       </div>
                     </div>
-                    <Badge variant={activity.status === "completed" ? "default" : "secondary"}>
-                      {activity.status.replace("_", " ")}
+                    <Badge variant={activity.status === "APPROVED" || activity.status === "COMPLETED" ? "default" : "secondary"}>
+                      {(() => {
+                        const s = (activity.status || '').toUpperCase()
+                        switch (s) {
+                          case 'APPROVED':
+                            return tApplication('approved')
+                          case 'PENDING':
+                            return tApplication('pending')
+                          case 'REJECTED':
+                            return tApplication('rejected')
+                          case 'WITHDRAWN':
+                            return tApplication('withdrawn')
+                          case 'UNDER_REVIEW':
+                            return tApplication('underReview')
+                          default:
+                            return activity.status
+                        }
+                      })()}
                     </Badge>
                   </div>
                 ))}

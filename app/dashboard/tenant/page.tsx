@@ -41,6 +41,24 @@ export default function TenantDashboard() {
   const [userName, setUserName] = useState("")
   const [representedBy, setRepresentedBy] = useState<{name: string, id: string} | null>(null)
 
+  const renderAppStatus = (status?: string) => {
+    const s = (status || '').toUpperCase()
+    switch (s) {
+      case 'APPROVED':
+        return t('approved')
+      case 'PENDING':
+        return t('pending')
+      case 'REJECTED':
+        return t('rejected')
+      case 'WITHDRAWN':
+        return t('withdrawn')
+      case 'UNDER_REVIEW':
+        return t('underReview')
+      default:
+        return t('status')
+    }
+  }
+
   // Fetch user data and stats
   const fetchData = async () => {
     const token = localStorage.getItem("auth-token")
@@ -476,7 +494,7 @@ export default function TenantDashboard() {
                         </div>
                         <div className="text-right">
                           <Badge variant={application.status === "APPROVED" ? "default" : "secondary"}>
-                            {application.status?.replace("_", " ").toLowerCase() || t('pending')}
+                            {renderAppStatus(application.status)}
                           </Badge>
                           <div className="mt-2">
                             <Button 

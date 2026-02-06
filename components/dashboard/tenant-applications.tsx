@@ -21,6 +21,24 @@ export function TenantApplications() {
   const [applications, setApplications] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
+  const renderStatus = (status?: string) => {
+    const s = (status || '').toUpperCase()
+    switch (s) {
+      case 'APPROVED':
+        return tApplication('approved')
+      case 'PENDING':
+        return tApplication('pending')
+      case 'REJECTED':
+        return tApplication('rejected')
+      case 'WITHDRAWN':
+        return tApplication('withdrawn')
+      case 'UNDER_REVIEW':
+        return tApplication('underReview')
+      default:
+        return tApplication('status')
+    }
+  }
+
   useEffect(() => {
     fetchApplications()
   }, [])
@@ -162,34 +180,34 @@ export function TenantApplications() {
                           : "outline"
                     }
                   >
-                    {application.status?.replace("_", " ").toLowerCase() || "pending"}
+                    {renderStatus(application.status)}
                   </Badge>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                   <div className="space-y-1">
-                    <p className="text-sm font-medium">Property</p>
+                    <p className="text-sm font-medium">{t('property')}</p>
                     <p className="text-sm text-muted-foreground">{application.property?.title || "Property"}</p>
                   </div>
                   <div className="space-y-1">
-                    <p className="text-sm font-medium">Applied Date</p>
+                    <p className="text-sm font-medium">{t('appliedOn')}</p>
                     <p className="text-sm text-muted-foreground">
                       {new Date(application.appliedDate || application.createdAt).toLocaleDateString()}
                     </p>
                   </div>
                   <div className="space-y-1">
-                    <p className="text-sm font-medium">Deposit Amount</p>
+                    <p className="text-sm font-medium">{t('deposit')}</p>
                     <p className="text-sm text-muted-foreground">{currencySymbol}{(application.depositAmount || 0).toLocaleString()}</p>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                   <div className="space-y-1">
-                    <p className="text-sm font-medium">Monthly Income</p>
+                    <p className="text-sm font-medium">{t('monthlyIncome')}</p>
                     <p className="text-sm text-muted-foreground">{currencySymbol}{(application.monthlyIncome || application.tenant?.tenantProfile?.monthlyIncome || 0).toLocaleString()}</p>
                   </div>
                   <div className="space-y-1">
-                    <p className="text-sm font-medium">Credit Score</p>
+                    <p className="text-sm font-medium">{t('creditScore')}</p>
                     <p className="text-sm text-muted-foreground">{application.creditScore || application.tenant?.tenantProfile?.creditScore || "N/A"}</p>
                   </div>
                 </div>
@@ -201,7 +219,7 @@ export function TenantApplications() {
                     onClick={() => router.push(`/properties/${application.propertyId}`)}
                   >
                     <Eye className="mr-2 h-4 w-4" />
-                    {tCommon('view') || "View Details"}
+                    {tCommon('viewDetails') || tCommon('view')}
                   </Button>
                   <Button 
                     size="sm" 
@@ -219,7 +237,7 @@ export function TenantApplications() {
                         onClick={() => handleApprove(application.id)}
                       >
                         <Check className="mr-2 h-4 w-4" />
-                        {tApplication('approved') || "Approve"}
+                        {tApplication('approved')}
                       </Button>
                       <Button 
                         size="sm" 
@@ -227,7 +245,7 @@ export function TenantApplications() {
                         onClick={() => handleDecline(application.id)}
                       >
                         <X className="mr-2 h-4 w-4" />
-                        {tApplication('rejected') || "Decline"}
+                        {tApplication('rejected')}
                       </Button>
                     </>
                   )}

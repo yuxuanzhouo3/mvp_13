@@ -180,6 +180,22 @@ export default function PropertyDetailPage() {
     ? JSON.parse(property.amenities || '[]')
     : (property.amenities || [])
 
+  const getLocalizedPropertyType = (type: string | undefined) => {
+    if (!type) return ''
+    const upper = String(type).toUpperCase()
+    if (process.env.NEXT_PUBLIC_APP_REGION !== 'china') return upper
+    const map: Record<string, string> = {
+      'APARTMENT': '公寓',
+      'HOUSE': '房屋',
+      'CONDO': '公寓',
+      'STUDIO': '工作室',
+      'TOWNHOUSE': '联排住宅',
+      'VILLA': '别墅',
+      'LUXURY': '豪华公寓'
+    }
+    return map[upper] || upper
+  }
+
   const nextImage = () => {
     if (images.length > 1) {
       setCurrentImageIndex((prev) => (prev + 1) % images.length)
@@ -336,7 +352,7 @@ export default function PropertyDetailPage() {
                         </div>
                       )}
                       <div>
-                        <div className="font-semibold">{property.propertyType}</div>
+                        <div className="font-semibold">{getLocalizedPropertyType(property.propertyType)}</div>
                         <div className="text-sm text-muted-foreground">
                           {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '类型' : 'Type'}
                         </div>

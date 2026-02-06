@@ -24,7 +24,8 @@
     "user": "User",
     "profile": "Profile",
     "filter": "Filter",
-    "view": "View"
+    "view": "View",
+    "viewDetails": "View Details"
   },
   "navigation": {
     "findHomes": "Find Homes",
@@ -398,6 +399,7 @@
     "uploadImages": "Upload Images",
     "villa": "Villa",
     "luxury": "Luxury Apartment",
+    "newApplicationForProperty": "New application: {title}",
     "inviteOrBindTenant": "Invite or Bind Tenant",
     "inviteTenantDesc": "Enter the email of the tenant you want to invite. If they are already registered and have no agent, they will be bound to you.",
     "sendInvitation": "Send Invitation",

@@ -23,7 +23,9 @@
     "ok": "确定",
     "user": "用户",
     "profile": "个人资料",
-    "filter": "筛选"
+    "filter": "筛选",
+    "view": "查看",
+    "viewDetails": "查看详情"
   },
   "navigation": {
     "findHomes": "找房",
@@ -248,6 +250,7 @@
     "shareExperience": "分享您的体验并阅读他人的评价",
     "writeReview": "写评价",
     "shareExperienceWithRentGuard": "分享您对 RentGuard 的体验",
+    "newApplicationForProperty": "新的申请：{title}",
     "yourRole": "您的角色",
     "rolePlaceholder": "例如：房东",
     "rolePlaceholderTenant": "例如：租客",

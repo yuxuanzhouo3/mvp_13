@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAuthUser } from '@/lib/auth'
+import { getCurrentUser } from '@/lib/auth-adapter'
 import { getDatabaseAdapter } from '@/lib/db-adapter'
 
 /**
@@ -8,7 +8,7 @@ import { getDatabaseAdapter } from '@/lib/db-adapter'
  */
 export async function GET(request: NextRequest) {
   try {
-    const user = getAuthUser(request)
+    const user = await getCurrentUser(request)
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
@@ -18,13 +18,27 @@ export async function GET(request: NextRequest) {
 
     const db = getDatabaseAdapter()
 
-    // Get all landlords - 使用 query 方法查询所有用户，然后过滤
-    const allUsers = await db.query('users', {}, {
+    const filters: any = {
+      userType: 'LANDLORD'
+    }
+    
+    if (process.env.NEXT_PUBLIC_APP_REGION !== 'china') {
+      filters.landlordProfile = {
+        representedById: user.id
+      }
+    } else {
+      filters.representedById = user.id
+    }
+
+    const allUsers = await db.query('users', filters, {
       orderBy: { createdAt: 'desc' }
     })
     
-    // 过滤出房东
-    const landlords = allUsers.filter((user: any) => user.userType === 'LANDLORD')
+    const landlords = allUsers.filter((u: any) => {
+      if (u.userType !== 'LANDLORD') return false
+      const repId = u.representedById || u.landlordProfile?.representedById
+      return repId === user.id
+    })
 
     console.log(`Found ${landlords.length} landlords in database`)
 

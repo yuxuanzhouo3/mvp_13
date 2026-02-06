@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Home, Users, DollarSign, TrendingUp, MessageSquare, FileText, Building } from "lucide-react"
+import { Home, Users, DollarSign, TrendingUp, MessageSquare, FileText, Building, UserPlus } from "lucide-react"
 import { PropertyCard } from "@/components/dashboard/property-card"
 import { MessageCenter } from "@/components/dashboard/message-center"
 import { useToast } from "@/hooks/use-toast"
@@ -118,6 +118,16 @@ export default function AgentDashboard() {
           <div>
             <h1 className="text-3xl font-bold">{t('welcomeBackAgent', { name: userName }) || `${t('welcome')}, ${userName}!`}</h1>
             <p className="text-muted-foreground">{t('manageEfficiently') || "Manage your properties, landlords, and tenants efficiently."}</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => router.push("/dashboard/agent/tenants")}>
+              <UserPlus className="h-4 w-4 mr-2" />
+              {t('inviteTenant') || "Invite Tenant"}
+            </Button>
+            <Button variant="outline" onClick={() => router.push("/dashboard/agent/landlords")}>
+              <UserPlus className="h-4 w-4 mr-2" />
+              {t('inviteLandlord') || "Invite Landlord"}
+            </Button>
           </div>
         </div>
 

@@ -9,8 +9,18 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Search, MessageSquare, Home, Phone, Mail } from "lucide-react"
+import { Search, MessageSquare, Home, Phone, Mail, UserPlus } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
+import { Label } from "@/components/ui/label"
 
 export default function AgentLandlordsPage() {
   const router = useRouter()
@@ -20,6 +30,9 @@ export default function AgentLandlordsPage() {
   const [landlords, setLandlords] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
+  const [inviteOpen, setInviteOpen] = useState(false)
+  const [inviteEmail, setInviteEmail] = useState("")
+  const [inviting, setInviting] = useState(false)
 
   useEffect(() => {
     fetchLandlords()
@@ -49,6 +62,56 @@ export default function AgentLandlordsPage() {
       setLoading(false)
     }
   }
+  
+  const handleInvite = async () => {
+    if (!inviteEmail || !inviteEmail.includes('@')) {
+      toast({
+        title: tCommon('error'),
+        description: t('invalidEmail') || "Please enter a valid email address",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setInviting(true)
+    try {
+      const token = localStorage.getItem("auth-token")
+      const response = await fetch("/api/agent/invite", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}` 
+        },
+        body: JSON.stringify({ email: inviteEmail, userType: "LANDLORD" }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || "Failed to invite")
+      }
+
+      toast({
+        title: data.status === 'bound' ? (t('boundSuccess') || "Success") : (t('invitationSent') || "Invitation Sent"),
+        description: data.message,
+      })
+
+      setInviteOpen(false)
+      setInviteEmail("")
+      
+      if (data.status === 'bound') {
+        fetchLandlords()
+      }
+    } catch (error: any) {
+      toast({
+        title: tCommon('error'),
+        description: error.message,
+        variant: "destructive",
+      })
+    } finally {
+      setInviting(false)
+    }
+  }
 
   const filteredLandlords = landlords.filter(landlord =>
     landlord.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -64,9 +127,47 @@ export default function AgentLandlordsPage() {
         </div>
 
         <Card>
-          <CardHeader>
-            <CardTitle>{t('landlordDirectory') || "Landlord Directory"}</CardTitle>
-            <CardDescription>{t('landlordsYouWorkWith')}</CardDescription>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div>
+              <CardTitle>{t('landlordDirectory') || "Landlord Directory"}</CardTitle>
+              <CardDescription>{t('landlordsYouWorkWith')}</CardDescription>
+            </div>
+            <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
+              <DialogTrigger asChild>
+                <Button>
+                  <UserPlus className="h-4 w-4 mr-2" />
+                  {t('inviteLandlord') || "Invite Landlord"}
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>{t('inviteOrBindLandlord') || "Invite or Bind Landlord"}</DialogTitle>
+                  <DialogDescription>
+                    {t('inviteLandlordDesc') || "Enter the email of the landlord you want to invite. If they are already registered and have no agent, they will be bound to you."}
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
+                  <div className="grid grid-cols-4 items-center gap-4">
+                    <Label htmlFor="email" className="text-right">
+                      {tCommon('email') || "Email"}
+                    </Label>
+                    <Input
+                      id="email"
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      placeholder={t('landlordEmailPlaceholder') || "landlord@example.com"}
+                      className="col-span-3"
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setInviteOpen(false)}>{tCommon('cancel')}</Button>
+                  <Button onClick={handleInvite} disabled={inviting}>
+                    {inviting ? (t('processing') || "Processing...") : (t('sendInvitation') || "Send Invitation")}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </CardHeader>
           <CardContent>
             <div className="flex gap-4 mb-6">

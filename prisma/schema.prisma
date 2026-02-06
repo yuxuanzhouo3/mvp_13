@@ -46,6 +46,7 @@ model User {
   agentProfile       AgentProfile?
   agentProperties    Property[]      @relation("AgentProperties")
   representedTenants TenantProfile[] @relation("RepresentedTenants")
+  representedLandlords LandlordProfile[] @relation("RepresentedLandlords")
   listingAgentLeases Lease[]         @relation("ListingAgentLeases")
   tenantAgentLeases  Lease[]         @relation("TenantAgentLeases")
 
@@ -89,6 +90,8 @@ model LandlordProfile {
   id              String   @id @default(cuid())
   userId          String   @unique
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  representedById String?
+  representedBy   User?    @relation("RepresentedLandlords", fields: [representedById], references: [id])
   companyName     String?
   licenseNumber   String?
   verified        Boolean  @default(false)

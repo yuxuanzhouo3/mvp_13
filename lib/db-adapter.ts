@@ -27,6 +27,7 @@ export interface UnifiedUser {
   avatar?: string | null
   userType: string
   isPremium: boolean
+  representedById?: string | null
   premiumExpiry?: Date | null
   vipLevel?: string // FREE, BASIC, PREMIUM, ENTERPRISE
   subscriptionEndTime?: Date | null
@@ -122,7 +123,11 @@ export class SupabaseAdapter implements DatabaseAdapter {
         }
       }),
       ...(data.userType === 'LANDLORD' && {
-        landlordProfile: { create: {} }
+        landlordProfile: { 
+          create: {
+            ...(data.representedById ? { representedById: data.representedById } : {})
+          } 
+        }
       }),
     }
     
@@ -381,7 +386,7 @@ export class SupabaseAdapter implements DatabaseAdapter {
       subscriptionEndTime: user.premiumExpiry,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
-      representedById: user.tenantProfile?.representedById || null,
+      representedById: user.tenantProfile?.representedById || user.landlordProfile?.representedById || null,
     }
   }
 }

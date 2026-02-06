@@ -403,6 +403,10 @@
     "sendInvitation": "Send Invitation",
     "processing": "Processing...",
     "inviteTenant": "Invite Tenant",
+    "inviteLandlord": "Invite Landlord",
+    "inviteOrBindLandlord": "Invite or Bind Landlord",
+    "inviteLandlordDesc": "Enter the email of the landlord you want to invite. If they are already registered and have no agent, they will be bound to you.",
+    "landlordEmailPlaceholder": "landlord@example.com",
     "invitationSent": "Invitation Sent",
     "boundSuccess": "Bound Successfully"
   },

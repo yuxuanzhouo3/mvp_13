@@ -84,7 +84,7 @@ export default function AgentTenantsPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}` 
         },
-        body: JSON.stringify({ email: inviteEmail }),
+        body: JSON.stringify({ email: inviteEmail, userType: "TENANT" }),
       })
 
       const data = await response.json()

@@ -26,6 +26,20 @@ export default function SignUpPage() {
   const [confirmPassword, setConfirmPassword] = useState("")
   const [phone, setPhone] = useState("")
   const [loading, setLoading] = useState(false)
+  
+  useEffect(() => {
+    const typeParam = searchParams.get("userType")
+    const emailParam = searchParams.get("email")
+    if (typeParam) {
+      const normalized = typeParam.toLowerCase()
+      if (normalized === "tenant" || normalized === "landlord" || normalized === "agent") {
+        setUserType(normalized as "tenant" | "landlord" | "agent")
+      }
+    }
+    if (emailParam) {
+      setEmail(emailParam)
+    }
+  }, [searchParams])
 
   const handleSignup = async () => {
     if (password !== confirmPassword) {

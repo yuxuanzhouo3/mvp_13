@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAuthUser } from '@/lib/auth'
-import { prisma } from '@/lib/db'
+import { getDatabaseAdapter } from '@/lib/db-adapter'
 
 /**
  * Get all tenants (for agents to help find homes)
+ * 使用数据库适配器，自动根据环境变量选择数据源
  */
 export async function GET(request: NextRequest) {
   try {
@@ -15,29 +16,33 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Get all tenants with their profiles
-    const tenants = await prisma.user.findMany({
-      where: {
-        userType: 'TENANT'
-      },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        createdAt: true,
-        tenantProfile: {
-          select: {
-            monthlyIncome: true,
-            creditScore: true,
-            employmentStatus: true
-          }
-        }
-      },
+    const db = getDatabaseAdapter()
+
+    // Get all tenants - 使用 query 方法查询所有用户，然后过滤
+    const allUsers = await db.query('users', {}, {
       orderBy: { createdAt: 'desc' }
     })
+    
+    // 过滤出租客
+    const tenants = allUsers.filter((user: any) => user.userType === 'TENANT')
 
-    return NextResponse.json({ tenants })
+    console.log(`Found ${tenants.length} tenants in database`)
+
+    // 格式化响应（CloudBase 可能没有 tenantProfile，需要单独处理）
+    const formattedTenants = tenants.map((tenant: any) => ({
+      id: tenant.id,
+      name: tenant.name,
+      email: tenant.email,
+      phone: tenant.phone,
+      createdAt: tenant.createdAt,
+      tenantProfile: {
+        monthlyIncome: null,
+        creditScore: null,
+        employmentStatus: null
+      }
+    }))
+
+    return NextResponse.json({ tenants: formattedTenants })
   } catch (error: any) {
     console.error('Get tenants error:', error)
     return NextResponse.json(

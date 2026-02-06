@@ -13,6 +13,7 @@ import { useToast } from "@/hooks/use-toast"
 import { useState } from "react"
 import { X, Upload } from "lucide-react"
 import { getCurrencySymbol } from "@/lib/utils"
+import { compressImage } from "@/lib/image-compress"
 
 export default function AddPropertyPage() {
   const router = useRouter()
@@ -42,43 +43,104 @@ export default function AddPropertyPage() {
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
-    if (!files || files.length === 0) return
+    if (!files || files.length === 0) {
+      // 重置 input，允许重新选择
+      e.target.value = ''
+      return
+    }
 
-    if (images.length + files.length > 5) {
+    // 国内版限制更严格（最多2张），国际版较宽松（最多5张）
+    // 前端统一使用较严格的限制，后端会根据实际区域进一步处理
+    const maxImages = 5 // 前端允许最多5张，后端会根据区域限制
+
+    if (images.length + files.length > maxImages) {
       toast({
         title: tCommon('error'),
-        description: t('tooManyImages') || "You can upload maximum 5 images",
+        description: t('tooManyImages') || `最多只能上传 ${maxImages} 张图片`,
         variant: "destructive",
       })
+      // 重置 input
+      e.target.value = ''
       return
     }
 
     setUploading(true)
     try {
       const newImages: string[] = []
+      const fileArray = Array.from(files).slice(0, maxImages - images.length)
       
-      for (let i = 0; i < files.length && images.length + newImages.length < 5; i++) {
-        const file = files[i]
-        // Convert to base64 for now (in production, upload to cloud storage)
-        const reader = new FileReader()
-        reader.onload = (event) => {
-          const base64 = event.target?.result as string
-          newImages.push(base64)
+      // 使用 Promise.all 并行处理所有图片
+      const compressPromises = fileArray.map(async (file) => {
+        try {
+          // 压缩图片：对于 CloudBase，需要更小的图片
+          // 最大尺寸 1200x1200，质量 0.7，目标大小 40KB（base64 约 55KB）
+          const compressedBase64 = await compressImage(file, {
+            maxWidth: 1200,
+            maxHeight: 1200,
+            quality: 0.7,
+            maxSize: 40 * 1024, // 40KB 原始图片，base64 约 55KB
+          })
           
-          if (newImages.length === Math.min(files.length, 5 - images.length)) {
-            setImages(prev => [...prev, ...newImages])
-            setUploading(false)
+          // 检查压缩后的 base64 大小（严格限制为 60KB）
+          if (compressedBase64.length > 60000) {
+            console.warn(`图片 ${file.name} 压缩后仍然较大 (${Math.round(compressedBase64.length / 1024)}KB)，尝试进一步压缩`)
+            // 进一步压缩
+            const furtherCompressed = await compressImage(file, {
+              maxWidth: 800,
+              maxHeight: 800,
+              quality: 0.6,
+              maxSize: 30 * 1024, // 30KB 原始图片
+            })
+            if (furtherCompressed.length <= 60000) {
+              return furtherCompressed
+            }
+            // 如果还是太大，截断
+            const commaIndex = furtherCompressed.indexOf(',')
+            if (commaIndex > 0) {
+              const prefix = furtherCompressed.substring(0, commaIndex + 1)
+              const base64Data = furtherCompressed.substring(commaIndex + 1)
+              const truncatedBase64 = base64Data.substring(0, 60000 - prefix.length)
+              return prefix + truncatedBase64
+            }
+            return furtherCompressed.substring(0, 60000)
           }
+          
+          return compressedBase64
+        } catch (error: any) {
+          console.error(`压缩图片 ${file.name} 失败:`, error)
+          toast({
+            title: tCommon('error'),
+            description: `图片 ${file.name} 处理失败: ${error.message}`,
+            variant: "destructive",
+          })
+          return null
         }
-        reader.readAsDataURL(file)
+      })
+      
+      const compressedResults = await Promise.all(compressPromises)
+      
+      // 过滤掉失败的结果
+      const validImages = compressedResults.filter((img): img is string => img !== null)
+      
+      if (validImages.length > 0) {
+        setImages(prev => [...prev, ...validImages])
+        toast({
+          title: tCommon('success'),
+          description: `成功上传 ${validImages.length} 张图片`,
+        })
       }
+      
     } catch (error: any) {
+      console.error('图片上传错误:', error)
       toast({
         title: tCommon('error'),
-        description: error.message || t('failedToUploadImages') || "Failed to upload images",
+        description: error.message || t('failedToUploadImages') || "上传图片失败",
         variant: "destructive",
       })
+    } finally {
       setUploading(false)
+      // 重置 input，允许重新选择
+      e.target.value = ''
     }
   }
 

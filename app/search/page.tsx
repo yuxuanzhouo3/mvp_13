@@ -65,7 +65,8 @@ function SearchContent() {
   const handleSearch = async () => {
     if (!searchQuery.trim()) {
       toast({
-        title: t('enterSearchContent') || tCommon('error'),
+        title: "请输入搜索内容",
+        description: "请输入城市名称进行搜索",
         variant: "destructive",
       })
       return
@@ -74,22 +75,43 @@ function SearchContent() {
     setLoading(true)
     try {
       const token = localStorage.getItem("auth-token")
-      const response = await fetch("/api/properties/search?" + new URLSearchParams({
-        city: searchQuery,
-      }), {
+      const searchParams = new URLSearchParams({
+        city: searchQuery.trim(),
+      })
+      
+      console.log('Searching with city:', searchQuery.trim())
+      
+      const response = await fetch(`/api/properties/search?${searchParams.toString()}`, {
+        method: 'GET',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
 
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: '搜索失败' }))
+        throw new Error(errorData.error || `搜索失败: ${response.status}`)
+      }
+
       const data = await response.json()
-      if (response.ok) {
-        setProperties(data.properties || [])
+      console.log('Search results:', data)
+      
+      setProperties(data.properties || [])
+      
+      if (data.properties && data.properties.length === 0) {
+        toast({
+          title: "未找到房源",
+          description: `在 "${searchQuery}" 未找到符合条件的房源`,
+        })
       } else {
-        throw new Error(data.error || "搜索失败")
+        toast({
+          title: "搜索成功",
+          description: `找到 ${data.properties?.length || 0} 个房源`,
+        })
       }
     } catch (error: any) {
+      console.error('Search error:', error)
       toast({
         title: "搜索失败",
-        description: error.message,
+        description: error.message || "搜索时发生错误，请稍后重试",
         variant: "destructive",
       })
     } finally {
@@ -119,9 +141,9 @@ function SearchContent() {
                     onKeyPress={(e) => e.key === "Enter" && handleSearch()}
                   />
                 </div>
-                <Button onClick={() => handleSearch()} disabled={loading}>
+                <Button onClick={handleSearch} disabled={loading}>
                   <Search className="mr-2 h-4 w-4" />
-                  {loading ? tCommon('loading') : tCommon('search')}
+                  {loading ? tCommon('loading') : '搜索'}
                 </Button>
               </div>
             </CardContent>

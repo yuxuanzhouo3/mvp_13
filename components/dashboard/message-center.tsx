@@ -83,12 +83,31 @@ export function MessageCenter() {
   // Handle URL params for auto-selecting conversation
   useEffect(() => {
     const userId = searchParams.get('userId')
-    if (userId && !loading && conversations.length > 0) {
-      const conv = conversations.find(c => c.id === userId)
-      if (conv) {
-        handleSelectConversation(conv)
+    if (userId && !loading) {
+      // Wait for conversations to load, then check
+      if (conversations.length > 0) {
+        const conv = conversations.find(c => c.id === userId)
+        if (conv) {
+          handleSelectConversation(conv)
+        } else {
+          fetchUserAndCreateConversation(userId)
+        }
       } else {
-        fetchUserAndCreateConversation(userId)
+        // If conversations haven't loaded yet, wait a bit and try again
+        const timer = setTimeout(() => {
+          if (conversations.length > 0) {
+            const conv = conversations.find(c => c.id === userId)
+            if (conv) {
+              handleSelectConversation(conv)
+            } else {
+              fetchUserAndCreateConversation(userId)
+            }
+          } else {
+            // If still no conversations, fetch user directly
+            fetchUserAndCreateConversation(userId)
+          }
+        }, 500)
+        return () => clearTimeout(timer)
       }
     }
   }, [searchParams, loading, conversations])
@@ -100,9 +119,9 @@ export function MessageCenter() {
     const interval = setInterval(() => {
       if (!isFetchingRef.current && !sending) {
         loadMessages(selectedConversation.id, false)
-        fetchConversationsQuiet() // Refresh conversations to update lastMessage
+        fetchConversationsQuiet() // Refresh conversations to update lastMessage and unread counts
       }
-    }, 5000)
+    }, 3000) // 缩短轮询间隔，更快更新未读消息数
     
     return () => clearInterval(interval)
   }, [selectedConversation?.id, sending])
@@ -131,7 +150,8 @@ export function MessageCenter() {
           conversationIds.add(c.id)
           return {
             ...c,
-            lastMessage: c.lastMessage || ""
+            lastMessage: c.lastMessage || "",
+            unread: c.unread || 0 // 确保未读数被正确传递
           }
         })
       }
@@ -153,11 +173,36 @@ export function MessageCenter() {
               unread: contact.unread || 0,
               property: contact.property
             })
+          } else {
+            // 如果联系人已存在于对话列表中，更新未读数
+            const existingConv = allConversations.find(c => c.id === contact.id)
+            if (existingConv && contact.unread !== undefined) {
+              existingConv.unread = contact.unread
+            }
           }
         })
       }
 
-      setConversations(allConversations)
+      // 更新对话列表，保持当前选中的对话
+      setConversations(prev => {
+        const updated = allConversations.map(newConv => {
+          const existing = prev.find(p => p.id === newConv.id)
+          if (existing && selectedConversation?.id === newConv.id) {
+            // 如果是当前选中的对话，使用新的未读数
+            return { ...existing, ...newConv }
+          }
+          return existing || newConv
+        })
+        
+        // 添加新的对话
+        allConversations.forEach(newConv => {
+          if (!updated.find(u => u.id === newConv.id)) {
+            updated.push(newConv)
+          }
+        })
+        
+        return updated
+      })
     } catch (error) {
       console.error("Failed to fetch conversations:", error)
     }
@@ -225,7 +270,27 @@ export function MessageCenter() {
       }
 
       console.log("Total conversations:", allConversations.length)
-      setConversations(allConversations)
+      
+      // 更新对话列表，确保未读数正确显示
+      setConversations(prev => {
+        const updated = allConversations.map(newConv => {
+          const existing = prev.find(p => p.id === newConv.id)
+          // 如果对话已存在且当前被选中，保持选中状态并更新未读数
+          if (existing && selectedConversation?.id === newConv.id) {
+            return { ...existing, ...newConv }
+          }
+          return existing || newConv
+        })
+        
+        // 添加新的对话
+        allConversations.forEach(newConv => {
+          if (!updated.find(u => u.id === newConv.id)) {
+            updated.push(newConv)
+          }
+        })
+        
+        return updated
+      })
       
       // Auto-select first conversation if none selected
       if (allConversations.length > 0 && !selectedConversation) {
@@ -276,14 +341,47 @@ export function MessageCenter() {
   }, [scrollToBottom])
 
   const handleSelectConversation = (conversation: Conversation) => {
-    console.log("Selected conversation:", conversation.id, conversation.name)
+    console.log("Selected conversation:", conversation.id, conversation.name, "Full conversation:", conversation)
+    if (!conversation || !conversation.id) {
+      console.error("Invalid conversation selected:", conversation)
+      toast({
+        title: tCommon('error'),
+        description: process.env.NEXT_PUBLIC_APP_REGION === 'china' 
+          ? '无效的对话' 
+          : "Invalid conversation",
+        variant: "destructive",
+      })
+      return
+    }
     setSelectedConversation(conversation)
     setMessages([])
     loadMessages(conversation.id, true) // Scroll to bottom on initial load
   }
 
   const handleSendMessage = async () => {
-    if (!messageInput.trim() || !selectedConversation || sending) return
+    if (!messageInput.trim() || sending) {
+      if (!messageInput.trim()) {
+        toast({
+          title: tCommon('error'),
+          description: process.env.NEXT_PUBLIC_APP_REGION === 'china' 
+            ? '消息内容不能为空' 
+            : "Message content cannot be empty",
+          variant: "destructive",
+        })
+      }
+      return
+    }
+    
+    if (!selectedConversation) {
+      toast({
+        title: tCommon('error'),
+        description: process.env.NEXT_PUBLIC_APP_REGION === 'china' 
+          ? '请先选择一个联系人' 
+          : "Please select a contact first",
+        variant: "destructive",
+      })
+      return
+    }
     
     if (!currentUser?.id) {
       toast({
@@ -294,17 +392,50 @@ export function MessageCenter() {
       return
     }
 
-    console.log("Sending message from", currentUser.id, "to", selectedConversation.id)
+    const receiverId = selectedConversation.id
+    const messageToSend = messageInput.trim()
+
+    console.log("Preparing to send message:", {
+      receiverId,
+      messageLength: messageToSend.length,
+      selectedConversation: selectedConversation,
+      currentUser: currentUser.id
+    })
+
+    // Validate receiverId and content
+    if (!receiverId) {
+      console.error("Receiver ID is missing:", selectedConversation)
+      toast({
+        title: tCommon('error'),
+        description: process.env.NEXT_PUBLIC_APP_REGION === 'china' 
+          ? '接收者ID无效，请重新选择联系人' 
+          : "Invalid receiver ID, please select a contact again",
+        variant: "destructive",
+      })
+      return
+    }
+    
+    if (!messageToSend) {
+      toast({
+        title: tCommon('error'),
+        description: process.env.NEXT_PUBLIC_APP_REGION === 'china' 
+          ? '消息内容不能为空' 
+          : "Message content cannot be empty",
+        variant: "destructive",
+      })
+      return
+    }
+
+    console.log("Sending message from", currentUser.id, "to", receiverId, "content:", messageToSend.substring(0, 50))
     
     setSending(true)
-    const messageToSend = messageInput.trim()
     const tempId = `temp-${Date.now()}`
     
     // Create optimistic message
     const optimisticMessage: Message = {
       id: tempId,
       senderId: currentUser.id,
-      receiverId: selectedConversation.id,
+      receiverId: receiverId,
       content: messageToSend,
       createdAt: new Date().toISOString(),
     }
@@ -322,16 +453,20 @@ export function MessageCenter() {
         throw new Error("Not authenticated")
       }
 
+      const requestBody = {
+        receiverId: receiverId,
+        content: messageToSend,
+      }
+
+      console.log("Sending POST request to /api/messages with body:", requestBody)
+
       const response = await fetch("/api/messages", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({
-          receiverId: selectedConversation.id,
-          content: messageToSend,
-        }),
+        body: JSON.stringify(requestBody),
       })
 
       const data = await response.json()
@@ -388,7 +523,12 @@ export function MessageCenter() {
   const fetchUserAndCreateConversation = async (userId: string) => {
     try {
       const token = localStorage.getItem("auth-token")
-      if (!token) return
+      if (!token) {
+        console.error("No auth token for fetching user")
+        return
+      }
+
+      console.log("Fetching user for conversation:", userId)
 
       const response = await fetch(`/api/auth/user/${userId}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -396,26 +536,66 @@ export function MessageCenter() {
 
       if (response.ok) {
         const user = await response.json()
+        console.log("User fetched:", user)
+        
+        if (!user || !user.id) {
+          console.error("Invalid user data:", user)
+          toast({
+            title: tCommon('error'),
+            description: process.env.NEXT_PUBLIC_APP_REGION === 'china' 
+              ? '无法获取用户信息' 
+              : "Failed to get user information",
+            variant: "destructive",
+          })
+          return
+        }
+        
         const newConv: Conversation = {
-          id: userId,
-          name: user.name || user.email,
-          email: user.email,
-          avatar: user.avatar,
-          role: user.userType || "USER",
+          id: user.id || userId,
+          name: user.name || user.email || 'Unknown',
+          email: user.email || '',
+          avatar: user.avatar || null,
+          role: user.userType || user.user_type || "USER",
           lastMessage: "",
           time: new Date(),
           unread: 0,
           property: null,
         }
         
+        console.log("Creating new conversation:", newConv)
+        
         setConversations(prev => {
-          if (prev.find(c => c.id === userId)) return prev
-          return [newConv, ...prev]
+          const existing = prev.find(c => c.id === newConv.id)
+          if (existing) {
+            console.log("Conversation already exists, selecting it")
+            handleSelectConversation(existing)
+            return prev
+          }
+          console.log("Adding new conversation to list")
+          const updated = [newConv, ...prev]
+          handleSelectConversation(newConv)
+          return updated
         })
-        handleSelectConversation(newConv)
+      } else {
+        const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
+        console.error("Failed to fetch user:", errorData)
+        toast({
+          title: tCommon('error'),
+          description: errorData.error || (process.env.NEXT_PUBLIC_APP_REGION === 'china' 
+            ? '无法获取用户信息' 
+            : "Failed to get user information"),
+          variant: "destructive",
+        })
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to fetch user:", error)
+      toast({
+        title: tCommon('error'),
+        description: error.message || (process.env.NEXT_PUBLIC_APP_REGION === 'china' 
+          ? '获取用户信息时出错' 
+          : "Error fetching user information"),
+        variant: "destructive",
+      })
     }
   }
 

@@ -145,7 +145,9 @@ export default function PropertyDetailPage() {
       <div className="min-h-screen bg-background">
         <Header />
         <main className="container py-12">
-          <div className="text-center py-12">Loading property details...</div>
+          <div className="text-center py-12">
+            {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '正在加载房源详情...' : 'Loading property details...'}
+          </div>
         </main>
         <Footer />
       </div>
@@ -158,8 +160,12 @@ export default function PropertyDetailPage() {
         <Header />
         <main className="container py-12">
           <div className="text-center py-12">
-            <p className="text-muted-foreground mb-4">Property not found</p>
-            <Button onClick={() => router.push("/search")}>Back to Search</Button>
+            <p className="text-muted-foreground mb-4">
+              {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '未找到房源' : 'Property not found'}
+            </p>
+            <Button onClick={() => router.push("/search")}>
+              {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '返回搜索' : 'Back to Search'}
+            </Button>
           </div>
         </main>
         <Footer />
@@ -192,7 +198,7 @@ export default function PropertyDetailPage() {
       <main className="container py-12">
         <Button variant="ghost" onClick={() => router.back()} className="mb-6">
           <ArrowLeft className="mr-2 h-4 w-4" />
-          Back
+          {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '返回' : 'Back'}
         </Button>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -287,25 +293,35 @@ export default function PropertyDetailPage() {
               <CardContent>
                 <div className="space-y-6">
                   <div>
-                    <h3 className="text-xl font-semibold mb-4">Description</h3>
-                    <p className="text-muted-foreground">{property.description || "No description available."}</p>
+                    <h3 className="text-xl font-semibold mb-4">
+                      {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '房源描述' : 'Description'}
+                    </h3>
+                    <p className="text-muted-foreground">
+                      {property.description || (process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '暂无描述' : "No description available.")}
+                    </p>
                   </div>
 
                   <div>
-                    <h3 className="text-xl font-semibold mb-4">Property Details</h3>
+                    <h3 className="text-xl font-semibold mb-4">
+                      {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '房源详情' : 'Property Details'}
+                    </h3>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                       <div className="flex items-center space-x-2">
                         <Bed className="h-5 w-5 text-muted-foreground" />
                         <div>
                           <div className="font-semibold">{property.bedrooms}</div>
-                          <div className="text-sm text-muted-foreground">Bedrooms</div>
+                          <div className="text-sm text-muted-foreground">
+                            {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '卧室' : 'Bedrooms'}
+                          </div>
                         </div>
                       </div>
                       <div className="flex items-center space-x-2">
                         <Bath className="h-5 w-5 text-muted-foreground" />
                         <div>
                           <div className="font-semibold">{property.bathrooms}</div>
-                          <div className="text-sm text-muted-foreground">Bathrooms</div>
+                          <div className="text-sm text-muted-foreground">
+                            {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '浴室' : 'Bathrooms'}
+                          </div>
                         </div>
                       </div>
                       {property.sqft && (
@@ -313,20 +329,26 @@ export default function PropertyDetailPage() {
                           <Square className="h-5 w-5 text-muted-foreground" />
                           <div>
                             <div className="font-semibold">{property.sqft}</div>
-                            <div className="text-sm text-muted-foreground">Sqft</div>
+                            <div className="text-sm text-muted-foreground">
+                              {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '平方米' : 'Sqft'}
+                            </div>
                           </div>
                         </div>
                       )}
                       <div>
                         <div className="font-semibold">{property.propertyType}</div>
-                        <div className="text-sm text-muted-foreground">Type</div>
+                        <div className="text-sm text-muted-foreground">
+                          {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '类型' : 'Type'}
+                        </div>
                       </div>
                     </div>
                   </div>
 
                   {amenities.length > 0 && (
                     <div>
-                      <h3 className="text-xl font-semibold mb-4">Amenities</h3>
+                      <h3 className="text-xl font-semibold mb-4">
+                        {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '设施' : 'Amenities'}
+                      </h3>
                       <div className="flex flex-wrap gap-2">
                         {amenities.map((amenity: string, index: number) => (
                           <Badge key={index} variant="secondary">{amenity}</Badge>
@@ -337,7 +359,9 @@ export default function PropertyDetailPage() {
 
                   {property.petFriendly && (
                     <div>
-                      <Badge variant="default">Pet Friendly</Badge>
+                      <Badge variant="default">
+                        {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '允许宠物' : 'Pet Friendly'}
+                      </Badge>
                     </div>
                   )}
                 </div>
@@ -356,12 +380,16 @@ export default function PropertyDetailPage() {
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">Deposit:</span>
+                    <span className="text-muted-foreground">
+                      {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '押金：' : 'Deposit:'}
+                    </span>
                     <span className="font-semibold">{currencySymbol}{property.deposit.toLocaleString()}</span>
                   </div>
                   {property.availableFrom && (
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Available From:</span>
+                      <span className="text-muted-foreground">
+                        {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '可入住日期：' : 'Available From:'}
+                      </span>
                       <span className="font-semibold">
                         {new Date(property.availableFrom).toLocaleDateString()}
                       </span>
@@ -369,8 +397,12 @@ export default function PropertyDetailPage() {
                   )}
                   {property.leaseDuration && (
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Lease Duration:</span>
-                      <span className="font-semibold">{property.leaseDuration} months</span>
+                      <span className="text-muted-foreground">
+                        {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '租期：' : 'Lease Duration:'}
+                      </span>
+                      <span className="font-semibold">
+                        {property.leaseDuration} {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '个月' : 'months'}
+                      </span>
                     </div>
                   )}
                 </div>
@@ -381,8 +413,8 @@ export default function PropertyDetailPage() {
                     const token = localStorage.getItem("auth-token")
                     if (!token) {
                       toast({
-                        title: "Please login",
-                        description: "You need to login to apply for properties",
+                        title: process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '请先登录' : "Please login",
+                        description: process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '您需要登录才能申请房源' : "You need to login to apply for properties",
                         variant: "destructive",
                       })
                       router.push("/auth/login")
@@ -391,7 +423,7 @@ export default function PropertyDetailPage() {
                     router.push(`/dashboard/tenant/apply?propertyId=${params.id}`)
                   }}
                 >
-                  Apply Now
+                  {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '立即申请' : 'Apply Now'}
                 </Button>
                 <Button 
                   variant="outline" 
@@ -400,8 +432,8 @@ export default function PropertyDetailPage() {
                     const token = localStorage.getItem("auth-token")
                     if (!token) {
                       toast({
-                        title: "Please login",
-                        description: "You need to login to contact landlord",
+                        title: process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '请先登录' : "Please login",
+                        description: process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '您需要登录才能联系房东' : "You need to login to contact landlord",
                         variant: "destructive",
                       })
                       router.push("/auth/login")
@@ -412,7 +444,7 @@ export default function PropertyDetailPage() {
                     }
                   }}
                 >
-                  Contact Landlord
+                  {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '联系房东' : 'Contact Landlord'}
                 </Button>
               </CardContent>
             </Card>
@@ -420,7 +452,9 @@ export default function PropertyDetailPage() {
             {property.landlord && (
               <Card>
                 <CardHeader>
-                  <CardTitle>Landlord Information</CardTitle>
+                  <CardTitle>
+                    {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '房东信息' : 'Landlord Information'}
+                  </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-2">

@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAuthUser } from '@/lib/auth'
-import { prisma } from '@/lib/db'
+import { getDatabaseAdapter } from '@/lib/db-adapter'
 
 /**
  * Get all properties (for agents to browse and manage)
+ * 使用数据库适配器，自动根据环境变量选择数据源
  */
 export async function GET(request: NextRequest) {
   try {
@@ -15,25 +16,32 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    const db = getDatabaseAdapter()
+
     // Get all available properties (agents can see all properties)
-    const properties = await prisma.property.findMany({
-      where: {
-        status: 'AVAILABLE'
-      },
-      include: {
-        landlord: {
-          select: {
-            id: true,
-            name: true,
-            email: true,
-            phone: true
-          }
-        }
-      },
+    const properties = await db.query('properties', {
+      status: 'AVAILABLE'
+    }, {
       orderBy: { createdAt: 'desc' }
     })
+    
+    // 为每个房源添加房东信息
+    const propertiesWithLandlord = await Promise.all(
+      properties.map(async (property: any) => {
+        const landlord = await db.findUserById(property.landlordId)
+        return {
+          ...property,
+          landlord: landlord ? {
+            id: landlord.id,
+            name: landlord.name,
+            email: landlord.email,
+            phone: landlord.phone,
+          } : null,
+        }
+      })
+    )
 
-    return NextResponse.json({ properties })
+    return NextResponse.json({ properties: propertiesWithLandlord })
   } catch (error: any) {
     console.error('Get agent properties error:', error)
     return NextResponse.json(

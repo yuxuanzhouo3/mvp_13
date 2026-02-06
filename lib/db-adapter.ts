@@ -400,7 +400,12 @@ export class CloudBaseAdapter implements DatabaseAdapter {
     
     if (!result.data) return null
     
-    return this.mapCloudBaseUserToUnified(result.data)
+    // CloudBase SDK 的 doc(id).get() 返回的 result.data 是一个数组
+    // 需要取数组的第一项
+    const userData = Array.isArray(result.data) ? result.data[0] : result.data
+    if (!userData) return null
+    
+    return this.mapCloudBaseUserToUnified(userData)
   }
 
   async createUser(data: {
@@ -474,15 +479,36 @@ export class CloudBaseAdapter implements DatabaseAdapter {
   async query<T = any>(collection: string, filters?: any, options?: any): Promise<T[]> {
     let query = cloudbaseDb.collection(collection)
     
-    // 简单的过滤实现
+    // 简单的过滤实现（只处理精确匹配，忽略以 _ 开头的过滤标记）
     if (filters) {
       Object.keys(filters).forEach(key => {
-        query = query.where({ [key]: filters[key] })
+        // 忽略以 _ 开头的过滤标记（这些是用于内存过滤的）
+        if (!key.startsWith('_')) {
+          const value = filters[key]
+          // 如果是对象（如 { gte: 100 }），需要特殊处理
+          if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+            // CloudBase 不支持复杂查询，这里只处理简单的相等匹配
+            // 复杂查询会在调用后手动过滤
+            if (value.gte !== undefined) {
+              // 对于 >= 查询，先获取所有数据，然后在内存中过滤
+              // 这里先不添加条件，稍后在内存中过滤
+            } else {
+              query = query.where({ [key]: value })
+            }
+          } else {
+            query = query.where({ [key]: value })
+          }
+        }
       })
     }
     
     const result = await query.get()
-    return result.data as T[]
+    
+    // CloudBase 返回的数据只有 _id，需要映射为 id 以便前端使用
+    return result.data.map((item: any) => ({
+      ...item,
+      id: item.id || item._id, // 优先使用已有的 id，如果没有则使用 _id
+    })) as T[]
   }
 
   async findById<T = any>(collection: string, id: string): Promise<T | null> {
@@ -491,7 +517,19 @@ export class CloudBaseAdapter implements DatabaseAdapter {
       .doc(String(id))
       .get()
     
-    return (result.data as T) || null
+    if (!result.data) return null
+    
+    // CloudBase SDK 的 doc(id).get() 返回的 result.data 是一个数组
+    // 需要取数组的第一项
+    const data = Array.isArray(result.data) ? result.data[0] : result.data
+    
+    if (!data) return null
+
+    // 映射 _id 到 id
+    return {
+      ...data,
+      id: data.id || data._id,
+    } as T
   }
 
   async create<T = any>(collection: string, data: any): Promise<T> {

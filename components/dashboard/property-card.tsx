@@ -161,7 +161,9 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
         )}
         {property.status && (
           <Badge className="absolute top-2 left-2" variant={property.status === "available" ? "default" : "secondary"}>
-            {property.status}
+            {process.env.NEXT_PUBLIC_APP_REGION === 'china' 
+              ? (property.status === "available" ? "可租" : "已租/不可用")
+              : property.status}
           </Badge>
         )}
       </div>
@@ -171,7 +173,9 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
           <h3 className="font-semibold text-lg line-clamp-1 flex-1 mr-2" title={property.title}>{property.title}</h3>
           <span className="text-xl font-bold text-primary whitespace-nowrap">
             {currencySymbol}{property.price.toLocaleString()}
-            <span className="text-sm font-normal text-muted-foreground">/mo</span>
+            <span className="text-sm font-normal text-muted-foreground">
+              {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '/月' : '/mo'}
+            </span>
           </span>
         </div>
 
@@ -201,7 +205,7 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
             <div className="flex space-x-2">
               <Button size="sm" variant="outline" className="flex-1 bg-transparent" onClick={handleViewDetails}>
                 <Eye className="mr-2 h-4 w-4" />
-                {tCommon('view') || t('viewDetails')}
+                {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '查看详情' : (tCommon('view') || t('viewDetails'))}
               </Button>
               <Button 
                 size="sm" 
@@ -266,7 +270,9 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
               </Button>
             </div>
           ) : (
-            <Button className="w-full" onClick={handleViewDetails}>{t('viewDetails') || tCommon('view')}</Button>
+            <Button className="w-full" onClick={handleViewDetails}>
+              {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '查看详情' : (t('viewDetails') || tCommon('view'))}
+            </Button>
           )}
         </div>
       </CardContent>

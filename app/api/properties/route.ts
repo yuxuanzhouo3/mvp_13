@@ -154,6 +154,69 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // 处理图片数据：对于 CloudBase，需要限制图片大小或数量
+    let processedImages = Array.isArray(images) ? images : (images ? JSON.parse(images) : [])
+    const region = process.env.NEXT_PUBLIC_APP_REGION || 'global'
+    
+    // 如果是国内版（CloudBase），严格限制图片数据大小
+    if (region === 'china') {
+      // CloudBase 对单个文档大小有限制，base64 图片必须很小
+      // 限制图片数量（最多2张）
+      processedImages = processedImages.slice(0, 2)
+      
+      // 严格限制每张图片的 base64 数据大小（每张最多 50KB base64 数据）
+      processedImages = processedImages.map((img: string, index: number) => {
+        if (typeof img === 'string' && img.startsWith('data:image')) {
+          const maxLength = 50000 // 50KB base64 数据
+          if (img.length > maxLength) {
+            console.warn(`Image ${index + 1} too large for CloudBase (${img.length} bytes), truncating to ${maxLength} bytes...`)
+            // 截断 base64 数据，但保留 data URL 前缀
+            const commaIndex = img.indexOf(',')
+            if (commaIndex > 0) {
+              const prefix = img.substring(0, commaIndex + 1)
+              const base64Data = img.substring(commaIndex + 1)
+              // 计算可用的 base64 数据长度
+              const availableLength = maxLength - prefix.length
+              if (availableLength > 0 && base64Data.length > availableLength) {
+                const truncatedBase64 = base64Data.substring(0, availableLength)
+                return prefix + truncatedBase64
+              }
+            }
+            // 如果找不到逗号，直接截断
+            return img.substring(0, maxLength)
+          }
+        }
+        return img
+      })
+      
+      // 检查总大小，确保不超过 CloudBase 限制
+      const totalSize = JSON.stringify(processedImages).length
+      const maxTotalSize = 100000 // 100KB 总大小限制（2张图片，每张50KB）
+      if (totalSize > maxTotalSize) {
+        console.warn(`Total images size too large (${totalSize} bytes), keeping only first image`)
+        processedImages = processedImages.slice(0, 1)
+        // 如果单张图片还是太大，进一步截断
+        if (processedImages.length > 0 && typeof processedImages[0] === 'string') {
+          const firstImg = processedImages[0]
+          if (firstImg.length > 50000) {
+            const commaIndex = firstImg.indexOf(',')
+            if (commaIndex > 0) {
+              const prefix = firstImg.substring(0, commaIndex + 1)
+              const base64Data = firstImg.substring(commaIndex + 1)
+              const availableLength = 50000 - prefix.length
+              if (availableLength > 0) {
+                processedImages[0] = prefix + base64Data.substring(0, availableLength)
+              }
+            } else {
+              processedImages[0] = firstImg.substring(0, 50000)
+            }
+          }
+        }
+      }
+      
+      console.log(`Processed images for CloudBase: ${processedImages.length} images, total size: ${totalSize} bytes`)
+    }
+
     const propertyData = {
       landlordId: user.id,
       title,
@@ -172,7 +235,7 @@ export async function POST(request: NextRequest) {
       bathrooms: parsedBathrooms,
       sqft: parsedSqft,
       propertyType,
-      images: Array.isArray(images) ? images : (images ? JSON.parse(images) : []),
+      images: processedImages,
       amenities: Array.isArray(amenities) ? amenities : (amenities ? JSON.parse(amenities) : []),
       petFriendly: petFriendly || false,
       availableFrom: availableFrom ? new Date(availableFrom) : null,

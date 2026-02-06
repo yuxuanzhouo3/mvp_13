@@ -27,7 +27,7 @@ export default function HowItWorksPage() {
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground">
-                  Simply describe what you're looking for in natural language, and our AI will find matching properties from multiple platforms.
+                  Simply describe what you&apos;re looking for in natural language, and our AI will find matching properties from multiple platforms.
                 </p>
               </CardContent>
             </Card>

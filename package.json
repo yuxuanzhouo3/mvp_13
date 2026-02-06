@@ -16,6 +16,9 @@
   "prisma": {
     "seed": "tsx prisma/seed.ts"
   },
+  "eslintConfig": {
+    "extends": "next/core-web-vitals"
+  },
   "dependencies": {
     "@cloudbase/node-sdk": "^3.17.0",
     "@hookform/resolvers": "^3.10.0",
@@ -79,6 +82,8 @@
     "zod": "3.25.76"
   },
   "devDependencies": {
+    "eslint": "^8.57.0",
+    "eslint-config-next": "15.2.6",
     "@types/bcryptjs": "^2.4.6",
     "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^22",

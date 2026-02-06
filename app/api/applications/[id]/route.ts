@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-adapter'
 import { getDatabaseAdapter } from '@/lib/db-adapter'
 import { trackEvent } from '@/lib/analytics'
+import { createRentPayment } from '@/lib/payment-service'
 
 /**
  * 更新申请状态
@@ -41,8 +42,11 @@ export async function PATCH(
       )
     }
 
-    // 只有房东可以审核申请
-    if (property.landlordId !== user.id) {
+    // 房东或中介可以审核申请
+    const isLandlord = property.landlordId === user.id
+    const isAgent = property.agentId === user.id
+    
+    if (!isLandlord && !isAgent) {
       return NextResponse.json(
         { error: 'Not authorized to update this application' },
         { status: 403 }
@@ -77,9 +81,53 @@ export async function PATCH(
       },
     })
 
-    // 如果申请被批准，可以创建租赁合同
+    // 如果申请被批准，创建租赁合同并提示支付
     if (status === 'APPROVED') {
-      // 可选：自动创建租赁合同
+      // 1. Create Lease
+      const leaseData = {
+         propertyId: property.id,
+         tenantId: tenant.id,
+         landlordId: property.landlordId,
+         listingAgentId: property.agentId, // If property has an agent
+         startDate: new Date(), // Should be from application
+         endDate: new Date(new Date().setFullYear(new Date().getFullYear() + 1)), // Default 1 year
+         monthlyRent: property.price,
+         depositAmount: property.deposit,
+         status: 'PENDING_PAYMENT' // Wait for escrow payment
+      }
+      
+      const lease = await db.create('leases', leaseData)
+      
+      // 2. Create Rent Payment (First Month Rent + Deposit)
+      // This ensures the fee calculation (Platform Fee + Agent Commission) is applied correctly.
+      let paymentUrl = null
+      try {
+         const paymentResult = await createRentPayment(
+             tenant.id, 
+             lease.id, 
+             leaseData.monthlyRent, 
+             leaseData.depositAmount
+         )
+         if (paymentResult.success) {
+             paymentUrl = paymentResult.paymentUrl
+         }
+      } catch (err) {
+         console.error('Failed to create initial rent payment:', err)
+         // Don't fail the whole request, but log it. Tenant might need to trigger payment manually.
+      }
+
+      // 3. Notify Tenant to Pay (Create Notification)
+      await db.create('notifications', {
+        userId: tenant.id,
+        type: 'SYSTEM',
+        title: 'Application Approved',
+        message: `Your application for ${property.title} has been approved. Please sign the lease and pay the deposit/rent to escrow.`,
+        isRead: false,
+        metadata: {
+           leaseId: lease.id,
+           actionUrl: paymentUrl || `/dashboard/tenant/payments?leaseId=${lease.id}`
+        }
+      })
     }
 
     return NextResponse.json({ application: applicationWithRelations })

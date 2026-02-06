@@ -8,6 +8,9 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { Badge } from "@/components/ui/badge"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { CheckCircle, AlertTriangle, ExternalLink, CreditCard } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
 export default function SettingsPage() {
@@ -16,6 +19,7 @@ export default function SettingsPage() {
   const tCommon = useTranslations('common')
   const tAuth = useTranslations('auth')
   const [loading, setLoading] = useState(false)
+  const [payoutAccountId, setPayoutAccountId] = useState("")
   const [formData, setFormData] = useState({
     name: "",
     email: "",
@@ -33,8 +37,58 @@ export default function SettingsPage() {
         phone: user.phone || "",
         avatar: user.avatar || "",
       })
+      if (user.landlordProfile?.payoutAccountId) {
+        setPayoutAccountId(user.landlordProfile.payoutAccountId)
+      }
     }
   }, [])
+
+  const handleConnectPayout = async () => {
+    setLoading(true)
+    try {
+      // Simulate connection to Stripe/Alipay
+      const region = process.env.NEXT_PUBLIC_APP_REGION
+      const mockAccountId = region === 'china' 
+        ? `wepay_${Math.random().toString(36).substring(7)}` 
+        : `acct_${Math.random().toString(36).substring(7)}`
+      
+      const token = localStorage.getItem("auth-token")
+      const response = await fetch("/api/landlord/payout-settings", {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json", 
+          Authorization: `Bearer ${token}` 
+        },
+        body: JSON.stringify({ payoutAccountId: mockAccountId })
+      })
+      
+      if (response.ok) {
+        setPayoutAccountId(mockAccountId)
+        // Update local storage user
+        const userStr = localStorage.getItem("user")
+        if (userStr) {
+          const user = JSON.parse(userStr)
+          if (!user.landlordProfile) user.landlordProfile = {}
+          user.landlordProfile.payoutAccountId = mockAccountId
+          localStorage.setItem("user", JSON.stringify(user))
+        }
+        toast({ 
+          title: tCommon('success'), 
+          description: region === 'china' ? "收款账户已连接 (模拟)" : "Payout account connected (Mock)" 
+        })
+      } else {
+        throw new Error("Failed to connect payout account")
+      }
+    } catch (error: any) {
+      toast({ 
+        title: tCommon('error'), 
+        description: error.message, 
+        variant: "destructive" 
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const handleSave = async () => {
     setLoading(true)

@@ -48,6 +48,7 @@ export interface DatabaseAdapter {
     name: string
     phone?: string
     userType?: string
+    representedById?: string
   }): Promise<UnifiedUser>
   updateUser(id: string, data: Partial<UnifiedUser>): Promise<UnifiedUser>
   
@@ -98,6 +99,7 @@ export class SupabaseAdapter implements DatabaseAdapter {
     name: string
     phone?: string
     userType?: string
+    representedById?: string
   }): Promise<UnifiedUser> {
     // 如果密码为空（Supabase 用户），使用随机密码占位
     const password = data.password || `supabase_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
@@ -113,7 +115,11 @@ export class SupabaseAdapter implements DatabaseAdapter {
       dailyQuota: 10,
       monthlyQuota: 100,
       ...(data.userType === 'TENANT' && {
-        tenantProfile: { create: {} }
+        tenantProfile: { 
+          create: {
+            ...(data.representedById ? { representedById: data.representedById } : {})
+          } 
+        }
       }),
       ...(data.userType === 'LANDLORD' && {
         landlordProfile: { create: {} }
@@ -375,6 +381,7 @@ export class SupabaseAdapter implements DatabaseAdapter {
       subscriptionEndTime: user.premiumExpiry,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
+      representedById: user.tenantProfile?.representedById || null,
     }
   }
 }
@@ -414,6 +421,7 @@ export class CloudBaseAdapter implements DatabaseAdapter {
     name: string
     phone?: string
     userType?: string
+    representedById?: string
   }): Promise<UnifiedUser> {
     // 构建用户数据，phone 字段只有在有值时才添加（避免唯一索引冲突）
     const userData: any = {
@@ -427,6 +435,7 @@ export class CloudBaseAdapter implements DatabaseAdapter {
       monthlyQuota: 100, // 免费用户每月配额
       createdAt: new Date(),
       updatedAt: new Date(),
+      ...(data.representedById ? { representedById: data.representedById } : {})
     }
     
     // 只有当 phone 有值时才添加该字段（避免 CloudBase 唯一索引冲突）
@@ -464,6 +473,7 @@ export class CloudBaseAdapter implements DatabaseAdapter {
     if (data.lastUsageDate !== undefined) updateData.lastUsageDate = data.lastUsageDate
     if (data.dailyQuota !== undefined) updateData.dailyQuota = data.dailyQuota
     if (data.monthlyQuota !== undefined) updateData.monthlyQuota = data.monthlyQuota
+    if (data.representedById !== undefined) updateData.representedById = data.representedById
     
     await cloudbaseDb
       .collection('users')
@@ -600,6 +610,7 @@ export class CloudBaseAdapter implements DatabaseAdapter {
       monthlyQuota: user.monthlyQuota || 100,
       createdAt: user.createdAt ? new Date(user.createdAt) : new Date(),
       updatedAt: user.updatedAt ? new Date(user.updatedAt) : new Date(),
+      representedById: user.representedById || null,
     }
   }
 }

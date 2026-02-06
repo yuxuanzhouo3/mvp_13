@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAuthUser } from '@/lib/auth'
-import { prisma } from '@/lib/db'
+import { getDatabaseAdapter } from '@/lib/db-adapter'
 
 /**
  * Get earnings for agent
+ * Fetches payments where the agent is listed in the distribution details
  */
 export async function GET(request: NextRequest) {
   try {
@@ -15,48 +16,104 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    // Get payments that might be agent commissions
-    const payments = await prisma.payment.findMany({
-      where: {
-        userId: user.userId,
-        type: 'SERVICE_FEE'
-      },
+    const db = getDatabaseAdapter()
+
+    // 1. Get all RENT payments
+    // Note: Ideally we would filter by JSON field in DB, but for compatibility/MVP we filter in memory
+    // or if the adapter supports JSON filtering (which our simple one might not)
+    const payments = await db.query('payments', {
+      type: 'RENT'
+    }, {
       orderBy: { createdAt: 'desc' }
     })
 
-    // Calculate totals
-    const totalEarnings = payments
-      .filter(p => p.status === 'COMPLETED')
-      .reduce((sum, p) => sum + p.amount, 0)
+    // 2. Filter for this agent
+    const agentPayments = payments.filter((p: any) => {
+      if (!p.distribution) return false
+      const details = p.distribution.details || {}
+      return details.listingAgentId === user.id || details.tenantAgentId === user.id
+    })
 
-    const thisMonth = payments
-      .filter(p => {
-        const paymentDate = new Date(p.createdAt)
-        const now = new Date()
-        return paymentDate.getMonth() === now.getMonth() && 
-               paymentDate.getFullYear() === now.getFullYear() &&
-               p.status === 'COMPLETED'
-      })
-      .reduce((sum, p) => sum + p.amount, 0)
+    // 3. Enrich with details
+    const earnings = await Promise.all(agentPayments.map(async (p: any) => {
+      let propertyTitle = 'Unknown Property'
+      let tenantName = 'Unknown Tenant'
 
-    const pendingPayouts = payments
-      .filter(p => p.status === 'PENDING')
-      .reduce((sum, p) => sum + p.amount, 0)
+      // Fetch Property
+      if (p.propertyId) {
+        const property = await db.findById('properties', p.propertyId)
+        if (property) propertyTitle = property.title
+      } else if (p.description && p.description.includes('lease')) {
+         // Fallback: try to find lease then property? Too expensive.
+         // Let's rely on propertyId being populated during payment creation (I should ensure that too)
+      }
 
-    // Format earnings
-    const earnings = payments.map(payment => ({
-      id: payment.id,
-      amount: payment.amount,
-      description: payment.description,
-      status: payment.status === 'COMPLETED' ? 'PAID' : 'PENDING',
-      createdAt: payment.createdAt
+      // Fetch Tenant
+      if (p.userId) {
+        const tenant = await db.findUserById(p.userId)
+        if (tenant) tenantName = tenant.name
+      }
+
+      // Calculate Agent's share
+      const details = p.distribution.details || {}
+      let amount = 0
+      if (details.listingAgentId === user.id) amount += (p.distribution.listingAgentFee || 0)
+      if (details.tenantAgentId === user.id) amount += (p.distribution.tenantAgentFee || 0)
+
+      return {
+        id: p.id,
+        amount: amount, // The commission amount, not total rent
+        totalRent: p.amount,
+        description: p.description,
+        status: p.escrowStatus === 'RELEASED' ? 'PAID' : (p.status === 'COMPLETED' ? 'PENDING_RELEASE' : 'PENDING'),
+        createdAt: p.createdAt,
+        propertyTitle,
+        tenantName,
+        currency: p.distribution.currency || 'USD'
+      }
     }))
+
+    // 4. Calculate stats
+    const totalEarnings = earnings
+      .filter(e => e.status === 'PAID')
+      .reduce((sum, e) => sum + e.amount, 0)
+
+    const thisMonth = earnings
+      .filter(e => {
+        const date = new Date(e.createdAt)
+        const now = new Date()
+        return date.getMonth() === now.getMonth() && 
+               date.getFullYear() === now.getFullYear() &&
+               e.status === 'PAID'
+      })
+      .reduce((sum, e) => sum + e.amount, 0)
+
+    const pendingPayouts = earnings
+      .filter(e => e.status === 'PENDING' || e.status === 'PENDING_RELEASE')
+      .reduce((sum, e) => sum + e.amount, 0)
+
+    // Check if agent has payout account
+    let hasPayoutAccount = false
+    if (process.env.NEXT_PUBLIC_APP_REGION === 'china') {
+       // CloudBase logic: check user root or profile
+       // Assuming stored on user root for simplicity in MVP
+       const agent = await db.findUserById(user.id)
+       hasPayoutAccount = !!agent?.agentProfile?.payoutAccountId || !!(agent as any).payoutAccountId
+    } else {
+       // Prisma logic
+       const agent = await prisma.user.findUnique({
+           where: { id: user.id },
+           include: { agentProfile: true }
+       })
+       hasPayoutAccount = !!agent?.agentProfile?.payoutAccountId
+    }
 
     return NextResponse.json({
       earnings,
       totalEarnings,
       thisMonth,
-      pendingPayouts
+      pendingPayouts,
+      hasPayoutAccount
     })
   } catch (error: any) {
     console.error('Get earnings error:', error)

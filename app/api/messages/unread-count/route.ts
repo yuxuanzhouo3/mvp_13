@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAuthUser } from '@/lib/auth'
-import { prisma } from '@/lib/db'
+import { getCurrentUser } from '@/lib/auth-adapter'
+import { getDatabaseAdapter } from '@/lib/db-adapter'
 
 /**
  * Get unread messages count
  */
 export async function GET(request: NextRequest) {
   try {
-    const user = getAuthUser(request)
+    const user = await getCurrentUser(request)
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
@@ -15,12 +15,14 @@ export async function GET(request: NextRequest) {
       )
     }
 
-    const count = await prisma.message.count({
-      where: {
-        receiverId: user.userId,
-        isRead: false
-      }
+    const db = getDatabaseAdapter()
+    const messages = await db.query('messages', {
+      receiverId: user.id
     })
+    const count = messages.filter((m: any) => {
+      const isUnread = m.isRead === false || m.isRead === null || m.isRead === undefined || m.is_read === false
+      return isUnread
+    }).length
 
     return NextResponse.json({ count })
   } catch (error: any) {

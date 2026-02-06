@@ -5,10 +5,12 @@ import { useTranslations } from 'next-intl'
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { DollarSign, TrendingUp, Calendar, Download } from "lucide-react"
+import { DollarSign, TrendingUp, Calendar, Download, AlertTriangle, CreditCard } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { useToast } from "@/hooks/use-toast"
 import { getCurrencySymbol } from "@/lib/utils"
+import Link from "next/link"
 
 export default function AgentEarningsPage() {
   const { toast } = useToast()
@@ -21,6 +23,7 @@ export default function AgentEarningsPage() {
     thisMonth: 0,
     pendingPayouts: 0,
   })
+  const [hasPayoutAccount, setHasPayoutAccount] = useState(true)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -44,6 +47,7 @@ export default function AgentEarningsPage() {
           thisMonth: data.thisMonth || 0,
           pendingPayouts: data.pendingPayouts || 0,
         })
+        setHasPayoutAccount(data.hasPayoutAccount !== false) // Default to true if undefined
       }
     } catch (error) {
       console.error("Failed to fetch earnings:", error)
@@ -65,6 +69,24 @@ export default function AgentEarningsPage() {
             {t('exportReport') || "Export Report"}
           </Button>
         </div>
+
+        {/* Payout Account Alert */}
+        {!hasPayoutAccount && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Missing Payout Account</AlertTitle>
+            <AlertDescription className="flex items-center justify-between">
+              <span>
+                You haven&apos;t linked a payout account yet. You won&apos;t be able to receive your commissions.
+              </span>
+              <Button variant="outline" size="sm" className="ml-4" asChild>
+                <Link href="/dashboard/agent/settings">
+                  Link Account
+                </Link>
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
 
         {/* Stats Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -114,23 +136,31 @@ export default function AgentEarningsPage() {
             ) : earnings.length > 0 ? (
               <div className="space-y-4">
                 {earnings.map((earning: any, index: number) => (
-                  <div key={index} className="flex items-center justify-between p-4 border rounded-lg">
+                  <div key={index} className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors">
                     <div>
-                      <h3 className="font-semibold">{earning.description || (t('commissionPayment') || "Commission Payment")}</h3>
-                      <div className="text-sm text-muted-foreground">
-                        {earning.property?.title || (t('propertyDeal') || "Property Deal")}
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-semibold">{earning.description || (t('commissionPayment') || "Commission Payment")}</h3>
+                        <Badge variant="outline" className="text-xs font-normal">
+                          {earning.propertyTitle || "Property"}
+                        </Badge>
                       </div>
-                      <div className="flex items-center text-sm text-muted-foreground">
+                      <div className="text-sm text-muted-foreground mt-1">
+                        Tenant: {earning.tenantName || "Unknown"}
+                      </div>
+                      <div className="flex items-center text-xs text-muted-foreground mt-1">
                         <Calendar className="h-3 w-3 mr-1" />
                         {new Date(earning.createdAt).toLocaleDateString()}
                       </div>
                     </div>
                     <div className="text-right">
                       <div className="font-semibold text-lg text-green-600">
-                        +{currencySymbol}{earning.amount?.toLocaleString() || 0}
+                        +{earning.currency === 'CNY' ? '¥' : '$'}{earning.amount?.toLocaleString() || 0}
                       </div>
-                      <Badge variant={earning.status === "PAID" ? "default" : "secondary"}>
-                        {earning.status || t('pending') || "Pending"}
+                      <div className="text-xs text-muted-foreground mb-1">
+                         Total Rent: {earning.currency === 'CNY' ? '¥' : '$'}{earning.totalRent?.toLocaleString()}
+                      </div>
+                      <Badge variant={earning.status === "PAID" ? "default" : (earning.status === "PENDING_RELEASE" ? "secondary" : "outline")}>
+                        {earning.status === "PENDING_RELEASE" ? "Held in Escrow" : (earning.status || t('pending'))}
                       </Badge>
                     </div>
                   </div>

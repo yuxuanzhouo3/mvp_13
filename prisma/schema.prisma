@@ -41,12 +41,32 @@ model User {
   deposits         Deposit[]
   savedProperties  SavedProperty[]
   notifications    Notification[]
+  
+  // Agent Relations
+  agentProfile       AgentProfile?
+  agentProperties    Property[]      @relation("AgentProperties")
+  representedTenants TenantProfile[] @relation("RepresentedTenants")
+  listingAgentLeases Lease[]         @relation("ListingAgentLeases")
+  tenantAgentLeases  Lease[]         @relation("TenantAgentLeases")
 
   @@index([email])
   @@index([userType])
 }
 
 // UserType enum - using String in SQLite
+
+// 中介资料
+model AgentProfile {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  companyName     String?
+  licenseNumber   String?
+  verified        Boolean  @default(false)
+  payoutAccountId String?  // Stripe Connect ID or WeChat/Alipay Merchant ID
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
 
 // 租客资料
 model TenantProfile {
@@ -60,6 +80,8 @@ model TenantProfile {
   preferences     Json?      // 偏好设置 (JSON)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+  representedById String?
+  representedBy   User?    @relation("RepresentedTenants", fields: [representedById], references: [id])
 }
 
 // 房东资料
@@ -70,6 +92,7 @@ model LandlordProfile {
   companyName     String?
   licenseNumber   String?
   verified        Boolean  @default(false)
+  payoutAccountId String?  // Stripe Connect ID or WeChat/Alipay Merchant ID
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
@@ -79,6 +102,8 @@ model Property {
   id              String      @id @default(cuid())
   landlordId      String
   landlord        User        @relation(fields: [landlordId], references: [id])
+  agentId         String?
+  agent           User?       @relation("AgentProperties", fields: [agentId], references: [id])
   title           String
   description     String
   address         String
@@ -204,6 +229,10 @@ model Lease {
   endDate         DateTime
   monthlyRent     Float
   depositAmount   Float
+  listingAgentId  String?
+  listingAgent    User?     @relation("ListingAgentLeases", fields: [listingAgentId], references: [id])
+  tenantAgentId   String?
+  tenantAgent     User?     @relation("TenantAgentLeases", fields: [tenantAgentId], references: [id])
   status          String    @default("ACTIVE") // ACTIVE, EXPIRED, TERMINATED, CANCELLED
   documentUrl     String?
   createdAt       DateTime @default(now())
@@ -276,6 +305,8 @@ model Payment {
   propertyId      String?
   transactionId   String?       @unique
   paymentMethod   String?
+  escrowStatus    String?   @default("HELD_IN_ESCROW") // HELD_IN_ESCROW, RELEASED, REFUNDED
+  distribution    Json?     // Details of split
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
 

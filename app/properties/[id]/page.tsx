@@ -433,23 +433,49 @@ export default function PropertyDetailPage() {
                     if (!token) {
                       toast({
                         title: process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '请先登录' : "Please login",
-                        description: process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '您需要登录才能联系房东' : "You need to login to contact landlord",
+                        description: process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '您需要登录才能联系' : "You need to login to contact",
                         variant: "destructive",
                       })
                       router.push("/auth/login")
                       return
                     }
-                    if (property.landlord) {
-                      router.push(`/dashboard/tenant/messages?userId=${property.landlord.id}`)
+                    
+                    const targetUser = property.agent || property.landlord
+                    if (targetUser) {
+                      const dashboardType = userType === 'AGENT' ? 'agent' : 'tenant'
+                      router.push(`/dashboard/${dashboardType}/messages?userId=${targetUser.id}`)
                     }
                   }}
                 >
-                  {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '联系房东' : 'Contact Landlord'}
+                  {process.env.NEXT_PUBLIC_APP_REGION === 'china' 
+                    ? (property.agent ? '联系中介' : '联系房东') 
+                    : (property.agent ? 'Contact Agent' : 'Contact Landlord')}
                 </Button>
               </CardContent>
             </Card>
 
-            {property.landlord && (
+            {property.agent && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>
+                    {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '中介信息' : 'Agent Information'}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    <div>
+                      <div className="font-semibold">{property.agent.name}</div>
+                      <div className="text-sm text-muted-foreground">{property.agent.email}</div>
+                      {property.agent.phone && (
+                        <div className="text-sm text-muted-foreground">{property.agent.phone}</div>
+                      )}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {property.landlord && !property.agent && (
               <Card>
                 <CardHeader>
                   <CardTitle>

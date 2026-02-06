@@ -18,9 +18,9 @@ export async function GET(request: NextRequest) {
 
     const db = getDatabaseAdapter()
 
-    // Get all available properties (agents can see all properties)
+    // Get agent's properties (Data Isolation: 只能看到自己管理的房源)
     const properties = await db.query('properties', {
-      status: 'AVAILABLE'
+      agentId: user.id
     }, {
       orderBy: { createdAt: 'desc' }
     })

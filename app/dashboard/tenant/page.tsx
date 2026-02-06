@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { useTranslations } from 'next-intl'
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -8,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Search, MapPin, Filter, Heart, Calendar, MessageSquare } from "lucide-react"
+import { Search, MapPin, Filter, Heart, Calendar, MessageSquare, UserCheck, CheckCircle } from "lucide-react"
 import { PropertyCard } from "@/components/dashboard/property-card"
 import { PaymentHistory } from "@/components/dashboard/payment-history"
 import { MessageCenter } from "@/components/dashboard/message-center"
@@ -17,6 +18,7 @@ import { getCurrencySymbol } from "@/lib/utils"
 
 
 export default function TenantDashboard() {
+  const router = useRouter()
   const t = useTranslations('dashboard')
   const tHero = useTranslations('hero')
   const tCommon = useTranslations('common')
@@ -25,13 +27,19 @@ export default function TenantDashboard() {
   const [savedProperties, setSavedProperties] = useState<any[]>([])
   const [searchResults, setSearchResults] = useState<any[]>([])
   const [applications, setApplications] = useState<any[]>([])
+  const [leases, setLeases] = useState<any[]>([])
+  const [payments, setPayments] = useState<any[]>([])
+  const [notifications, setNotifications] = useState<any[]>([])
   const [stats, setStats] = useState({
     savedCount: 0,
     applicationsCount: 0,
     viewingsCount: 0,
     unreadMessages: 0,
+    activeLeases: 0,
+    unreadNotifications: 0
   })
   const [userName, setUserName] = useState("")
+  const [representedBy, setRepresentedBy] = useState<{name: string, id: string} | null>(null)
 
   // Fetch user data and stats
   const fetchData = async () => {
@@ -44,6 +52,30 @@ export default function TenantDashboard() {
       if (userStr) {
         const user = JSON.parse(userStr)
         setUserName(user.name || "User")
+        
+        // Fetch full profile to check representation
+        const profileRes = await fetch("/api/auth/profile", {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (profileRes.ok) {
+          const profileData = await profileRes.json()
+          if (profileData.user?.representedById) {
+            // Fetch agent details
+            const agentRes = await fetch(`/api/auth/user/${profileData.user.representedById}`, {
+              headers: { Authorization: `Bearer ${token}` },
+            })
+            if (agentRes.ok) {
+              const agentData = await agentRes.json()
+              const agent = agentData?.user || agentData
+              if (agent?.id) {
+                setRepresentedBy({
+                  name: agent.name,
+                  id: agent.id
+                })
+              }
+            }
+          }
+        }
       }
 
       // Fetch saved properties
@@ -66,6 +98,35 @@ export default function TenantDashboard() {
         setStats(prev => ({ ...prev, applicationsCount: appsData.applications?.length || 0 }))
       }
 
+      // Fetch Leases (Rentals)
+      const leasesRes = await fetch("/api/tenant/leases", {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (leasesRes.ok) {
+        const leasesData = await leasesRes.json()
+        setLeases(leasesData.leases || [])
+        setStats(prev => ({ ...prev, activeLeases: leasesData.leases?.length || 0 }))
+      }
+
+      // Fetch Payments (for Check-in status)
+      const paymentsRes = await fetch("/api/payments?userType=tenant", {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (paymentsRes.ok) {
+        const paymentsData = await paymentsRes.json()
+        setPayments(paymentsData.payments || [])
+      }
+
+      // Fetch Notifications
+      const notifRes = await fetch("/api/notifications", {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (notifRes.ok) {
+        const notifData = await notifRes.json()
+        setNotifications(notifData.notifications || [])
+        setStats(prev => ({ ...prev, unreadNotifications: notifData.notifications?.filter((n: any) => !n.isRead).length || 0 }))
+      }
+
       // Fetch unread messages count
       const messagesRes = await fetch("/api/messages/unread-count", {
         headers: { Authorization: `Bearer ${token}` },
@@ -76,6 +137,41 @@ export default function TenantDashboard() {
       }
     } catch (error) {
       console.error("Failed to fetch dashboard data:", error)
+    }
+  }
+
+  // Handle Confirm Check-in
+  const handleCheckIn = async (leaseId: string) => {
+    if (!confirm(t('confirmCheckIn') + "?")) return
+    
+    // Find payment for this lease
+    const payment = payments.find(p => 
+      p.escrowStatus === 'HELD_IN_ESCROW' && 
+      (p.metadata?.leaseId === leaseId || p.description?.includes(leaseId))
+    )
+    
+    if (!payment) {
+      alert("No escrow payment found for this lease.")
+      return
+    }
+
+    try {
+      const token = localStorage.getItem("auth-token")
+      const res = await fetch(`/api/payments/${payment.id}/release`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      
+      if (res.ok) {
+        alert(t('fundsReleased'))
+        fetchData() // Refresh
+      } else {
+        const err = await res.json()
+        alert(err.error || "Failed to confirm check-in")
+      }
+    } catch (e) {
+      console.error(e)
+      alert("Error confirming check-in")
     }
   }
 
@@ -95,7 +191,54 @@ export default function TenantDashboard() {
         <div>
           <h1 className="text-3xl font-bold">{t('welcome')} {userName || tCommon('user')}!</h1>
           <p className="text-muted-foreground">{t('findIdealHome') || "Find your ideal home with secure deposit protection."}</p>
+          {representedBy && (
+            <div className="mt-2 inline-flex items-center px-3 py-1 rounded-full bg-primary/10 text-primary text-sm">
+              <span>
+                {process.env.NEXT_PUBLIC_APP_REGION === 'china' 
+                  ? `您的专属中介: ${representedBy.name}`
+                  : `Your Agent: ${representedBy.name}`}
+              </span>
+            </div>
+          )}
         </div>
+
+        {/* Representation Status */}
+        {representedBy && (
+          <div className="mb-6 p-4 bg-primary/10 rounded-lg flex items-center justify-between border border-primary/20">
+            <div className="flex items-center space-x-3">
+              <UserCheck className="h-6 w-6 text-primary" />
+              <div>
+                <h3 className="font-semibold text-primary">{t('youAreRepresentedBy')} {representedBy.name}</h3>
+                <p className="text-sm text-muted-foreground">
+                  {t('agentRepresentsYouDesc') || "This agent handles your property search and negotiations."}
+                </p>
+              </div>
+            </div>
+            <Button variant="outline" onClick={() => router.push(`/dashboard/tenant/messages?userId=${representedBy.id}`)}>
+              <MessageSquare className="h-4 w-4 mr-2" />
+              {t('messages')}
+            </Button>
+          </div>
+        )}
+
+        {/* Notifications Area */}
+        {notifications.length > 0 && (
+           <div className="mb-6 space-y-2">
+             <h3 className="text-lg font-semibold">{t('notifications')}</h3>
+             {notifications.map((notif: any) => (
+               <div key={notif.id} className={`p-4 rounded-lg border flex justify-between items-center ${notif.isRead ? 'bg-background' : 'bg-muted/30'}`}>
+                 <div>
+                   <p className="font-medium">{notif.title}</p>
+                   <p className="text-sm text-muted-foreground">{notif.message}</p>
+                   <p className="text-xs text-muted-foreground mt-1">{new Date(notif.createdAt).toLocaleDateString()}</p>
+                 </div>
+                 {!notif.isRead && (
+                    <Badge variant="secondary">{t('unread')}</Badge>
+                 )}
+               </div>
+             ))}
+           </div>
+        )}
 
         {/* Quick Actions */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -153,6 +296,7 @@ export default function TenantDashboard() {
           <TabsList>
             <TabsTrigger value="ai-search">{t('aiSmartSearch')}</TabsTrigger>
             <TabsTrigger value="search">{t('search')}</TabsTrigger>
+            <TabsTrigger value="rentals">{t('myRentals')}</TabsTrigger>
             <TabsTrigger value="saved">{t('savedProperties')}</TabsTrigger>
             <TabsTrigger value="applications">{t('applications')}</TabsTrigger>
             <TabsTrigger value="payments">{t('payments')}</TabsTrigger>
@@ -161,6 +305,64 @@ export default function TenantDashboard() {
 
           <TabsContent value="ai-search" className="space-y-6">
             <AIChat userType="tenant" />
+          </TabsContent>
+
+          <TabsContent value="rentals" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>{t('myRentals')}</CardTitle>
+                <CardDescription>{t('trackRentPayments')}</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {leases.length > 0 ? (
+                  <div className="space-y-4">
+                    {leases.map((lease) => {
+                       // Check for escrow payment
+                       const escrowPayment = payments.find(p => 
+                         p.escrowStatus === 'HELD_IN_ESCROW' && 
+                         (p.metadata?.leaseId === lease.id || p.description?.includes(lease.id))
+                       );
+                       return (
+                        <div key={lease.id} className="p-4 border rounded-lg flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                          <div>
+                            <div className="font-semibold text-lg">{lease.property?.title || "Property"}</div>
+                            <div className="text-sm text-muted-foreground">{lease.property?.address}</div>
+                            <div className="flex gap-4 mt-2 text-sm">
+                              <span>Start: {new Date(lease.startDate).toLocaleDateString()}</span>
+                              <span>End: {new Date(lease.endDate).toLocaleDateString()}</span>
+                            </div>
+                            <div className="mt-1">
+                              <Badge variant={lease.isActive ? "default" : "secondary"}>
+                                {lease.isActive ? "Active" : "Inactive"}
+                              </Badge>
+                            </div>
+                          </div>
+                          
+                          <div className="flex flex-col gap-2 items-end">
+                            {escrowPayment && (
+                              <div className="text-right">
+                                <div className="text-sm font-medium text-amber-600 mb-1">
+                                  {t('fundsHeldInEscrow') || "Funds Held in Escrow"}
+                                </div>
+                                <Button onClick={() => handleCheckIn(lease.id)} className="w-full md:w-auto">
+                                  <CheckCircle className="mr-2 h-4 w-4" />
+                                  {t('confirmCheckIn')}
+                                </Button>
+                              </div>
+                            )}
+                            <Button variant="outline" size="sm" onClick={() => window.location.href=`/properties/${lease.propertyId}`}>
+                              {tCommon('viewDetails')}
+                            </Button>
+                          </div>
+                        </div>
+                       )
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-center text-muted-foreground py-8">{t('noActiveTenants') || "No active rentals."}</p>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="search" className="space-y-6">

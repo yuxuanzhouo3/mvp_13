@@ -1,7 +1,7 @@
 "use client"
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { useState, useEffect } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { useTranslations } from 'next-intl'
 import { Button } from "@/components/ui/button"
@@ -15,6 +15,8 @@ import { useToast } from "@/hooks/use-toast"
 
 export default function SignUpPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const ref = searchParams.get("ref")
   const { toast } = useToast()
   const t = useTranslations('auth')
   const tCommon = useTranslations('common')
@@ -56,6 +58,7 @@ export default function SignUpPage() {
           name: email.split("@")[0], // 使用邮箱前缀作为默认名称
           phone: phone || undefined,
           userType: userType.toUpperCase(),
+          ref: ref || undefined, // 传递邀请码
         }),
       })
 

@@ -67,7 +67,7 @@ export function TestimonialsSection() {
                     ))}
                   </div>
 
-                  <p className="text-muted-foreground mb-6 italic">"{testimonial.content}"</p>
+                  <p className="text-muted-foreground mb-6 italic">&ldquo;{testimonial.content}&rdquo;</p>
 
                   <div className="flex items-center">
                     <Avatar className="h-10 w-10 mr-3">

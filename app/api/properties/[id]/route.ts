@@ -97,6 +97,12 @@ export async function GET(
     }
 
     const landlord = await db.findUserById(landlordId)
+    
+    let agent = null
+    if (property.agentId) {
+      agent = await db.findUserById(property.agentId)
+    }
+
     const propertyWithLandlord = {
       ...property,
       landlord: landlord ? {
@@ -104,6 +110,12 @@ export async function GET(
         name: landlord.name,
         email: landlord.email,
         phone: landlord.phone,
+      } : null,
+      agent: agent ? {
+        id: agent.id,
+        name: agent.name,
+        email: agent.email,
+        phone: agent.phone,
       } : null,
     }
 

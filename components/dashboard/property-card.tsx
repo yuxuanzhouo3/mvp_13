@@ -27,9 +27,10 @@ interface PropertyCardProps {
   property: Property
   showSaveButton?: boolean
   showManagementActions?: boolean
+  userRole?: 'TENANT' | 'LANDLORD' | 'AGENT'
 }
 
-export function PropertyCard({ property, showSaveButton = true, showManagementActions = false }: PropertyCardProps) {
+export function PropertyCard({ property, showSaveButton = true, showManagementActions = false, userRole }: PropertyCardProps) {
   const router = useRouter()
   const { toast } = useToast()
   const t = useTranslations('dashboard')
@@ -211,7 +212,8 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
                 size="sm" 
                 variant="outline" 
                 className="flex-1 bg-transparent"
-                onClick={async () => {
+                onClick={async (e) => {
+                  e.stopPropagation()
                   const token = localStorage.getItem("auth-token")
                   if (!token) {
                     toast({

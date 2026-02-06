@@ -44,6 +44,33 @@ export function PaymentHistory({ userType }: PaymentHistoryProps) {
     }
   }
 
+  const handleConfirmCheckIn = async (paymentId: string) => {
+    if (!confirm(t('confirmCheckInPrompt') || "Are you sure you want to confirm check-in? This will release the funds to the landlord.")) return
+
+    try {
+      const token = localStorage.getItem("auth-token")
+      const response = await fetch(`/api/payments/${paymentId}/release`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+
+      if (response.ok) {
+        // Refresh payments
+        fetchPayments()
+        // Show success message
+        // toast({ title: "Success", description: "Check-in confirmed and funds released." }) // Need to import toast if we want to use it, currently not imported in this component or passed as prop. 
+        // Just relying on refresh for now or console.
+        console.log("Funds released")
+      } else {
+        const data = await response.json()
+        alert(data.error || "Failed to confirm check-in")
+      }
+    } catch (error) {
+      console.error("Release error:", error)
+      alert("An error occurred")
+    }
+  }
+
   if (loading) {
     return (
       <Card>
@@ -89,6 +116,41 @@ export function PaymentHistory({ userType }: PaymentHistoryProps) {
                   <div>
                     <div className="font-medium">{payment.description || `${payment.type} - ${payment.property?.title || 'Property'}`}</div>
                     <div className="text-sm text-muted-foreground">{new Date(payment.createdAt).toLocaleDateString()}</div>
+                    {/* Breakdown for Landlords */}
+                    {userType === 'landlord' && payment.distribution && (
+                      <div className="mt-2 text-xs space-y-1 bg-muted/50 p-2 rounded w-64">
+                        <div className="flex justify-between">
+                          <span>Total:</span>
+                          <span>{currencySymbol}{payment.amount}</span>
+                        </div>
+                        <div className="flex justify-between text-destructive">
+                          <span>Platform Fee:</span>
+                          <span>-{currencySymbol}{payment.distribution.platformFee}</span>
+                        </div>
+                        {(payment.distribution.listingAgentFee > 0 || payment.distribution.tenantAgentFee > 0) && (
+                          <div className="flex justify-between text-destructive">
+                            <span>Agent Commission:</span>
+                            <span>-{currencySymbol}{((payment.distribution.listingAgentFee || 0) + (payment.distribution.tenantAgentFee || 0)).toFixed(2)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between font-bold text-green-600 pt-1 border-t border-border">
+                          <span>Net Income:</span>
+                          <span>{currencySymbol}{payment.distribution.landlordNet}</span>
+                        </div>
+                      </div>
+                    )}
+                    {/* Check-in Button for Tenants */}
+                    {userType === 'tenant' && payment.type === 'RENT' && payment.escrowStatus === 'HELD_IN_ESCROW' && (
+                      <div className="mt-2">
+                         <Button size="sm" onClick={() => handleConfirmCheckIn(payment.id)} className="bg-green-600 hover:bg-green-700 text-white h-8">
+                           <Shield className="h-3 w-3 mr-2" />
+                           {t('confirmCheckIn') || "Confirm Check-in"}
+                         </Button>
+                         <p className="text-xs text-muted-foreground mt-1">
+                           {t('confirmCheckInDesc') || "Click to release funds to landlord"}
+                         </p>
+                      </div>
+                    )}
                   </div>
                 </div>
 

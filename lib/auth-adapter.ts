@@ -260,7 +260,7 @@ async function getCurrentUserFromJWT(request: NextRequest): Promise<AuthUser | n
 export async function signUpWithSupabase(
   email: string,
   password: string,
-  metadata?: { name?: string; phone?: string; userType?: string }
+  metadata?: { name?: string; phone?: string; userType?: string; representedById?: string }
 ): Promise<AuthResult> {
   // 检查 Supabase 是否已初始化
   if (!supabaseAdmin) {
@@ -279,6 +279,7 @@ export async function signUpWithSupabase(
           name: metadata?.name,
           phone: metadata?.phone,
           userType: metadata?.userType || 'TENANT',
+          representedById: metadata?.representedById,
         },
       },
     })
@@ -591,6 +592,7 @@ export async function loginWithSupabase(
         name: (data.user.user_metadata as any)?.name || email.split('@')[0],
         ...(phoneValue && phoneValue.trim() !== '' ? { phone: phoneValue.trim() } : {}),
         userType: (data.user.user_metadata as any)?.userType || 'TENANT',
+        representedById: (data.user.user_metadata as any)?.representedById
       })
     } catch (createError: any) {
       // 如果创建用户失败（数据库连接问题），使用 Supabase 信息并生成 JWT token
@@ -690,6 +692,7 @@ export async function signUpWithJWT(
     name: metadata?.name || email.split('@')[0],
     phone: metadata?.phone,
     userType: metadata?.userType || 'TENANT',
+    representedById: metadata?.representedById
   })
 
   // 生成 JWT token（包含用户类型信息）

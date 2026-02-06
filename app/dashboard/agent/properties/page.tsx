@@ -18,6 +18,7 @@ export default function AgentPropertiesPage() {
   const t = useTranslations('dashboard')
   const tCommon = useTranslations('common')
   const tProperty = useTranslations('property')
+  const isChina = process.env.NEXT_PUBLIC_APP_REGION === 'china'
   const [properties, setProperties] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
@@ -115,13 +116,14 @@ export default function AgentPropertiesPage() {
                     }}
                     showSaveButton={false}
                     showManagementActions={true}
+                    userRole="AGENT"
                   />
                 ))}
               </div>
             ) : (
               <div className="text-center py-12 text-muted-foreground">
-                <p>{t('noPropertiesFound') || "No properties found"}</p>
-                <p className="text-sm mt-2">{t('connectWithLandlords') || "Connect with landlords to manage their properties"}</p>
+                <p>{t('noPropertiesFound') || (isChina ? "未找到房源" : "No properties found")}</p>
+                <p className="text-sm mt-2">{t('connectWithLandlords') || (isChina ? "请先与房东建立联系以便管理其房源" : "Connect with landlords to manage their properties")}</p>
               </div>
             )}
           </CardContent>

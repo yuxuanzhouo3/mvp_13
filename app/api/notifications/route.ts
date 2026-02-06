@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAuthUser } from '@/lib/auth'
-import { prisma } from '@/lib/db'
+import { getCurrentUser } from '@/lib/auth-adapter'
+import { getDatabaseAdapter } from '@/lib/db-adapter'
 
 /**
  * Get notifications for current user
  */
 export async function GET(request: NextRequest) {
   try {
-    const user = getAuthUser(request)
+    const user = await getCurrentUser(request)
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
@@ -18,21 +18,29 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url)
     const unreadOnly = searchParams.get('unreadOnly') === 'true'
 
-    const where: any = {
-      userId: user.userId
+    const db = getDatabaseAdapter()
+    
+    // Construct query
+    // Note: DB adapter might not support complex where clauses in query() yet depending on implementation
+    // But typically it supports simple object matching
+    const query: any = {
+      userId: user.id
     }
-
+    
     if (unreadOnly) {
-      where.isRead = false
+      query.isRead = false
     }
 
-    const notifications = await prisma.notification.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      take: 50
+    // Use db.query which should handle finding multiple records
+    // Assuming 'notifications' collection exists
+    const notifications = await db.query('notifications', query)
+
+    // Sort in memory if DB adapter doesn't support sort
+    notifications.sort((a: any, b: any) => {
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     })
 
-    return NextResponse.json({ notifications })
+    return NextResponse.json({ notifications: notifications.slice(0, 50) })
   } catch (error: any) {
     console.error('Get notifications error:', error)
     return NextResponse.json(
@@ -47,7 +55,7 @@ export async function GET(request: NextRequest) {
  */
 export async function PATCH(request: NextRequest) {
   try {
-    const user = getAuthUser(request)
+    const user = await getCurrentUser(request)
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
@@ -57,27 +65,18 @@ export async function PATCH(request: NextRequest) {
 
     const body = await request.json()
     const { notificationId, markAllAsRead } = body
+    const db = getDatabaseAdapter()
 
     if (markAllAsRead) {
-      await prisma.notification.updateMany({
-        where: {
-          userId: user.userId,
-          isRead: false
-        },
-        data: {
-          isRead: true
-        }
-      })
+      // Get all unread notifications for user
+      const unread = await db.query('notifications', { userId: user.id, isRead: false })
+      
+      // Update them one by one (as updateMany might not be supported by all adapters)
+      await Promise.all(unread.map((n: any) => 
+        db.update('notifications', n.id, { isRead: true })
+      ))
     } else if (notificationId) {
-      await prisma.notification.update({
-        where: {
-          id: notificationId,
-          userId: user.userId
-        },
-        data: {
-          isRead: true
-        }
-      })
+      await db.update('notifications', notificationId, { isRead: true })
     }
 
     return NextResponse.json({ success: true })

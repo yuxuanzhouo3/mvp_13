@@ -77,6 +77,7 @@ model TenantProfile {
   monthlyIncome   Float?
   creditScore     Int?
   employmentStatus String?
+  status          String   @default("SEARCHING") // SEARCHING, OCCUPIED, INACTIVE
   references      Json?      // 推荐人信息 (JSON)
   preferences     Json?      // 偏好设置 (JSON)
   createdAt       DateTime @default(now())
@@ -359,6 +360,7 @@ model Notification {
   message         String
   isRead          Boolean          @default(false)
   link            String?
+  metadata        Json?            // 额外数据 (JSON) - 用于存储leaseId、paymentId等
   createdAt       DateTime         @default(now())
 
   @@index([userId, isRead])

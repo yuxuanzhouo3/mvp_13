@@ -34,6 +34,7 @@ export interface PaymentDistribution {
   listingAgentFee: number
   tenantAgentFee: number
   landlordNet: number
+  deposit?: number  // 押金部分（继续托管，不释放）
   currency: string
   details: {
     listingAgentId?: string
@@ -528,6 +529,8 @@ export async function releaseRentPayment(paymentId: string): Promise<{ success: 
        // Mocking the destination for demonstration if not available
        const mockDestination = 'acct_123456789' 
 
+       // 只释放租金部分给房东/中介，押金继续在平台托管
+       // Only release rent portion to landlord/agents, deposit remains in escrow
        await transfer(distribution.landlordNet, mockDestination, 'landlord')
        
        if (distribution.details.listingAgentId) {
@@ -537,9 +540,12 @@ export async function releaseRentPayment(paymentId: string): Promise<{ success: 
            await transfer(distribution.tenantAgentFee, mockDestination, 'tenantAgent')
        }
 
-       // Update Status
+       // 注意：押金（distribution.deposit）不释放，继续在平台托管直到退租
+       // Note: Deposit (distribution.deposit) is NOT released, remains in escrow until lease end
+
+       // Update Payment Status (only rent portion is released, deposit stays in escrow)
        await db.update('payments', paymentId, {
-         escrowStatus: 'RELEASED'
+         escrowStatus: 'RELEASED' // 租金已释放，但押金仍在托管中
        })
 
        // Update Lease Status to ACTIVE

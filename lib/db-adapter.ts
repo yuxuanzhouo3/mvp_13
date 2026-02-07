@@ -67,31 +67,128 @@ export interface DatabaseAdapter {
 // Supabase (Prisma) 适配器实现
 export class SupabaseAdapter implements DatabaseAdapter {
   async findUserByEmail(email: string): Promise<UnifiedUser | null> {
-    const user = await prisma.user.findUnique({
-      where: { email },
-      include: {
-        tenantProfile: true,
-        landlordProfile: true,
-      },
-    })
-    
-    if (!user) return null
-    
-    return this.mapPrismaUserToUnified(user)
+    try {
+      const user = await prisma.user.findUnique({
+        where: { email },
+        include: {
+          tenantProfile: true,
+          landlordProfile: true,
+        },
+      })
+      
+      if (!user) return null
+      
+      return this.mapPrismaUserToUnified(user)
+    } catch (error: any) {
+      const errorMsg = String(error?.message || '')
+      const lower = errorMsg.toLowerCase()
+      
+      console.error('[SupabaseAdapter] 查询用户失败:', {
+        email,
+        error: errorMsg,
+        code: error?.code
+      })
+      
+      // 检查是否是连接问题
+      const isConnectionError = 
+        lower.includes("can't reach database server") ||
+        lower.includes('can\\u2019t reach database server') ||
+        lower.includes('maxclients') ||
+        lower.includes('max clients reached') ||
+        lower.includes('pool_size') ||
+        lower.includes("can't reach") ||
+        lower.includes('connection') ||
+        lower.includes('timeout') ||
+        lower.includes('pooler') ||
+        lower.includes('P1001') || // Prisma 连接错误代码
+        lower.includes('P1017') || // Prisma 连接关闭错误代码
+        lower.includes('P1000') || // Prisma 认证错误
+        lower.includes('P1001') || // Prisma 无法连接到数据库
+        error?.code === 'P1001' ||
+        error?.code === 'P1017' ||
+        error?.code === 'P1000'
+      
+      if (isConnectionError) {
+        console.error('[SupabaseAdapter] 数据库连接错误详情:', {
+          error: errorMsg,
+          code: error?.code,
+          meta: error?.meta
+        })
+        
+        // 强制抛出详细错误，方便调试
+        // if (process.env.NODE_ENV === 'development') {
+          const maskedUrl = (process.env.DATABASE_URL || '').replace(/:[^:]*@/, ':****@')
+          
+          // 构建详细的调试信息
+          const debugInfo = `(URL: ${maskedUrl})`
+          const errorDetails = JSON.stringify({
+            name: error.name,
+            code: error.code,
+            meta: error.meta,
+            message: error.message,
+            stack: error.stack
+          }, null, 2)
+          
+          if (process.env.NODE_ENV === 'development' || true) { // 强制开启调试信息
+             throw new Error(`Database connection failed details: ${errorDetails} ${debugInfo}`)
+          }
+        // }
+        
+        // throw new Error('Database connection failed, please try again later')
+      }
+      
+      // 其他错误重新抛出
+      throw error
+    }
   }
 
   async findUserById(id: string): Promise<UnifiedUser | null> {
-    const user = await prisma.user.findUnique({
-      where: { id },
-      include: {
-        tenantProfile: true,
-        landlordProfile: true,
-      },
-    })
-    
-    if (!user) return null
-    
-    return this.mapPrismaUserToUnified(user)
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id },
+        include: {
+          tenantProfile: true,
+          landlordProfile: true,
+        },
+      })
+      
+      if (!user) return null
+      
+      return this.mapPrismaUserToUnified(user)
+    } catch (error: any) {
+      const errorMsg = String(error?.message || '')
+      const lower = errorMsg.toLowerCase()
+      
+      console.error('[SupabaseAdapter] 查询用户失败:', {
+        id,
+        error: errorMsg,
+        code: error?.code
+      })
+      
+      // 检查是否是连接问题
+      if (
+        lower.includes("can't reach database server") ||
+        lower.includes('can\\u2019t reach database server') ||
+        lower.includes('maxclients') ||
+        lower.includes('max clients reached') ||
+        lower.includes('pool_size') ||
+        lower.includes("can't reach") ||
+        lower.includes('connection') ||
+        lower.includes('timeout') ||
+        lower.includes('pooler') ||
+        lower.includes('P1001') ||
+        lower.includes('P1017')
+      ) {
+        // 在开发环境下抛出详细错误
+        // if (process.env.NODE_ENV === 'development') {
+          const maskedUrl = (process.env.DATABASE_URL || '').replace(/:[^:]*@/, ':****@')
+          throw new Error(`Database connection failed: ${errorMsg} (URL: ${maskedUrl})`)
+        // }
+        // throw new Error('Database connection failed, please try again later')
+      }
+      
+      throw error
+    }
   }
 
   async createUser(data: {

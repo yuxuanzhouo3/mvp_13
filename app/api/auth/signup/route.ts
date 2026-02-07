@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { signUp } from '@/lib/auth-adapter'
 import { trackEvent } from '@/lib/analytics'
 import { getDatabaseAdapter } from '@/lib/db-adapter'
+import { validateEmail } from '@/lib/validation'
 
 export async function POST(request: NextRequest) {
   try {
@@ -10,9 +11,21 @@ export async function POST(request: NextRequest) {
     // 优先使用 agentId，其次使用 ref 参数
     const representedById = agentId || ref
 
+    const { getAppRegion } = await import('@/lib/db-adapter')
+    const region = getAppRegion()
+    const isChina = region === 'china'
+    
     if (!email || !password || !name) {
       return NextResponse.json(
-        { error: '缺少必填字段' },
+        { error: isChina ? '缺少必填字段' : 'Missing required fields' },
+        { status: 400 }
+      )
+    }
+
+    // 验证邮箱格式
+    if (!validateEmail(email)) {
+      return NextResponse.json(
+        { error: isChina ? '邮箱格式不正确' : 'Invalid email format' },
         { status: 400 }
       )
     }
@@ -71,8 +84,12 @@ export async function POST(request: NextRequest) {
     })
   } catch (error: any) {
     console.error('Signup error:', error)
+    const { getAppRegion } = await import('@/lib/db-adapter')
+    const region = getAppRegion()
+    const isChina = region === 'china'
+    
     // 提供更详细的错误信息
-    const errorMessage = error.message || '注册失败'
+    const errorMessage = error.message || (isChina ? '注册失败' : 'Registration failed')
     const lower = errorMessage.toLowerCase()
     
     // 检查是否是数据库连接问题
@@ -89,7 +106,7 @@ export async function POST(request: NextRequest) {
     ) {
       return NextResponse.json(
         { 
-          error: '数据库连接失败，请稍后重试',
+          error: isChina ? '数据库连接失败，请稍后重试' : 'Database connection failed, please try again later',
           details: process.env.NODE_ENV === 'development' ? error.stack : undefined
         },
         { status: 503 }
@@ -101,9 +118,18 @@ export async function POST(request: NextRequest) {
       stack: error.stack,
       name: error.name,
     })
+    
+    // 如果错误信息已经包含了 "Registration failed" 或 "注册失败"，直接使用
+    // 否则添加前缀
+    let finalErrorMessage = errorMessage
+    const lower = errorMessage.toLowerCase()
+    if (!lower.includes('registration failed') && !lower.includes('注册失败') && !lower.includes('signup failed')) {
+      finalErrorMessage = isChina ? `注册失败：${errorMessage}` : `Registration failed: ${errorMessage}`
+    }
+    
     return NextResponse.json(
       { 
-        error: errorMessage,
+        error: finalErrorMessage,
         details: process.env.NODE_ENV === 'development' ? error.stack : undefined
       },
       { status: 400 }

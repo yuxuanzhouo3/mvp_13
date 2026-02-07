@@ -38,7 +38,14 @@ export default function LoginPage() {
       const data = await response.json()
 
       if (!response.ok) {
-        throw new Error(data.error || t('loginFailed'))
+        // 直接使用 API 返回的错误消息，不添加前缀
+        const errorMsg = data.error || t('invalidCredentials')
+        console.error('[Login Frontend] 登录失败:', {
+          status: response.status,
+          error: errorMsg,
+          email: email
+        })
+        throw new Error(errorMsg)
       }
 
       // 保存 token 和用户信息
@@ -70,9 +77,12 @@ export default function LoginPage() {
         router.push("/dashboard/tenant")
       }
     } catch (error: any) {
+      // 直接使用错误信息，不再添加前缀（API 已经返回完整的错误信息）
+      const errorMessage = error.message || t('invalidCredentials')
+      
+      // 只显示 description，避免重复显示 "Login failed"
       toast({
-        title: t('loginFailed'),
-        description: error.message || t('invalidCredentials'),
+        description: errorMessage,
         variant: "destructive",
       })
     } finally {

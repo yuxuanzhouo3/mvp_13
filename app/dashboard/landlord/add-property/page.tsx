@@ -14,7 +14,6 @@ import { useState } from "react"
 import { X, Upload } from "lucide-react"
 import { getCurrencySymbol } from "@/lib/utils"
 import { compressImage } from "@/lib/image-compress"
-import { getAppRegion } from "@/lib/db-adapter"
 
 export default function AddPropertyPage() {
   const router = useRouter()
@@ -22,7 +21,8 @@ export default function AddPropertyPage() {
   const t = useTranslations('property')
   const tCommon = useTranslations('common')
   const currencySymbol = getCurrencySymbol()
-  const isChina = getAppRegion() === 'china'
+  // 在客户端直接使用环境变量，避免导入 CloudBase SDK
+  const isChina = (process.env.NEXT_PUBLIC_APP_REGION || 'global') === 'china'
   const [loading, setLoading] = useState(false)
   const [images, setImages] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
@@ -126,7 +126,7 @@ export default function AddPropertyPage() {
         setImages(prev => [...prev, ...validImages])
         toast({
           title: tCommon('success'),
-          description: isChina ? `成功上传 ${validImages.length} 张图片` : `Successfully uploaded ${validImages.length} images`,
+          description: `Successfully uploaded ${validImages.length} ${validImages.length === 1 ? 'image' : 'images'}`,
         })
       }
       
@@ -179,6 +179,8 @@ export default function AddPropertyPage() {
           sqft: formData.sqft ? parseInt(formData.sqft) : null,
           images: images,
           amenities: [],
+          businessArea: '', // 不需要商圈，设为空字符串
+          zipCode: '', // 不需要邮编，设为空字符串
         }),
       })
 
@@ -269,7 +271,7 @@ export default function AddPropertyPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="city">{t('city')} *</Label>
                   <Input
@@ -280,7 +282,7 @@ export default function AddPropertyPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="state">{isChina ? (t('district') || '行政区') : 'District'} *</Label>
+                  <Label htmlFor="state">{isChina ? '行政区' : 'District'} *</Label>
                   <Input
                     id="state"
                     value={formData.state}
@@ -335,7 +337,7 @@ export default function AddPropertyPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="sqft">{isChina ? (t('buildingArea') || "建筑面积") : "Building Area"}</Label>
+                <Label htmlFor="sqft">{isChina ? "建筑面积" : "Building Area"}</Label>
                 <Input
                   id="sqft"
                   type="number"

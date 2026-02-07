@@ -77,6 +77,8 @@ export default function AgentDashboard() {
         return tCommon('success')
       case 'pending':
         return t('pending')
+      case 'approved':
+        return t('approved')
       case 'completed':
         return tCommon('success')
       case 'failed':

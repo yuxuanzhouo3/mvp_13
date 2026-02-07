@@ -14,6 +14,7 @@ import { useState } from "react"
 import { X, Upload } from "lucide-react"
 import { getCurrencySymbol } from "@/lib/utils"
 import { compressImage } from "@/lib/image-compress"
+import { getAppRegion } from "@/lib/db-adapter"
 
 export default function AddPropertyPage() {
   const router = useRouter()
@@ -21,6 +22,7 @@ export default function AddPropertyPage() {
   const t = useTranslations('property')
   const tCommon = useTranslations('common')
   const currencySymbol = getCurrencySymbol()
+  const isChina = getAppRegion() === 'china'
   const [loading, setLoading] = useState(false)
   const [images, setImages] = useState<string[]>([])
   const [uploading, setUploading] = useState(false)
@@ -30,8 +32,6 @@ export default function AddPropertyPage() {
     address: "",
     city: "",
     state: "",
-    businessArea: "",
-    zipCode: "",
     price: "",
     deposit: "",
     bedrooms: "",
@@ -126,7 +126,7 @@ export default function AddPropertyPage() {
         setImages(prev => [...prev, ...validImages])
         toast({
           title: tCommon('success'),
-          description: `成功上传 ${validImages.length} 张图片`,
+          description: isChina ? `成功上传 ${validImages.length} 张图片` : `Successfully uploaded ${validImages.length} images`,
         })
       }
       
@@ -280,30 +280,12 @@ export default function AddPropertyPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="state">{t('district') || t('state')} *</Label>
+                  <Label htmlFor="state">{isChina ? (t('district') || '行政区') : 'District'} *</Label>
                   <Input
                     id="state"
                     value={formData.state}
                     onChange={(e) => setFormData({ ...formData, state: e.target.value })}
-                    placeholder={t('districtPlaceholder') || "行政区"}
                     required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="businessArea">{t('businessArea') || "商圈"}</Label>
-                  <Input
-                    id="businessArea"
-                    value={formData.businessArea || ""}
-                    onChange={(e) => setFormData({ ...formData, businessArea: e.target.value })}
-                    placeholder={t('businessAreaPlaceholder') || "商圈"}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="zipCode">{t('zipCode') || "Zip Code"}</Label>
-                  <Input
-                    id="zipCode"
-                    value={formData.zipCode}
-                    onChange={(e) => setFormData({ ...formData, zipCode: e.target.value })}
                   />
                 </div>
               </div>
@@ -353,13 +335,12 @@ export default function AddPropertyPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="sqft">{t('buildingArea') || t('sqft') || "建筑面积"}</Label>
+                <Label htmlFor="sqft">{isChina ? (t('buildingArea') || "建筑面积") : "Building Area"}</Label>
                 <Input
                   id="sqft"
                   type="number"
                   value={formData.sqft}
                   onChange={(e) => setFormData({ ...formData, sqft: e.target.value })}
-                  placeholder={t('buildingAreaPlaceholder') || "平方米"}
                 />
               </div>
 

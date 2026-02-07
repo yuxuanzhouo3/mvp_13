@@ -45,8 +45,8 @@ model User {
   // Agent Relations
   agentProfile       AgentProfile?
   agentProperties    Property[]      @relation("AgentProperties")
-  representedTenants TenantProfile[] @relation("RepresentedTenants")
-  representedLandlords LandlordProfile[] @relation("RepresentedLandlords")
+  // representedTenants TenantProfile[] @relation("RepresentedTenants")
+  // representedLandlords LandlordProfile[] @relation("RepresentedLandlords")
   listingAgentLeases Lease[]         @relation("ListingAgentLeases")
   tenantAgentLeases  Lease[]         @relation("TenantAgentLeases")
 
@@ -64,7 +64,7 @@ model AgentProfile {
   companyName     String?
   licenseNumber   String?
   verified        Boolean  @default(false)
-  payoutAccountId String?  // Stripe Connect ID or WeChat/Alipay Merchant ID
+  // payoutAccountId String?  // Stripe Connect ID or WeChat/Alipay Merchant ID
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
@@ -82,8 +82,8 @@ model TenantProfile {
   preferences     Json?      // 偏好设置 (JSON)
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
-  representedById String?
-  representedBy   User?    @relation("RepresentedTenants", fields: [representedById], references: [id])
+  // representedById String?
+  // representedBy   User?    @relation("RepresentedTenants", fields: [representedById], references: [id])
 }
 
 // 房东资料
@@ -91,12 +91,12 @@ model LandlordProfile {
   id              String   @id @default(cuid())
   userId          String   @unique
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  representedById String?
-  representedBy   User?    @relation("RepresentedLandlords", fields: [representedById], references: [id])
+  // representedById String?
+  // representedBy   User?    @relation("RepresentedLandlords", fields: [representedById], references: [id])
   companyName     String?
   licenseNumber   String?
   verified        Boolean  @default(false)
-  payoutAccountId String?  // Stripe Connect ID or WeChat/Alipay Merchant ID
+  // payoutAccountId String?  // Stripe Connect ID or WeChat/Alipay Merchant ID
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }

@@ -99,8 +99,8 @@ export async function GET(request: NextRequest) {
     // 如果 region 是 'all'，需要同时查询两个数据库
     if (region === 'all') {
       const [globalStats, chinaStats] = await Promise.all([
-        getStatsForRegion('global', period),
-        getStatsForRegion('china', period),
+        getStatsForRegion('global', period as 'month' | 'day' | 'all'),
+        getStatsForRegion('china', period as 'month' | 'day' | 'all'),
       ])
 
       return NextResponse.json({
@@ -117,7 +117,7 @@ export async function GET(request: NextRequest) {
 
     // 查询指定区域的数据
     const targetRegion = region || getAppRegion()
-    const stats = await getStatsForRegion(targetRegion, period)
+    const stats = await getStatsForRegion(targetRegion as 'global' | 'china', period as 'month' | 'day' | 'all')
 
     return NextResponse.json(stats)
   } catch (error: any) {

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAuthUser } from '@/lib/auth'
-import { prisma } from '@/lib/db'
 import { getDatabaseAdapter, getAppRegion } from '@/lib/db-adapter'
 
 export async function POST(request: NextRequest) {
@@ -17,31 +16,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Payout Account ID is required' }, { status: 400 })
     }
 
-    const region = getAppRegion()
+    const db = getDatabaseAdapter()
+    const landlordProfile = await db.query('landlordProfiles', { userId: user.userId })
     
-    if (region === 'china') {
-      const db = getDatabaseAdapter()
-      const landlordProfile = await db.query('landlordProfiles', { userId: user.userId })
-      
-      if (landlordProfile && landlordProfile.length > 0) {
-        await db.update('landlordProfiles', landlordProfile[0].id, { payoutAccountId })
-      } else {
-        await db.create('landlordProfiles', {
-          userId: user.userId,
-          payoutAccountId,
-          verified: true // Assume verified for mock
-        })
-      }
+    if (landlordProfile && landlordProfile.length > 0) {
+      // await db.update('landlordProfiles', landlordProfile[0].id, { payoutAccountId, verified: true })
+      await db.update('landlordProfiles', landlordProfile[0].id, { verified: true })
     } else {
-      // Global - use Prisma
-      await prisma.landlordProfile.upsert({
-        where: { userId: user.userId },
-        update: { payoutAccountId, verified: true },
-        create: {
-          userId: user.userId,
-          payoutAccountId,
-          verified: true
-        }
+      await db.create('landlordProfiles', {
+        userId: user.userId,
+        // payoutAccountId,
+        verified: true
       })
     }
 

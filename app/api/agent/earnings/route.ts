@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAuthUser } from '@/lib/auth'
 import { getDatabaseAdapter } from '@/lib/db-adapter'
+import { prisma } from '@/lib/db'
 
 /**
  * Get earnings for agent
@@ -31,7 +32,7 @@ export async function GET(request: NextRequest) {
     const agentPayments = payments.filter((p: any) => {
       if (!p.distribution) return false
       const details = p.distribution.details || {}
-      return details.listingAgentId === user.id || details.tenantAgentId === user.id
+      return details.listingAgentId === user.userId || details.tenantAgentId === user.userId
     })
 
     // 3. Enrich with details
@@ -57,8 +58,8 @@ export async function GET(request: NextRequest) {
       // Calculate Agent's share
       const details = p.distribution.details || {}
       let amount = 0
-      if (details.listingAgentId === user.id) amount += (p.distribution.listingAgentFee || 0)
-      if (details.tenantAgentId === user.id) amount += (p.distribution.tenantAgentFee || 0)
+      if (details.listingAgentId === user.userId) amount += (p.distribution.listingAgentFee || 0)
+      if (details.tenantAgentId === user.userId) amount += (p.distribution.tenantAgentFee || 0)
 
       return {
         id: p.id,
@@ -94,18 +95,17 @@ export async function GET(request: NextRequest) {
 
     // Check if agent has payout account
     let hasPayoutAccount = false
-    if (process.env.NEXT_PUBLIC_APP_REGION === 'china') {
-       // CloudBase logic: check user root or profile
-       // Assuming stored on user root for simplicity in MVP
-       const agent = await db.findUserById(user.id)
-       hasPayoutAccount = !!agent?.agentProfile?.payoutAccountId || !!(agent as any).payoutAccountId
-    } else {
-       // Prisma logic
-       const agent = await prisma.user.findUnique({
-           where: { id: user.id },
-           include: { agentProfile: true }
-       })
-       hasPayoutAccount = !!agent?.agentProfile?.payoutAccountId
+    try {
+      const agentProfiles = await db.query('agentProfiles', { userId: user.userId })
+      if (agentProfiles && agentProfiles.length > 0) {
+        hasPayoutAccount = !!(agentProfiles[0] as any).payoutAccountId
+      } else if (process.env.NEXT_PUBLIC_APP_REGION === 'china') {
+         // Fallback for CloudBase: check user root if not found in collection
+         const agent = await db.findUserById(user.userId)
+         hasPayoutAccount = !!(agent as any)?.payoutAccountId
+      }
+    } catch (err) {
+      console.warn('Failed to check payout account:', err)
     }
 
     return NextResponse.json({

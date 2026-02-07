@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-adapter'
 import { getDatabaseAdapter } from '@/lib/db-adapter'
-import { prisma } from '@/lib/db'
 
 export async function POST(request: NextRequest) {
   try {
@@ -62,49 +61,7 @@ export async function POST(request: NextRequest) {
     }
 
     // User exists and has no agent -> Bind them
-    if (process.env.NEXT_PUBLIC_APP_REGION !== 'china') {
-      if (targetType === 'TENANT') {
-        const dbUser = await prisma.user.findUnique({ 
-          where: { id: existingUser.id },
-          include: { tenantProfile: true }
-        })
-        
-        if (dbUser?.tenantProfile) {
-          await prisma.tenantProfile.update({
-            where: { id: dbUser.tenantProfile.id },
-            data: { representedById: user.id }
-          })
-        } else {
-          await prisma.tenantProfile.create({
-            data: {
-              userId: existingUser.id,
-              representedById: user.id
-            }
-          })
-        }
-      } else {
-        const dbUser = await prisma.user.findUnique({ 
-          where: { id: existingUser.id },
-          include: { landlordProfile: true }
-        })
-        
-        if (dbUser?.landlordProfile) {
-          await prisma.landlordProfile.update({
-            where: { id: dbUser.landlordProfile.id },
-            data: { representedById: user.id }
-          })
-        } else {
-          await prisma.landlordProfile.create({
-            data: {
-              userId: existingUser.id,
-              representedById: user.id
-            }
-          })
-        }
-      }
-    } else {
-      await db.updateUser(existingUser.id, { representedById: user.id })
-    }
+    await db.updateUser(existingUser.id, { representedById: user.id })
 
     // Send notification to the tenant/landlord
     try {

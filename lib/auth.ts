@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken'
 
 export interface AuthUser {
   userId: string
+  id: string
   email: string
 }
 
@@ -20,9 +21,13 @@ export function getAuthUser(request: NextRequest): AuthUser | null {
     const decoded = jwt.verify(
       token,
       process.env.JWT_SECRET || 'your-secret-key'
-    ) as AuthUser
+    ) as any
 
-    return decoded
+    return {
+      ...decoded,
+      userId: decoded.userId || decoded.id,
+      id: decoded.id || decoded.userId
+    }
   } catch (error) {
     return null
   }
@@ -47,9 +52,13 @@ export function getAuthUserFromCookie(cookieHeader: string | null): AuthUser | n
     const decoded = jwt.verify(
       token,
       process.env.JWT_SECRET || 'your-secret-key'
-    ) as AuthUser
+    ) as any
 
-    return decoded
+    return {
+      ...decoded,
+      userId: decoded.userId || decoded.id,
+      id: decoded.id || decoded.userId
+    }
   } catch (error) {
     return null
   }

@@ -55,7 +55,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       user: {
         ...profile,
-        representedById: profile.tenantProfile?.representedById || null
+        // representedById: profile.tenantProfile?.representedById || null
       }
     })
   } catch (error: any) {
@@ -117,7 +117,7 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({
       user: {
         ...updatedUser,
-        representedById: updatedUser.tenantProfile?.representedById || null
+        // representedById: updatedUser.tenantProfile?.representedById || null
       }
     })
   } catch (error: any) {

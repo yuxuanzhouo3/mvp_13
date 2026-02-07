@@ -215,14 +215,14 @@ export class SupabaseAdapter implements DatabaseAdapter {
       ...(data.userType === 'TENANT' && {
         tenantProfile: { 
           create: {
-            ...(data.representedById ? { representedById: data.representedById } : {})
+            // ...(data.representedById ? { representedById: data.representedById } : {})
           } 
         }
       }),
       ...(data.userType === 'LANDLORD' && {
         landlordProfile: { 
           create: {
-            ...(data.representedById ? { representedById: data.representedById } : {})
+            // ...(data.representedById ? { representedById: data.representedById } : {})
           } 
         }
       }),
@@ -255,6 +255,9 @@ export class SupabaseAdapter implements DatabaseAdapter {
     if (data.isPremium !== undefined) updateData.isPremium = data.isPremium
     if (data.premiumExpiry !== undefined) updateData.premiumExpiry = data.premiumExpiry
     
+    // Prisma 不直接在 User 表存储 representedById，需要更新关联的 Profile
+    // 我们在 prisma.user.update 之后单独处理
+    
     const user = await prisma.user.update({
       where: { id },
       data: updateData,
@@ -263,6 +266,26 @@ export class SupabaseAdapter implements DatabaseAdapter {
         landlordProfile: true,
       },
     })
+
+    // 处理 representedById 更新
+    // if (data.representedById !== undefined) {
+    //   if (user.userType === 'TENANT') {
+    //     await prisma.tenantProfile.upsert({
+    //       where: { userId: id },
+    //       update: { representedById: data.representedById },
+    //       create: { userId: id, representedById: data.representedById },
+    //     })
+    //   } else if (user.userType === 'LANDLORD') {
+    //     await prisma.landlordProfile.upsert({
+    //       where: { userId: id },
+    //       update: { representedById: data.representedById },
+    //       create: { userId: id, representedById: data.representedById },
+    //     })
+    //   }
+    //   
+    //   // 重新获取包含最新 profile 的用户信息
+    //   return this.findUserById(id) as Promise<UnifiedUser>
+    // }
     
     return this.mapPrismaUserToUnified(user)
   }
@@ -280,6 +303,9 @@ export class SupabaseAdapter implements DatabaseAdapter {
       'savedProperties': prisma.savedProperty,
       'notifications': prisma.notification,
       'events': (prisma as any).event || null, // Events 表（如果已添加）
+      'agentProfiles': (prisma as any).agentProfile,
+      'tenantProfiles': prisma.tenantProfile,
+      'landlordProfiles': prisma.landlordProfile,
     }
     
     const model = modelMap[collection]
@@ -299,7 +325,7 @@ export class SupabaseAdapter implements DatabaseAdapter {
     
     // 如果有 filters，包装成 where 条件
     if (filters && Object.keys(filters).length > 0) {
-      queryOptions.where = filters
+      queryOptions.where = this.normalizeFilters(filters)
     }
     
     // 处理排序
@@ -319,6 +345,52 @@ export class SupabaseAdapter implements DatabaseAdapter {
     }
     
     return model.findMany(queryOptions) as Promise<T[]>
+  }
+
+  private normalizeFilters(filters: any): any {
+    const newFilters: any = {}
+    
+    for (const key in filters) {
+      const value = filters[key]
+      
+      if (value && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date)) {
+        // 递归处理嵌套对象
+        newFilters[key] = this.normalizeFilters(value)
+        
+        // 处理 MongoDB 风格的操作符
+        if (newFilters[key].$gte !== undefined) {
+          newFilters[key].gte = newFilters[key].$gte
+          delete newFilters[key].$gte
+        }
+        if (newFilters[key].$lte !== undefined) {
+          newFilters[key].lte = newFilters[key].$lte
+          delete newFilters[key].$lte
+        }
+        if (newFilters[key].$gt !== undefined) {
+          newFilters[key].gt = newFilters[key].$gt
+          delete newFilters[key].$gt
+        }
+        if (newFilters[key].$lt !== undefined) {
+          newFilters[key].lt = newFilters[key].$lt
+          delete newFilters[key].$lt
+        }
+      } else {
+        newFilters[key] = value
+      }
+    }
+    
+    // 顶层操作符处理 (如 { timestamp: { $gte: ... } } 的内层已经在递归中处理了)
+    // 这里处理的是如果 filters 本身就是操作符对象的情况（不太常见，通常是字段: { 操作符: 值 }）
+    if (newFilters.$gte !== undefined) {
+      newFilters.gte = newFilters.$gte
+      delete newFilters.$gte
+    }
+    if (newFilters.$lte !== undefined) {
+      newFilters.lte = newFilters.$lte
+      delete newFilters.$lte
+    }
+    
+    return newFilters
   }
 
   private buildWhereClause(filters: any): string {
@@ -348,6 +420,9 @@ export class SupabaseAdapter implements DatabaseAdapter {
       'savedProperties': prisma.savedProperty,
       'notifications': prisma.notification,
       'events': (prisma as any).event || null,
+      'agentProfiles': (prisma as any).agentProfile,
+      'tenantProfiles': prisma.tenantProfile,
+      'landlordProfiles': prisma.landlordProfile,
     }
     
     const model = modelMap[collection]
@@ -368,6 +443,9 @@ export class SupabaseAdapter implements DatabaseAdapter {
       'savedProperties': prisma.savedProperty,
       'notifications': prisma.notification,
       'events': (prisma as any).event || null, // Events 表（如果已添加）
+      'agentProfiles': (prisma as any).agentProfile,
+      'tenantProfiles': prisma.tenantProfile,
+      'landlordProfiles': prisma.landlordProfile,
     }
     
     const model = modelMap[collection]
@@ -408,6 +486,9 @@ export class SupabaseAdapter implements DatabaseAdapter {
       'savedProperties': prisma.savedProperty,
       'notifications': prisma.notification,
       'events': (prisma as any).event || null,
+      'agentProfiles': (prisma as any).agentProfile,
+      'tenantProfiles': prisma.tenantProfile,
+      'landlordProfiles': prisma.landlordProfile,
     }
     
     const model = modelMap[collection]
@@ -430,6 +511,9 @@ export class SupabaseAdapter implements DatabaseAdapter {
       'savedProperties': prisma.savedProperty,
       'notifications': prisma.notification,
       'events': (prisma as any).event || null,
+      'agentProfiles': (prisma as any).agentProfile,
+      'tenantProfiles': prisma.tenantProfile,
+      'landlordProfiles': prisma.landlordProfile,
     }
     
     const model = modelMap[collection]
@@ -451,6 +535,9 @@ export class SupabaseAdapter implements DatabaseAdapter {
       'savedProperties': prisma.savedProperty,
       'notifications': prisma.notification,
       'events': (prisma as any).event || null, // Events 表（如果已添加）
+      'agentProfiles': (prisma as any).agentProfile,
+      'tenantProfiles': prisma.tenantProfile,
+      'landlordProfiles': prisma.landlordProfile,
     }
     
     const model = modelMap[collection]
@@ -465,7 +552,8 @@ export class SupabaseAdapter implements DatabaseAdapter {
       return 0
     }
     
-    return model.count(filters || {})
+    const where = filters ? this.normalizeFilters(filters) : {}
+    return model.count({ where })
   }
 
   private mapPrismaUserToUnified(user: any): UnifiedUser {
@@ -483,7 +571,7 @@ export class SupabaseAdapter implements DatabaseAdapter {
       subscriptionEndTime: user.premiumExpiry,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
-      representedById: user.tenantProfile?.representedById || user.landlordProfile?.representedById || null,
+      // representedById: user.tenantProfile?.representedById || user.landlordProfile?.representedById || null,
     }
   }
 }

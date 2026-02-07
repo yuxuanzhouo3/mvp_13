@@ -22,15 +22,15 @@ export async function GET(request: NextRequest) {
     // 获取与该中介建立合作关系的房东列表
     const landlordFilters: any = { userType: 'LANDLORD' }
     if (isChina) {
-      landlordFilters.representedById = user.id
+      landlordFilters.representedById = user.userId
     } else {
-      landlordFilters.landlordProfile = { representedById: user.id }
+      landlordFilters.landlordProfile = { representedById: user.userId }
     }
     const landlords = await db.query('users', landlordFilters, { orderBy: { createdAt: 'desc' } })
     const landlordIds = landlords.map((l: any) => l.id)
 
     // 获取中介直接管理的房源
-    const agentManaged = await db.query('properties', { agentId: user.id }, { orderBy: { createdAt: 'desc' } })
+    const agentManaged = await db.query('properties', { agentId: user.userId }, { orderBy: { createdAt: 'desc' } })
 
     // 获取合作房东发布的房源
     let landlordProperties: any[] = []

@@ -9,11 +9,11 @@ import { upgradeSubscription } from './subscription-service'
 import { trackPayment } from './analytics'
 import { prisma } from './db' // Used for Global/Prisma operations
 
-// 初始化 Stripe（仅国际版）
+  // 初始化 Stripe（仅国际版）
 let stripe: Stripe | null = null
 if (process.env.STRIPE_SECRET_KEY) {
   stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-    apiVersion: '2024-12-18.acacia',
+    apiVersion: '2026-01-28.clover',
   })
 }
 
@@ -23,6 +23,7 @@ export interface PaymentResult {
   paymentIntentId?: string
   clientSecret?: string
   paymentUrl?: string // 国内支付返回的支付链接
+  paymentId?: string // 支付记录ID
   error?: string
   distribution?: PaymentDistribution // 分账详情
 }
@@ -87,7 +88,7 @@ export async function createStripePaymentIntent(
   }
 }
 
-// 创建支付宝订单（国内版）
+// 创建支付宝订单（国内版 - 沙盒环境）
 export async function createAlipayOrder(
   userId: string,
   amount: number,
@@ -95,28 +96,235 @@ export async function createAlipayOrder(
   metadata?: Record<string, string>,
   isProfitSharing: boolean = false
 ): Promise<PaymentResult> {
-  // TODO: 集成支付宝 SDK
   try {
     const db = getDatabaseAdapter()
-    const payment = await db.create('payments', {
-      userId,
-      amount,
-      currency: 'cny',
-      status: 'PENDING',
-      type: 'RENT', // Default type, should be passed
-      description: subject,
-      metadata,
-      createdAt: new Date(),
+    
+    // 获取支付记录（如果metadata中有paymentId）
+    let paymentId = metadata?.paymentId
+    let payment = null
+    
+    if (paymentId) {
+      payment = await db.findById('payments', paymentId)
+    }
+    
+    // 如果没有支付记录，创建一个新的
+    if (!payment) {
+      payment = await db.create('payments', {
+        userId,
+        amount,
+        currency: 'cny',
+        status: 'PENDING',
+        type: metadata?.type || 'RENT',
+        description: subject,
+        paymentMethod: 'alipay',
+        metadata: metadata || {},
+        createdAt: new Date(),
+      })
+      paymentId = payment.id
+    } else {
+      // 更新现有支付记录
+      if (!paymentId) {
+        throw new Error('Payment ID is required')
+      }
+      await db.update('payments', paymentId, {
+        paymentMethod: 'alipay',
+        metadata: { ...(typeof payment.metadata === 'object' ? payment.metadata : {}), ...metadata }
+      })
+    }
+    
+    if (!paymentId) {
+      throw new Error('Payment ID is required')
+    }
+
+    // 支付宝沙盒配置
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://7b17d9a0.r27.cpolar.top'
+    
+    // 读取环境变量，支持多种格式
+    const appId = process.env.ALIPAY_APP_ID || process.env.NEXT_PUBLIC_ALIPAY_APP_ID || '9021000161601994'
+    const privateKey = process.env.ALIPAY_PRIVATE_KEY || process.env.NEXT_PUBLIC_ALIPAY_PRIVATE_KEY || ''
+    const alipayPublicKey = process.env.ALIPAY_PUBLIC_KEY || process.env.NEXT_PUBLIC_ALIPAY_PUBLIC_KEY || 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwKo0Yi8ZRb7Hgxo9Xb6A7GnfzjOt4XhBdXhqaLskRa/la1OQVd0m7aF8J2wrIximkxYglg5LTWC0quI2wr8wCUm8f/qCjRIn0NJFxBsY+ZiREQWQyILwiUiV8tYt+J114RYm2y0CiR+3BNUZcppoqj0u7Fru0XY+Wedn+krvmyqFZw7JKqXWeLZL1B11A8i/4XzcBDIFxm67Kwvr1Qr5UF6VEQSkIKRjF57PKWqGfZe+DmhD7PmBVsUo3mbueEJLs7qABkVLi0y3ebkRNVcBv0LW7jFaWmrR8dUSppc/HvDMLaNj6Cnt6T38cRZxQ5YZzYHE05EfYIEdbusto0cDmwIDAQAB'
+    const gateway = process.env.ALIPAY_GATEWAY || process.env.NEXT_PUBLIC_ALIPAY_GATEWAY || 'https://openapi-sandbox.dl.alipaydev.com/gateway.do'
+    
+    // 检查私钥是否配置
+    if (!privateKey || privateKey.trim() === '') {
+      console.error('Alipay private key is not configured. Please set ALIPAY_PRIVATE_KEY in .env.local')
+      throw new Error('支付宝私钥未配置，请在 .env.local 文件中设置 ALIPAY_PRIVATE_KEY')
+    }
+    
+    const alipayConfig = {
+      appId: appId,
+      privateKey: privateKey,
+      alipayPublicKey: alipayPublicKey,
+      gateway: gateway,
+      notifyUrl: `${baseUrl}/api/payments/alipay/notify`,
+      returnUrl: `${baseUrl}/api/payments/alipay/return-page`, // 使用返回页面而不是直接redirect
+    }
+
+    // 构建支付宝支付参数
+    const outTradeNo = `RENT_${paymentId}_${Date.now()}`
+    // 支付宝金额单位为元
+    // 金额在数据库中已经以元为单位存储，直接使用，不要转换
+    const totalAmount = amount.toFixed(2)
+    
+    console.log('Payment amount for Alipay:', { 
+      originalAmount: amount, 
+      totalAmount: totalAmount,
+      note: 'Amount is already in yuan, no conversion needed'
+    })
+    
+    // 调用支付宝API创建订单
+    const paymentUrl = await createAlipayTradePagePay({
+      ...alipayConfig,
+      outTradeNo,
+      totalAmount,
+      subject,
+      paymentId: paymentId as string
+    })
+
+    // 更新支付记录的订单号
+    await db.update('payments', paymentId as string, {
+      transactionId: outTradeNo,
+      metadata: {
+        ...(typeof payment.metadata === 'object' ? payment.metadata : {}),
+        outTradeNo,
+        alipayOrderCreated: true
+      }
     })
 
     return {
       success: true,
-      paymentUrl: `${process.env.NEXT_PUBLIC_APP_URL}/api/payments/mock-alipay?orderId=${payment.id}`,
+      paymentUrl: paymentUrl,
+      paymentId: paymentId
     }
   } catch (error: any) {
     console.error('Alipay order creation error:', error)
     return { success: false, error: error.message }
   }
+}
+
+// 创建支付宝电脑网站支付
+async function createAlipayTradePagePay(config: {
+  appId: string
+  privateKey: string
+  alipayPublicKey: string
+  gateway: string
+  notifyUrl: string
+  returnUrl: string
+  outTradeNo: string
+  totalAmount: string
+  subject: string
+  paymentId: string
+}): Promise<string> {
+  // 直接使用手动构建的方式，避免SDK在Next.js环境中的兼容性问题
+  return buildAlipayUrlManually(config)
+}
+
+// 手动构建支付宝支付URL
+function buildAlipayUrlManually(config: {
+  appId: string
+  privateKey: string
+  gateway: string
+  notifyUrl: string
+  returnUrl: string
+  outTradeNo: string
+  totalAmount: string
+  subject: string
+}): string {
+  // 动态导入crypto模块（Node.js环境）
+  const crypto = require('crypto')
+  
+  // 格式化私钥
+  const formatPrivateKey = (key: string): string => {
+    if (!key || key.trim() === '') {
+      throw new Error('Alipay private key is required')
+    }
+    
+    // 移除首尾空白
+    const trimmedKey = key.trim()
+    
+    // 如果已经包含PEM头尾，直接返回（但需要确保格式正确）
+    if (trimmedKey.includes('BEGIN') && trimmedKey.includes('END')) {
+      // 确保换行符正确
+      return trimmedKey.replace(/\\n/g, '\n')
+    }
+    
+    // 否则添加PEM头尾
+    // 移除所有空白字符（包括换行、空格等）
+    const cleanKey = trimmedKey.replace(/\s/g, '')
+    
+    if (cleanKey.length === 0) {
+      throw new Error('Alipay private key is empty after cleaning')
+    }
+    
+    // 每64个字符换行
+    let formattedKey = '-----BEGIN RSA PRIVATE KEY-----\n'
+    for (let i = 0; i < cleanKey.length; i += 64) {
+      formattedKey += cleanKey.substring(i, i + 64) + '\n'
+    }
+    formattedKey += '-----END RSA PRIVATE KEY-----'
+    
+    return formattedKey
+  }
+  
+  if (!config.privateKey || config.privateKey.trim() === '') {
+    throw new Error('Alipay private key is not configured. Please set ALIPAY_PRIVATE_KEY in .env.local file.')
+  }
+  
+  let formattedPrivateKey: string
+  try {
+    formattedPrivateKey = formatPrivateKey(config.privateKey)
+  } catch (error: any) {
+    console.error('Failed to format private key:', error)
+    throw new Error(`私钥格式错误: ${error.message}`)
+  }
+  
+  // 构建业务参数
+  const bizContent = {
+    out_trade_no: config.outTradeNo,
+    product_code: 'FAST_INSTANT_TRADE_PAY',
+    total_amount: config.totalAmount,
+    subject: config.subject,
+  }
+
+  // 构建请求参数（按字母顺序）
+  const params: any = {
+    app_id: config.appId,
+    biz_content: JSON.stringify(bizContent),
+    charset: 'utf-8',
+    method: 'alipay.trade.page.pay',
+    notify_url: config.notifyUrl,
+    return_url: config.returnUrl,
+    sign_type: 'RSA2',
+    timestamp: new Date().toISOString().replace(/T/, ' ').replace(/\..+/, ''),
+    version: '1.0',
+  }
+
+  // 排序并构建待签名字符串（移除空值）
+  const sortedKeys = Object.keys(params).sort()
+  const signString = sortedKeys
+    .filter(key => params[key] !== '' && params[key] !== null && params[key] !== undefined)
+    .map(key => `${key}=${params[key]}`)
+    .join('&')
+
+  // 使用私钥签名
+  let signature: string
+  try {
+    const sign = crypto.createSign('RSA-SHA256')
+    sign.update(signString, 'utf8')
+    signature = sign.sign(formattedPrivateKey, 'base64')
+  } catch (error: any) {
+    console.error('Signature error:', error)
+    throw new Error(`Failed to sign Alipay request: ${error.message}`)
+  }
+  
+  params.sign = signature
+
+  // 构建最终URL
+  const queryString = Object.keys(params)
+    .map(key => `${key}=${encodeURIComponent(params[key])}`)
+    .join('&')
+  
+  return `${config.gateway}?${queryString}`
 }
 
 /**
@@ -251,11 +459,9 @@ export async function calculateRentDistribution(leaseId: string, rentAmount: num
     lease = await prisma.lease.findUnique({
       where: { id: leaseId },
       include: {
-        listingAgent: { include: { agentProfile: true } },
-        tenantAgent: { include: { agentProfile: true } },
         property: { include: { landlord: { include: { landlordProfile: true } } } }
       }
-    })
+    }) as any
   } else {
     // CloudBase (Simplified for MVP)
     const db = getDatabaseAdapter()
@@ -385,7 +591,7 @@ export async function createRentPayment(
   const paymentData = {
     userId,
     type: 'RENT',
-    amount: totalAmount,
+    amount: totalAmount, // 金额以元为单位存储
     status: 'PENDING',
     paymentMethod: paymentMethod || (region === 'global' ? 'stripe' : 'alipay'),
     description: paymentDescription,
@@ -397,7 +603,9 @@ export async function createRentPayment(
       leaseId,
       rentAmount,
       depositAmount,
-      totalAmount
+      totalAmount,
+      amountUnit: 'yuan', // 明确标记金额单位为元
+      isYuan: true // 标记金额已经是元
     }
   }
   

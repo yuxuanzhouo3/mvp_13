@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { useTranslations } from 'next-intl'
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -19,6 +19,7 @@ import { getCurrencySymbol } from "@/lib/utils"
 
 export default function TenantDashboard() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const t = useTranslations('dashboard')
   const tHero = useTranslations('hero')
   const tCommon = useTranslations('common')
@@ -40,6 +41,7 @@ export default function TenantDashboard() {
   })
   const [userName, setUserName] = useState("")
   const [representedBy, setRepresentedBy] = useState<{name: string, id: string} | null>(null)
+  const [activeTab, setActiveTab] = useState("ai-search")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -225,6 +227,30 @@ export default function TenantDashboard() {
     }, 30000) // 改为30秒刷新一次，避免过于频繁
     return () => clearInterval(interval)
   }, [])
+  
+  // 检查URL参数，如果是支付成功，刷新数据并切换到支付标签
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search)
+      const tab = params.get('tab')
+      if (tab) {
+        setActiveTab(tab)
+      }
+      if (params.get('success') === 'true' || tab === 'payments') {
+        // 切换到支付标签
+        setActiveTab('payments')
+        // 刷新支付数据
+        fetchData(false)
+        // 延迟再次刷新，确保状态更新
+        setTimeout(() => {
+          fetchData(false)
+        }, 2000)
+        // 清除URL参数
+        const newUrl = window.location.pathname
+        window.history.replaceState({}, '', newUrl)
+      }
+    }
+  }, [])
 
   // 如果正在加载，显示加载状态
   if (loading) {
@@ -395,7 +421,7 @@ export default function TenantDashboard() {
         </div>
 
         {/* Main Content */}
-        <Tabs defaultValue="ai-search" className="space-y-6">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList>
             <TabsTrigger value="ai-search">
               {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? 'AI智能搜索' : t('aiSmartSearch')}

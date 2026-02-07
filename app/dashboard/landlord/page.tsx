@@ -105,6 +105,49 @@ export default function LandlordDashboard() {
         const tenantsData = await tenantsRes.json()
         setTenants(tenantsData.tenants || [])
       }
+
+      // Fetch payments to calculate monthly revenue
+      const paymentsRes = await fetch("/api/payments", {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (paymentsRes.ok) {
+        const paymentsData = await paymentsRes.json()
+        const payments = paymentsData.payments || []
+        
+        // 计算本月总收入：已完成的支付金额
+        const now = new Date()
+        const currentMonth = now.getMonth()
+        const currentYear = now.getFullYear()
+        
+        const monthlyRevenue = payments
+          .filter((p: any) => {
+            // 只计算已完成的支付
+            if (p.status !== 'COMPLETED') return false
+            
+            // 计算本月的支付
+            const paymentDate = new Date(p.createdAt || p.paidAt || p.id)
+            return paymentDate.getMonth() === currentMonth && 
+                   paymentDate.getFullYear() === currentYear
+          })
+          .reduce((sum: number, p: any) => {
+            // 如果是租金支付，使用distribution中的landlordNet（扣除平台费和佣金后的净收入）
+            if (p.type === 'RENT' && p.distribution && typeof p.distribution === 'object') {
+              const dist = typeof p.distribution === 'string' ? JSON.parse(p.distribution) : p.distribution
+              return sum + (dist.landlordNet || 0)
+            }
+            // 其他类型的支付，使用全额
+            return sum + (p.amount || 0)
+          }, 0)
+        
+        setStats(prev => ({ ...prev, monthlyRevenue }))
+        
+        // 计算待处理问题（争议和待处理的申请）
+        const pendingIssues = payments.filter((p: any) => 
+          p.status === 'PENDING' || p.escrowStatus === 'HELD_IN_ESCROW'
+        ).length
+        
+        setStats(prev => ({ ...prev, pendingIssues }))
+      }
     } catch (error) {
       console.error("Failed to fetch dashboard data:", error)
     } finally {

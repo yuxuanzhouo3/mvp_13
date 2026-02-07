@@ -25,7 +25,8 @@
     "profile": "Profile",
     "filter": "Filter",
     "view": "View",
-    "viewDetails": "View Details"
+    "viewDetails": "View Details",
+    "email": "Email"
   },
   "navigation": {
     "findHomes": "Find Homes",
@@ -197,6 +198,9 @@
     "tenantEmailPlaceholder": "Enter tenant email",
     "processing": "Processing...",
     "sendInvitation": "Send Invitation",
+    "tenantsServed": "Tenants Served",
+    "activeTenantRelationships": "Active Relationships",
+    "newMessages": "New Messages",
     "boundSuccess": "Bound Successfully",
     "invitationSent": "Invitation Sent",
     "loadTenantsFailed": "Failed to load tenants",

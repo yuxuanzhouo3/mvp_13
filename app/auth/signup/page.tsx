@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { useTranslations } from 'next-intl'
@@ -13,7 +13,7 @@ import { Separator } from "@/components/ui/separator"
 import { Shield, Chrome, Apple } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
-export default function SignUpPage() {
+function SignUpForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const ref = searchParams.get("ref")
@@ -251,5 +251,13 @@ export default function SignUpPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+export default function SignUpPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-muted/30"><div className="text-center">Loading...</div></div>}>
+      <SignUpForm />
+    </Suspense>
   )
 }

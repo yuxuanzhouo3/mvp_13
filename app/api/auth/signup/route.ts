@@ -122,7 +122,6 @@ export async function POST(request: NextRequest) {
     // 如果错误信息已经包含了 "Registration failed" 或 "注册失败"，直接使用
     // 否则添加前缀
     let finalErrorMessage = errorMessage
-    const lower = errorMessage.toLowerCase()
     if (!lower.includes('registration failed') && !lower.includes('注册失败') && !lower.includes('signup failed')) {
       finalErrorMessage = isChina ? `注册失败：${errorMessage}` : `Registration failed: ${errorMessage}`
     }

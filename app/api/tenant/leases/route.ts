@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAuthUser } from '@/lib/auth'
+import { getCurrentUser } from '@/lib/auth-adapter'
 import { prisma } from '@/lib/db'
 import { getDatabaseAdapter, getAppRegion } from '@/lib/db-adapter'
 
 export async function GET(request: NextRequest) {
   try {
-    const user = getAuthUser(request)
+    const user = await getCurrentUser(request)
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
 
     if (region === 'global') {
       leases = await prisma.lease.findMany({
-        where: { tenantId: user.userId },
+        where: { tenantId: user.id },
         include: {
           property: {
             select: {
@@ -40,7 +40,10 @@ export async function GET(request: NextRequest) {
       })
     } else {
       const db = getDatabaseAdapter()
-      leases = await db.query('leases', { tenantId: user.userId })
+      // 获取所有租赁记录，然后过滤（因为CloudBase可能不支持复杂查询）
+      let allLeases = await db.query('leases', {})
+      // 过滤出该租客的租赁记录
+      leases = allLeases.filter((l: any) => l.tenantId === user.id)
       
       // Enrich with property data
       leases = await Promise.all(leases.map(async (lease: any) => {

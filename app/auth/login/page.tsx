@@ -53,13 +53,20 @@ export default function LoginPage() {
       })
 
       // 根据用户类型跳转
-      if (data.user.userType === "TENANT") {
+      // 确保userType是字符串且大写
+      const userType = (data.user?.userType || "").toUpperCase()
+      
+      console.log("Login successful, userType:", userType, "Full user data:", data.user)
+      
+      if (userType === "TENANT") {
         router.push("/dashboard/tenant")
-      } else if (data.user.userType === "LANDLORD") {
+      } else if (userType === "LANDLORD") {
         router.push("/dashboard/landlord")
-      } else if (data.user.userType === "AGENT") {
+      } else if (userType === "AGENT") {
         router.push("/dashboard/agent")
       } else {
+        // 默认跳转到租客页面
+        console.warn("Unknown userType, defaulting to tenant:", userType)
         router.push("/dashboard/tenant")
       }
     } catch (error: any) {

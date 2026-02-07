@@ -114,8 +114,15 @@ export function PaymentHistory({ userType }: PaymentHistoryProps) {
                     )}
                   </div>
                   <div>
-                    <div className="font-medium">{payment.description || `${payment.type} - ${payment.property?.title || 'Property'}`}</div>
-                    <div className="text-sm text-muted-foreground">{new Date(payment.createdAt).toLocaleDateString()}</div>
+                    <div className="font-medium">{payment.description || `${payment.type} - ${payment.property?.title || (process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '房源' : 'Property')}`}</div>
+                    <div className="text-sm text-muted-foreground">
+                      {new Date(payment.createdAt).toLocaleDateString()}
+                      {payment.status === 'PENDING' && (
+                        <Badge variant="outline" className="ml-2 text-amber-600 border-amber-600">
+                          {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '待支付' : 'Pending'}
+                        </Badge>
+                      )}
+                    </div>
                     {/* Breakdown for Landlords */}
                     {userType === 'landlord' && payment.distribution && (
                       <div className="mt-2 text-xs space-y-1 bg-muted/50 p-2 rounded w-64">
@@ -157,9 +164,19 @@ export function PaymentHistory({ userType }: PaymentHistoryProps) {
                 <div className="text-right">
                   <div className="font-semibold text-lg">{currencySymbol}{payment.amount.toLocaleString()}</div>
                   <div className="flex items-center space-x-2">
-                    <Badge variant={payment.status === "COMPLETED" ? "default" : "secondary"}>
-                      {payment.status.replace("_", " ").toLowerCase()}
+                    <Badge variant={payment.status === "COMPLETED" ? "default" : payment.status === "PENDING" ? "outline" : "secondary"}>
+                      {process.env.NEXT_PUBLIC_APP_REGION === 'china' 
+                        ? (payment.status === "COMPLETED" ? "已完成" : payment.status === "PENDING" ? "待支付" : payment.status === "FAILED" ? "失败" : payment.status.replace("_", " "))
+                        : payment.status.replace("_", " ").toLowerCase()}
                     </Badge>
+                    {payment.status === "PENDING" && userType === "tenant" && (
+                      <Button size="sm" variant="default" onClick={() => {
+                        // 跳转到支付页面或触发支付
+                        window.location.href = payment.metadata?.paymentUrl || `/dashboard/tenant/payments?paymentId=${payment.id}`
+                      }}>
+                        {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? "立即支付" : "Pay Now"}
+                      </Button>
+                    )}
                     <Button size="sm" variant="ghost">
                       <Download className="h-4 w-4" />
                     </Button>

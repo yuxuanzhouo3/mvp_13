@@ -20,10 +20,14 @@ export async function GET(request: NextRequest) {
 
     let payments = await db.query('payments', {})
     
+    console.log('Payments API - Total payments found:', payments.length, 'User ID:', user.id, 'UserType:', dbUser?.userType)
+    
     // 应用过滤
     if (dbUser?.userType === 'TENANT') {
       // Tenants see their own payments
+      const beforeFilter = payments.length
       payments = payments.filter((p: any) => p.userId === user.id)
+      console.log('Payments API - After tenant filter:', payments.length, 'from', beforeFilter)
     } else if (dbUser?.userType === 'LANDLORD') {
       // Landlords see payments for their properties
       const properties = await db.query('properties', { landlordId: user.id })
@@ -41,12 +45,36 @@ export async function GET(request: NextRequest) {
     // 加载关联数据
     const paymentsWithRelations = await Promise.all(
       payments.map(async (payment: any) => {
-        const [property, paymentUser] = await Promise.all([
-          payment.propertyId ? db.findById('properties', payment.propertyId) : null,
-          db.findUserById(payment.userId),
-        ])
+        let property = null
+        let paymentUser = null
+        
+        try {
+          if (payment.propertyId) {
+            property = await db.findById('properties', payment.propertyId)
+          }
+        } catch (err) {
+          console.warn('Failed to load property for payment:', payment.id, err)
+        }
+        
+        try {
+          paymentUser = await db.findUserById(payment.userId)
+        } catch (err) {
+          console.warn('Failed to load user for payment:', payment.id, err)
+        }
+        
+        // 确保metadata是对象格式
+        let metadata = payment.metadata
+        if (typeof metadata === 'string') {
+          try {
+            metadata = JSON.parse(metadata)
+          } catch {
+            metadata = {}
+          }
+        }
+        
         return {
           ...payment,
+          metadata: metadata || {},
           property: property ? {
             id: property.id,
             title: property.title,
@@ -61,6 +89,7 @@ export async function GET(request: NextRequest) {
       })
     )
 
+    console.log('Payments API - Returning payments:', paymentsWithRelations.length)
     return NextResponse.json({ payments: paymentsWithRelations })
   } catch (error: any) {
     console.error('Get payments error:', error)

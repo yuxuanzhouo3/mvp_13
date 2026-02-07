@@ -548,29 +548,53 @@ export class CloudBaseAdapter implements DatabaseAdapter {
   }
 
   async create<T = any>(collection: string, data: any): Promise<T> {
+    // 处理日期字段，确保是Date对象或ISO字符串
+    const processedData: any = { ...data }
+    
+    // 转换Date对象为ISO字符串（CloudBase需要）
+    Object.keys(processedData).forEach(key => {
+      if (processedData[key] instanceof Date) {
+        processedData[key] = processedData[key].toISOString()
+      }
+    })
+    
+    // 确保有创建和更新时间
+    if (!processedData.createdAt) {
+      processedData.createdAt = new Date().toISOString()
+    }
+    if (!processedData.updatedAt) {
+      processedData.updatedAt = new Date().toISOString()
+    }
+    
     const result = await cloudbaseDb
       .collection(collection)
-      .add({
-        ...data,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      })
+      .add(processedData)
     
     return {
-      ...data,
+      ...processedData,
       id: result.id,
       _id: result.id,
     } as T
   }
 
   async update<T = any>(collection: string, id: string, data: any): Promise<T> {
+    // 处理日期字段，确保是Date对象或ISO字符串
+    const processedData: any = { ...data }
+    
+    // 转换Date对象为ISO字符串（CloudBase需要）
+    Object.keys(processedData).forEach(key => {
+      if (processedData[key] instanceof Date) {
+        processedData[key] = processedData[key].toISOString()
+      }
+    })
+    
+    // 确保有更新时间
+    processedData.updatedAt = new Date().toISOString()
+    
     await cloudbaseDb
       .collection(collection)
       .doc(String(id))
-      .update({
-        ...data,
-        updatedAt: new Date(),
-      })
+      .update(processedData)
     
     return this.findById<T>(collection, id) as Promise<T>
   }

@@ -40,6 +40,8 @@ export default function TenantDashboard() {
   })
   const [userName, setUserName] = useState("")
   const [representedBy, setRepresentedBy] = useState<{name: string, id: string} | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   const renderAppStatus = (status?: string) => {
     const s = (status || '').toUpperCase()
@@ -60,9 +62,18 @@ export default function TenantDashboard() {
   }
 
   // Fetch user data and stats
-  const fetchData = async () => {
+  const fetchData = async (showLoading = false) => {
     const token = localStorage.getItem("auth-token")
-    if (!token) return
+    if (!token) {
+      router.push("/auth/login")
+      return
+    }
+
+    // 只在首次加载时显示全屏加载，后续刷新不显示
+    if (showLoading) {
+      setLoading(true)
+    }
+    setError(null)
 
     try {
       // Get user info
@@ -132,7 +143,11 @@ export default function TenantDashboard() {
       })
       if (paymentsRes.ok) {
         const paymentsData = await paymentsRes.json()
-        setPayments(paymentsData.payments || [])
+        const fetchedPayments = paymentsData.payments || []
+        console.log('Fetched payments:', fetchedPayments.length, fetchedPayments)
+        setPayments(fetchedPayments)
+      } else {
+        console.error('Failed to fetch payments:', paymentsRes.status, await paymentsRes.text())
       }
 
       // Fetch Notifications
@@ -153,8 +168,16 @@ export default function TenantDashboard() {
         const messagesData = await messagesRes.json()
         setStats(prev => ({ ...prev, unreadMessages: messagesData.count || 0 }))
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("Failed to fetch dashboard data:", error)
+      // 只在首次加载失败时显示错误，后续刷新失败不显示错误
+      if (showLoading) {
+        setError(error.message || "加载数据失败，请刷新页面重试")
+      }
+    } finally {
+      if (showLoading) {
+        setLoading(false)
+      }
     }
   }
 
@@ -194,13 +217,47 @@ export default function TenantDashboard() {
   }
 
   useEffect(() => {
-    fetchData()
-    // Refresh saved properties when tab changes
+    // 首次加载显示加载状态
+    fetchData(true)
+    // 后台静默刷新，不显示加载状态
     const interval = setInterval(() => {
-      fetchData()
-    }, 2000)
+      fetchData(false)
+    }, 30000) // 改为30秒刷新一次，避免过于频繁
     return () => clearInterval(interval)
   }, [])
+
+  // 如果正在加载，显示加载状态
+  if (loading) {
+    return (
+      <DashboardLayout userType="tenant">
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+            <p className="text-muted-foreground">{tCommon('loading') || "加载中..."}</p>
+          </div>
+        </div>
+      </DashboardLayout>
+    )
+  }
+
+  // 如果有错误，显示错误信息
+  if (error) {
+    return (
+      <DashboardLayout userType="tenant">
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="text-center">
+            <p className="text-destructive mb-4">{error}</p>
+            <Button onClick={() => {
+              setError(null)
+              fetchData()
+            }}>
+              {tCommon('retry') || "重试"}
+            </Button>
+          </div>
+        </div>
+      </DashboardLayout>
+    )
+  }
 
   return (
     <DashboardLayout userType="tenant">
@@ -243,18 +300,46 @@ export default function TenantDashboard() {
         {notifications.length > 0 && (
            <div className="mb-6 space-y-2">
              <h3 className="text-lg font-semibold">{t('notifications')}</h3>
-             {notifications.map((notif: any) => (
-               <div key={notif.id} className={`p-4 rounded-lg border flex justify-between items-center ${notif.isRead ? 'bg-background' : 'bg-muted/30'}`}>
-                 <div>
-                   <p className="font-medium">{notif.title}</p>
-                   <p className="text-sm text-muted-foreground">{notif.message}</p>
-                   <p className="text-xs text-muted-foreground mt-1">{new Date(notif.createdAt).toLocaleDateString()}</p>
+             {notifications.map((notif: any) => {
+               // 国内版：将英文通知标题和内容转换为中文
+               const region = process.env.NEXT_PUBLIC_APP_REGION || 'global'
+               const isChina = region === 'china'
+               
+               let displayTitle = notif.title
+               let displayMessage = notif.message
+               
+               if (isChina) {
+                 // 转换常见通知标题
+                 if (notif.title === 'New Agent Representation' || notif.title?.includes('Agent Representation')) {
+                   displayTitle = '新中介代理'
+                 } else if (notif.title === 'Application Approved') {
+                   displayTitle = '申请已批准'
+                 } else if (notif.title === 'Funds Released') {
+                   displayTitle = '资金已释放'
+                 }
+                 
+                 // 转换常见通知消息
+                 if (notif.message?.includes('You are now represented by an agent')) {
+                   displayMessage = '您现在由中介代理。该中介将处理您的房源搜索和谈判。'
+                 } else if (notif.message?.includes('represented by')) {
+                   displayMessage = displayMessage.replace(/You are now represented by an agent\./g, '您现在由中介代理。')
+                     .replace(/This agent handles your property search and negotiations\./g, '该中介将处理您的房源搜索和谈判。')
+                 }
+               }
+               
+               return (
+                 <div key={notif.id} className={`p-4 rounded-lg border flex justify-between items-center ${notif.isRead ? 'bg-background' : 'bg-muted/30'}`}>
+                   <div>
+                     <p className="font-medium">{displayTitle}</p>
+                     <p className="text-sm text-muted-foreground">{displayMessage}</p>
+                     <p className="text-xs text-muted-foreground mt-1">{new Date(notif.createdAt).toLocaleDateString()}</p>
+                   </div>
+                   {!notif.isRead && (
+                      <Badge variant="secondary">{t('unread')}</Badge>
+                   )}
                  </div>
-                 {!notif.isRead && (
-                    <Badge variant="secondary">{t('unread')}</Badge>
-                 )}
-               </div>
-             ))}
+               )
+             })}
            </div>
         )}
 
@@ -312,13 +397,27 @@ export default function TenantDashboard() {
         {/* Main Content */}
         <Tabs defaultValue="ai-search" className="space-y-6">
           <TabsList>
-            <TabsTrigger value="ai-search">{t('aiSmartSearch')}</TabsTrigger>
-            <TabsTrigger value="search">{t('search')}</TabsTrigger>
-            <TabsTrigger value="rentals">{t('myRentals')}</TabsTrigger>
-            <TabsTrigger value="saved">{t('savedProperties')}</TabsTrigger>
-            <TabsTrigger value="applications">{t('applications')}</TabsTrigger>
-            <TabsTrigger value="payments">{t('payments')}</TabsTrigger>
-            <TabsTrigger value="messages">{t('messages')}</TabsTrigger>
+            <TabsTrigger value="ai-search">
+              {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? 'AI智能搜索' : t('aiSmartSearch')}
+            </TabsTrigger>
+            <TabsTrigger value="search">
+              {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '搜索' : t('search')}
+            </TabsTrigger>
+            <TabsTrigger value="rentals">
+              {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '我的租赁' : t('myRentals')}
+            </TabsTrigger>
+            <TabsTrigger value="saved">
+              {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '收藏的房源' : t('savedProperties')}
+            </TabsTrigger>
+            <TabsTrigger value="applications">
+              {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '申请记录' : t('applications')}
+            </TabsTrigger>
+            <TabsTrigger value="payments">
+              {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '支付记录' : t('payments')}
+            </TabsTrigger>
+            <TabsTrigger value="messages">
+              {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '消息' : t('messages')}
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="ai-search" className="space-y-6">
@@ -328,48 +427,78 @@ export default function TenantDashboard() {
           <TabsContent value="rentals" className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>{t('myRentals')}</CardTitle>
-                <CardDescription>{t('trackRentPayments')}</CardDescription>
+                <CardTitle>
+                  {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '我的租赁' : t('myRentals')}
+                </CardTitle>
+                <CardDescription>
+                  {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '跟踪您的租金支付和押金状态' : t('trackRentPayments')}
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 {leases.length > 0 ? (
                   <div className="space-y-4">
                     {leases.map((lease) => {
-                       // Check for escrow payment
-                       const escrowPayment = payments.find(p => 
-                         p.escrowStatus === 'HELD_IN_ESCROW' && 
-                         (p.metadata?.leaseId === lease.id || p.description?.includes(lease.id))
-                       );
+                       // Check for escrow payment - 通过多种方式匹配
+                       const escrowPayment = payments.find(p => {
+                         // 方法1: 通过metadata中的leaseId匹配
+                         if (p.metadata && typeof p.metadata === 'object' && (p.metadata as any).leaseId === lease.id) {
+                           return true
+                         }
+                         // 方法2: 通过description匹配
+                         if (p.description && p.description.includes(lease.id)) {
+                           return true
+                         }
+                         // 方法3: 通过propertyId和状态匹配
+                         if (p.propertyId === lease.propertyId && p.type === 'RENT' && p.status === 'PENDING' && p.escrowStatus === 'HELD_IN_ESCROW') {
+                           return true
+                         }
+                         return false
+                       });
+                       const isChina = process.env.NEXT_PUBLIC_APP_REGION === 'china'
+                       // 判断租赁状态
+                       const leaseStatus = lease.status || (lease.isActive ? 'ACTIVE' : 'PENDING_PAYMENT')
+                       const isActive = leaseStatus === 'ACTIVE' || lease.isActive
                        return (
                         <div key={lease.id} className="p-4 border rounded-lg flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                          <div>
-                            <div className="font-semibold text-lg">{lease.property?.title || "Property"}</div>
-                            <div className="text-sm text-muted-foreground">{lease.property?.address}</div>
+                          <div className="flex-1">
+                            <div className="font-semibold text-lg">{lease.property?.title || (isChina ? "房源" : "Property")}</div>
+                            <div className="text-sm text-muted-foreground">{lease.property?.address || lease.propertyId}</div>
                             <div className="flex gap-4 mt-2 text-sm">
-                              <span>Start: {new Date(lease.startDate).toLocaleDateString()}</span>
-                              <span>End: {new Date(lease.endDate).toLocaleDateString()}</span>
+                              <span>{isChina ? '开始日期' : 'Start'}: {new Date(lease.startDate).toLocaleDateString()}</span>
+                              <span>{isChina ? '结束日期' : 'End'}: {new Date(lease.endDate).toLocaleDateString()}</span>
                             </div>
-                            <div className="mt-1">
-                              <Badge variant={lease.isActive ? "default" : "secondary"}>
-                                {lease.isActive ? "Active" : "Inactive"}
+                            <div className="flex gap-2 mt-2">
+                              <Badge variant={isActive ? "default" : "secondary"}>
+                                {isActive ? (isChina ? "进行中" : "Active") : (leaseStatus === 'PENDING_PAYMENT' ? (isChina ? "待支付" : "Pending Payment") : (isChina ? "已结束" : "Inactive"))}
                               </Badge>
+                              {escrowPayment && (
+                                <Badge variant="outline" className="text-amber-600 border-amber-600">
+                                  {isChina ? "待支付" : "Pending Payment"}
+                                </Badge>
+                              )}
                             </div>
+                            {escrowPayment && (
+                              <div className="mt-2 text-sm">
+                                <span className="text-muted-foreground">{isChina ? "待支付金额" : "Pending Amount"}: </span>
+                                <span className="font-semibold">{getCurrencySymbol()}{escrowPayment.amount.toLocaleString()}</span>
+                              </div>
+                            )}
                           </div>
                           
                           <div className="flex flex-col gap-2 items-end">
                             {escrowPayment && (
                               <div className="text-right">
                                 <div className="text-sm font-medium text-amber-600 mb-1">
-                                  {t('fundsHeldInEscrow') || "Funds Held in Escrow"}
+                                  {isChina ? "资金托管中" : (t('fundsHeldInEscrow') || "Funds Held in Escrow")}
                                 </div>
                                 <Button onClick={() => handleCheckIn(lease.id)} className="w-full md:w-auto">
                                   <CheckCircle className="mr-2 h-4 w-4" />
-                                  {t('confirmCheckIn')}
+                                  {isChina ? "确认入住" : t('confirmCheckIn')}
                                 </Button>
                               </div>
                             )}
                             <Button variant="outline" size="sm" onClick={() => window.location.href=`/properties/${lease.propertyId}`}>
-                              {tCommon('viewDetails')}
+                              {isChina ? "查看详情" : tCommon('viewDetails')}
                             </Button>
                           </div>
                         </div>
@@ -377,7 +506,9 @@ export default function TenantDashboard() {
                     })}
                   </div>
                 ) : (
-                  <p className="text-center text-muted-foreground py-8">{t('noActiveTenants') || "No active rentals."}</p>
+                  <p className="text-center text-muted-foreground py-8">
+                    {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? "暂无租赁记录。" : (t('noActiveTenants') || "No active rentals.")}
+                  </p>
                 )}
               </CardContent>
             </Card>

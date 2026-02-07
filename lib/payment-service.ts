@@ -120,54 +120,10 @@ export async function createAlipayOrder(
 }
 
 /**
- * Calculate rent distribution (Deduction Method)
- * Platform Fee: 5%
- * Agent Commission: 50% of first month rent (only if agent involved)
+ * 旧的 calculateRentDistribution 函数已删除
+ * 请使用新的异步版本：calculateRentDistribution(leaseId, rentAmount, totalAmount)
+ * 新版本会从数据库中获取lease信息，自动计算分账
  */
-export function calculateRentDistribution(
-  rentAmount: number,
-  isFirstMonth: boolean,
-  listingAgentId?: string | null,
-  tenantAgentId?: string | null
-): PaymentDistribution {
-  const platformRate = 0.05
-  const commissionRate = 0.50 // 50% of first month rent
-
-  const platformFee = rentAmount * platformRate
-  let totalCommission = 0
-  let listingAgentFee = 0
-  let tenantAgentFee = 0
-
-  if (isFirstMonth && (listingAgentId || tenantAgentId)) {
-    totalCommission = rentAmount * commissionRate
-    
-    if (listingAgentId && tenantAgentId) {
-      // Split commission 50/50 if both agents exist
-      listingAgentFee = totalCommission / 2
-      tenantAgentFee = totalCommission / 2
-    } else if (listingAgentId) {
-      listingAgentFee = totalCommission
-    } else if (tenantAgentId) {
-      tenantAgentFee = totalCommission
-    }
-  }
-
-  const landlordNet = rentAmount - platformFee - totalCommission
-
-  return {
-    total: rentAmount,
-    platformFee,
-    listingAgentFee,
-    tenantAgentFee,
-    landlordNet,
-    currency: 'usd', // or cny, strictly logic doesn't care
-    details: {
-      listingAgentId: listingAgentId || undefined,
-      tenantAgentId: tenantAgentId || undefined,
-      landlordId: 'landlord', // Placeholder, caller should know
-    }
-  }
-}
 
 /**
  * Release funds from escrow
@@ -405,30 +361,60 @@ export async function createRentPayment(
   // 1. Calculate Distribution
   const distribution = await calculateRentDistribution(leaseId, rentAmount, totalAmount)
 
-  // 2. Create Payment Record
+  // 2. Get lease and property info for description
+  let propertyId: string | null = null
+  let propertyTitle = ''
+  try {
+    const lease = await db.findById('leases', leaseId)
+    if (lease) {
+      propertyId = lease.propertyId
+      const property = await db.findById('properties', lease.propertyId)
+      if (property) {
+        propertyTitle = property.title || ''
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to get lease/property info for payment description:', err)
+  }
+
+  // 3. Create Payment Record with proper description (国际化)
+  const paymentDescription = region === 'china'
+    ? `房租支付 - ${propertyTitle || '合同号 ' + leaseId}（首月租金 + 押金）`
+    : `Rent payment for ${propertyTitle || 'lease ' + leaseId} (First month rent + Deposit)`
+  
   const paymentData = {
     userId,
     type: 'RENT',
     amount: totalAmount,
     status: 'PENDING',
     paymentMethod: paymentMethod || (region === 'global' ? 'stripe' : 'alipay'),
-    description: `Rent payment for lease ${leaseId}`,
+    description: paymentDescription,
     escrowStatus: 'HELD_IN_ESCROW',
     distribution: distribution as any, // Store JSON
-    propertyId: undefined, 
-    transactionId: null 
+    propertyId: propertyId, 
+    transactionId: null,
+    metadata: {
+      leaseId,
+      rentAmount,
+      depositAmount,
+      totalAmount
+    }
   }
   
   const payment = await db.create('payments', paymentData)
 
-  // 3. Initiate Payment
+  // 4. Initiate Payment
   if (region === 'global') {
     const transferGroup = `rent_${leaseId}_${payment.id}`
     await db.update('payments', payment.id, {
-        metadata: { transferGroup, leaseId }
+        metadata: { 
+          ...paymentData.metadata,
+          transferGroup, 
+          leaseId 
+        }
     })
     
-    return await createStripePaymentIntent(
+    const stripeResult = await createStripePaymentIntent(
       userId, 
       totalAmount, 
       'usd', 
@@ -440,6 +426,12 @@ export async function createRentPayment(
       'manual', 
       transferGroup
     )
+    
+    return {
+      ...stripeResult,
+      paymentId: payment.id, // 确保返回paymentId
+      distribution
+    }
   } else {
     // China Region
     const method = paymentMethod || 'alipay'
@@ -455,6 +447,7 @@ export async function createRentPayment(
     
     return {
       ...result,
+      paymentId: payment.id, // 确保返回paymentId
       distribution
     }
   }

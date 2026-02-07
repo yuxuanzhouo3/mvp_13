@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAuthUser } from '@/lib/auth'
-import { prisma } from '@/lib/db'
-import { getAppRegion } from '@/lib/db-adapter'
+import { getAppRegion, getDatabaseAdapter } from '@/lib/db-adapter'
 
 /**
  * Get recent activity for agent dashboard
@@ -17,37 +16,67 @@ export async function GET(request: NextRequest) {
     }
 
     const regionIsChina = getAppRegion() === 'china'
+    const db = getDatabaseAdapter()
+    const uid = user.userId
 
-    // Get recent applications
-    const recentApplications = await prisma.application.findMany({
-      take: 5,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        tenant: {
-          select: { name: true }
-        },
-        property: {
-          select: { title: true }
-        }
-      }
-    })
+    // Fetch landlords connected to this agent
+    const landlordFilters: any = { userType: 'LANDLORD' }
+    if (regionIsChina) {
+      landlordFilters.representedById = uid
+    } else {
+      landlordFilters.landlordProfile = { representedById: uid }
+    }
+    const landlords = await db.query('users', landlordFilters, { orderBy: { createdAt: 'desc' } })
+    const landlordIds = landlords.map((l: any) => l.id)
 
-    // Get recent messages
-    const recentMessages = await prisma.message.findMany({
-      where: {
-        OR: [
-          { senderId: user.userId },
-          { receiverId: user.userId }
-        ]
-      },
-      take: 5,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        sender: {
-          select: { name: true }
-        }
+    // Properties directly managed by agent
+    const agentManaged = await db.query('properties', { agentId: uid }, { orderBy: { createdAt: 'desc' } })
+
+    // Properties from connected landlords
+    let landlordProps: any[] = []
+    if (landlordIds.length > 0) {
+      if (regionIsChina) {
+        const results = await Promise.all(
+          landlordIds.map((lid: string) => db.query('properties', { landlordId: lid }, { orderBy: { createdAt: 'desc' } }))
+        )
+        landlordProps = results.flat()
+      } else {
+        landlordProps = await db.query('properties', { landlordId: { in: landlordIds } }, { orderBy: { createdAt: 'desc' } })
       }
-    })
+    }
+
+    const propertyIds = [...new Set([...agentManaged, ...landlordProps].map((p: any) => String(p.id)))]
+
+    // Recent applications related to the agent's properties
+    let recentApplications: any[] = []
+    if (propertyIds.length > 0) {
+      if (regionIsChina) {
+        const appResults = await Promise.all(
+          propertyIds.map((pid: string) => db.query('applications', { propertyId: pid }, { orderBy: { createdAt: 'desc' } }))
+        )
+        recentApplications = appResults.flat()
+      } else {
+        recentApplications = await db.query('applications', { propertyId: { in: propertyIds } }, { orderBy: { createdAt: 'desc' }, take: 10 })
+      }
+      // sort and limit
+      recentApplications = recentApplications
+        .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, 5)
+    }
+
+    // Recent messages for the agent
+    let recentMessages: any[] = []
+    if (regionIsChina) {
+      const [sent, received] = await Promise.all([
+        db.query('messages', { senderId: uid }, { orderBy: { createdAt: 'desc' } }),
+        db.query('messages', { receiverId: uid }, { orderBy: { createdAt: 'desc' } }),
+      ])
+      recentMessages = [...sent, ...received]
+        .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+        .slice(0, 5)
+    } else {
+      recentMessages = await db.query('messages', { OR: [{ senderId: uid }, { receiverId: uid }] }, { orderBy: { createdAt: 'desc' }, take: 5 })
+    }
 
     const toRelativeTime = (date: Date) => {
       const diffMs = Date.now() - new Date(date).getTime()
@@ -90,8 +119,8 @@ export async function GET(request: NextRequest) {
       ...recentApplications.map(app => ({
         type: 'application' as const,
         message: regionIsChina
-          ? `${app.tenant?.name || '租客'} 申请了 ${app.property?.title || '房源'}`
-          : `${app.tenant?.name || 'A tenant'} applied for ${app.property?.title || 'a property'}`,
+          ? `${(app.tenant?.name || app.tenantName || '租客')} 申请了 ${(app.property?.title || app.propertyTitle || '房源')}`
+          : `${(app.tenant?.name || app.tenantName || 'A tenant')} applied for ${(app.property?.title || app.propertyTitle || 'a property')}`,
         time: toRelativeTime(app.createdAt),
         status: mapStatus(app.status),
         timestamp: new Date(app.createdAt).getTime(),
@@ -99,8 +128,8 @@ export async function GET(request: NextRequest) {
       ...recentMessages.map(msg => ({
         type: 'message' as const,
         message: regionIsChina
-          ? `来自 ${msg.sender?.name || '某人'} 的新消息`
-          : `New message from ${msg.sender?.name || 'someone'}`,
+          ? `来自 ${(msg.sender?.name || msg.senderName || '某人')} 的新消息`
+          : `New message from ${(msg.sender?.name || msg.senderName || 'someone')}`,
         time: toRelativeTime(msg.createdAt),
         status: mapStatus(msg.isRead ? 'READ' : 'UNREAD'),
         timestamp: new Date(msg.createdAt).getTime(),

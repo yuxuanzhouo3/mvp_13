@@ -18,6 +18,24 @@ export default function ApplicationsPage() {
   const [applications, setApplications] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
+  const renderStatus = (status?: string) => {
+    const s = (status || '').toUpperCase()
+    switch (s) {
+      case 'APPROVED':
+        return tApplication('approved')
+      case 'PENDING':
+        return tApplication('pending')
+      case 'REJECTED':
+        return tApplication('rejected')
+      case 'WITHDRAWN':
+        return tApplication('withdrawn')
+      case 'UNDER_REVIEW':
+        return tApplication('underReview')
+      default:
+        return tApplication('status')
+    }
+  }
+
   useEffect(() => {
     fetchApplications()
   }, [])
@@ -73,7 +91,7 @@ export default function ApplicationsPage() {
                     </div>
                     <div className="text-right">
                       <Badge variant={application.status === "APPROVED" ? "default" : "secondary"}>
-                        {application.status?.replace("_", " ").toLowerCase() || tApplication('pending')}
+                        {renderStatus(application.status)}
                       </Badge>
                       <div className="mt-2">
                         <Button 
@@ -81,7 +99,7 @@ export default function ApplicationsPage() {
                           variant="outline"
                           onClick={() => router.push(`/dashboard/tenant/property/${application.propertyId}`)}
                         >
-                          {tCommon('view') || "View Details"}
+                          {tCommon('view') || "View"}
                         </Button>
                       </div>
                     </div>

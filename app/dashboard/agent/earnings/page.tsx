@@ -154,10 +154,10 @@ export default function AgentEarningsPage() {
                     </div>
                     <div className="text-right">
                       <div className="font-semibold text-lg text-green-600">
-                        +{earning.currency === 'CNY' ? '¥' : '$'}{earning.amount?.toLocaleString() || 0}
+                        +{currencySymbol}{earning.amount?.toLocaleString() || 0}
                       </div>
                       <div className="text-xs text-muted-foreground mb-1">
-                         Total Rent: {earning.currency === 'CNY' ? '¥' : '$'}{earning.totalRent?.toLocaleString()}
+                         Total Rent: {currencySymbol}{earning.totalRent?.toLocaleString()}
                       </div>
                       <Badge variant={earning.status === "PAID" ? "default" : (earning.status === "PENDING_RELEASE" ? "secondary" : "outline")}>
                         {earning.status === "PENDING_RELEASE" ? "Held in Escrow" : (earning.status || t('pending'))}

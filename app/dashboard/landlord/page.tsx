@@ -76,17 +76,24 @@ export default function LandlordDashboard() {
         
         // Set recent activity from applications
         const regionIsChina = process.env.NEXT_PUBLIC_APP_REGION === 'china'
-        const recent = applications.slice(0, 3).map((app: any, index: number) => ({
-          id: app.id,
-          type: "application",
-          message: regionIsChina 
-            ? t('newApplicationForProperty', { title: app.property?.title || t('property') })
-            : `New application for ${app.property?.title || 'Property'}`,
-          time: regionIsChina 
-            ? (index === 0 ? "2 小时前" : index === 1 ? "1 天前" : "2 天前")
-            : (index === 0 ? "2 hours ago" : index === 1 ? "1 day ago" : "2 days ago"),
-          status: app.status || "PENDING",
-        }))
+        const recent = applications.slice(0, 3).map((app: any) => {
+          const dt = new Date(app.appliedDate || app.createdAt)
+          const y = dt.getFullYear()
+          const m = String(dt.getMonth() + 1).padStart(2, '0')
+          const d = String(dt.getDate()).padStart(2, '0')
+          const hh = String(dt.getHours()).padStart(2, '0')
+          const mm = String(dt.getMinutes()).padStart(2, '0')
+          const timeStr = regionIsChina ? `${y}-${m}-${d} ${hh}:${mm}` : dt.toLocaleString()
+          return {
+            id: app.id,
+            type: "application",
+            message: regionIsChina 
+              ? t('newApplicationForProperty', { title: app.property?.title || t('property') })
+              : `New application for ${app.property?.title || 'Property'}`,
+            time: timeStr,
+            status: app.status || "PENDING",
+          }
+        })
         setRecentActivity(recent)
       }
 

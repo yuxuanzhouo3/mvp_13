@@ -95,28 +95,14 @@ export async function searchTenants(
     // 1. 先搜索自己的数据库
     let dbResults: any[] = []
     try {
-      dbResults = await searchOwnTenantDatabase(criteria)
+      dbResults = await searchOwnTenantDatabase(criteria, userId)
     } catch (error) {
       console.error('Database search error:', error)
     }
-    
-    // 2. 模拟搜索第三方求租平台 (仅在非国内版且用户需要时启用)
-    // 根据用户要求，国内版不搜索第三方平台，只搜索数据库
-    let thirdPartyResults: any[] = []
-    const isChina = getAppRegion() === 'china'
-    
-    if (!isChina) {
-      try {
-        thirdPartyResults = await searchThirdPartyTenantPlatforms(criteria)
-      } catch (error) {
-        console.error('Third party search error:', error)
-      }
-    }
-    
-    // 3. 合并结果
-    const allResults = [...dbResults, ...thirdPartyResults]
-    
-    // 4. 保存搜索需求到数据库（不阻塞主流程）
+
+    const allResults = [...dbResults]
+
+    // 2. 保存搜索需求到数据库（不阻塞主流程）
     try {
       await saveLandlordRequest(userId, { ...criteria, query: (criteria as any).query || '' }, allResults)
     } catch (error) {
@@ -270,12 +256,16 @@ async function searchOwnDatabase(criteria: ParsedTenantSearchCriteria): Promise<
 /**
  * 搜索自己的租客数据库
  */
-async function searchOwnTenantDatabase(criteria: ParsedLandlordSearchCriteria): Promise<any[]> {
+async function searchOwnTenantDatabase(criteria: ParsedLandlordSearchCriteria, landlordId: string): Promise<any[]> {
   const isChina = getAppRegion() === 'china'
 
   if (isChina) {
     try {
       const db = getDatabaseAdapter()
+      const landlordProperties = await db.query('properties', { landlordId })
+      const landlordPropertyIds = landlordProperties.map((p: any) => p.id).filter(Boolean)
+      if (landlordPropertyIds.length === 0) return []
+
       // CloudBase: 分别获取 PENDING 和 UNDER_REVIEW 的申请，然后合并
       // CloudBaseAdapter 目前支持简单的 where 查询，但不支持数组 in 查询
       const pendingApps = await db.query('applications', { status: 'PENDING' })
@@ -290,6 +280,7 @@ async function searchOwnTenantDatabase(criteria: ParsedLandlordSearchCriteria): 
       for (const app of rawApplications) {
         // 状态过滤 (如果 DB 层未过滤)
         if (!['PENDING', 'UNDER_REVIEW'].includes(app.status)) continue
+        if (!landlordPropertyIds.includes(app.propertyId)) continue
         
         let match = true
         
@@ -380,6 +371,7 @@ async function searchOwnTenantDatabase(criteria: ParsedLandlordSearchCriteria): 
   const applications = await prisma.application.findMany({
     where: {
       status: { in: ['PENDING', 'UNDER_REVIEW'] as any[] },
+      property: { landlordId },
       ...where
     },
     include: {

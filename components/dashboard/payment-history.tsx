@@ -352,6 +352,7 @@ export function PaymentHistory({ userType }: PaymentHistoryProps) {
           onOpenChange={setPaymentDialogOpen}
           onSelectMethod={async (method) => {
             try {
+              console.log('Initiating payment with method:', method)
               const token = localStorage.getItem("auth-token")
               if (!token) {
                 alert(isChina ? '请先登录' : 'Please login first')
@@ -369,11 +370,14 @@ export function PaymentHistory({ userType }: PaymentHistoryProps) {
               })
 
               const data = await response.json()
+              console.log('Payment initiation response:', data)
               
               if (response.ok && data.paymentUrl) {
+                console.log('Redirecting to payment URL:', data.paymentUrl)
                 // 跳转到支付页面
                 window.location.href = data.paymentUrl
               } else {
+                console.error('Payment initiation failed:', data)
                 alert(data.error || (isChina ? '支付初始化失败' : 'Failed to initialize payment'))
               }
             } catch (error) {

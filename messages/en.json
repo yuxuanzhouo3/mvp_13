@@ -161,6 +161,7 @@
     "welcome": "Welcome Back",
     "propertyManagement": "Property Management",
     "manageProperties": "Manage your properties and tenants efficiently.",
+    "addProperty": "Add Property",
     "latestUpdates": "Latest updates from your properties",
     "aiSmartSearch": "AI Smart Search",
     "properties": "Properties",
@@ -168,6 +169,8 @@
     "tenants": "Tenants",
     "payments": "Payments",
     "messages": "Messages",
+    "sendMessage": "Send Message",
+    "tenantDetails": "Tenant Details",
     "analytics": "Analytics",
     "searchResults": "Search Results",
     "searchResultTitle": "Search Results",
@@ -302,6 +305,7 @@
     "tooManyImages": "Too many images",
     "propertyCreated": "Your property has been successfully listed",
     "createPropertyFailed": "Failed to create property",
+    "selectLandlordRequired": "Please select a landlord",
     "pleaseLoginAgain": "Please login again",
     "profileUpdated": "Profile updated successfully",
     "updateProfileFailed": "Failed to update profile",
@@ -424,7 +428,9 @@
     "inviteLandlordDesc": "Enter the email of the landlord you want to invite. If they are already registered and have no agent, they will be bound to you.",
     "landlordEmailPlaceholder": "landlord@example.com",
     "invitationSent": "Invitation Sent",
-    "boundSuccess": "Bound Successfully"
+    "boundSuccess": "Bound Successfully",
+    "postProperty": "Post Property",
+    "pendingApplications": "Pending Applications"
   },
   "search": {
     "title": "Search Properties",
@@ -477,7 +483,13 @@
     "propertyCreated": "Your property has been successfully listed",
     "createPropertyFailed": "Failed to create property",
     "loginToAddProperties": "You need to log in to add properties",
-    "failedToUploadImages": "Failed to upload images"
+    "failedToUploadImages": "Failed to upload images",
+    "notFound": "Property not found",
+    "failedToLoad": "Failed to load property",
+    "updateSuccess": "Property updated successfully",
+    "updateFailed": "Failed to update property",
+    "uploadFailed": "Failed to upload images",
+    "edit": "Edit Property"
   },
   "application": {
     "title": "Applications",
@@ -487,7 +499,10 @@
     "approved": "Approved",
     "rejected": "Rejected",
     "withdrawn": "Withdrawn",
-    "underReview": "Under Review"
+    "underReview": "Under Review",
+    "approve": "Approve",
+    "reject": "Reject",
+    "agentApproved": "Agent Approved"
   },
   "payment": {
     "title": "Payments",

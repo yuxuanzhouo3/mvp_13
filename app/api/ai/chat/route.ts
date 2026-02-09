@@ -24,6 +24,28 @@ export async function POST(request: NextRequest) {
     const { query, userType } = body
     const isChina = getAppRegion() === 'china'
 
+    const db = getDatabaseAdapter()
+    let dbUser = null
+    try {
+      dbUser = await db.findUserById(user.id)
+    } catch {}
+    if (!dbUser && user.email) {
+      try {
+        dbUser = await db.findUserByEmail(user.email)
+      } catch {}
+    }
+    if (!dbUser) {
+      try {
+        dbUser = await db.createUser({
+          email: user.email || `${user.id}@local.user`,
+          password: '',
+          name: user.name || user.email?.split('@')[0] || 'User',
+          userType: user.userType || 'TENANT',
+        })
+      } catch {}
+    }
+    const resolvedUserId = dbUser?.id || user.id
+
     if (!query) {
       return NextResponse.json(
         { error: isChina ? '查询内容不能为空' : 'Query cannot be empty' },
@@ -32,7 +54,7 @@ export async function POST(request: NextRequest) {
     }
 
     // 检查并扣除配额
-    const quotaResult = await deductQuota(user.id, 1)
+    const quotaResult = await deductQuota(resolvedUserId, 1)
     if (!quotaResult.success) {
       return NextResponse.json(
         { error: quotaResult.message || (isChina ? '配额不足' : 'Insufficient quota') },
@@ -41,20 +63,17 @@ export async function POST(request: NextRequest) {
     }
 
     // 获取用户信息确认用户类型
-    const db = getDatabaseAdapter()
-    const dbUser = await db.findUserById(user.id)
-
-    const actualUserType = userType || dbUser?.userType || 'TENANT'
+    const actualUserType = userType || dbUser?.userType || user.userType || 'TENANT'
 
     if (actualUserType === 'TENANT') {
       // 租客查询房源
       try {
         const criteria = await parseTenantQuery(query)
-        const results = await searchRentalProperties({ ...criteria, query }, user.id)
+        const results = await searchRentalProperties({ ...criteria, query }, resolvedUserId)
         const totalCount = results?.reduce((sum: number, r: any) => sum + (r.totalCount || 0), 0) || 0
 
         // 埋点：AI 搜索
-        await trackAISearch(user.id, query, totalCount)
+        await trackAISearch(resolvedUserId, query, totalCount)
 
         return NextResponse.json({
           success: true,
@@ -82,11 +101,11 @@ export async function POST(request: NextRequest) {
       // 房东查询租客
       try {
         const criteria = await parseLandlordQuery(query)
-        const results = await searchTenants({ ...criteria, query }, user.id)
+        const results = await searchTenants({ ...criteria, query }, resolvedUserId)
         const totalCount = results?.length || 0
 
         // 埋点：AI 搜索
-        await trackAISearch(user.id, query, totalCount)
+        await trackAISearch(resolvedUserId, query, totalCount)
 
         return NextResponse.json({
           success: true,

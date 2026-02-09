@@ -18,15 +18,11 @@ export async function GET(request: NextRequest) {
 
     const db = getDatabaseAdapter()
 
+    const isChina = process.env.NEXT_PUBLIC_APP_REGION === 'china'
     const filters: any = {
       userType: 'LANDLORD'
     }
-    
-    if (process.env.NEXT_PUBLIC_APP_REGION !== 'china') {
-      filters.landlordProfile = {
-        representedById: user.id
-      }
-    } else {
+    if (isChina) {
       filters.representedById = user.id
     }
 
@@ -34,11 +30,13 @@ export async function GET(request: NextRequest) {
       orderBy: { createdAt: 'desc' }
     })
     
-    const landlords = allUsers.filter((u: any) => {
-      if (u.userType !== 'LANDLORD') return false
-      const repId = u.representedById || u.landlordProfile?.representedById
-      return repId === user.id
-    })
+    const landlords = isChina
+      ? allUsers.filter((u: any) => {
+          if (u.userType !== 'LANDLORD') return false
+          const repId = u.representedById || u.landlordProfile?.representedById
+          return repId === user.id
+        })
+      : allUsers.filter((u: any) => u.userType === 'LANDLORD')
 
     console.log(`Found ${landlords.length} landlords in database`)
 

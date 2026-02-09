@@ -169,6 +169,8 @@ export async function createAlipayOrder(
     console.log('Payment amount for Alipay:', { 
       originalAmount: amount, 
       totalAmount: totalAmount,
+      appId: appId.slice(0, 6) + '***',
+      outTradeNo: outTradeNo,
       note: 'Amount is already in yuan, no conversion needed'
     })
     
@@ -239,23 +241,21 @@ function buildAlipayUrlManually(config: {
       throw new Error('Alipay private key is required')
     }
     
-    // 移除首尾空白
-    const trimmedKey = key.trim()
+    // 1. 移除可能存在的PEM头尾（无论格式如何）
+    let cleanKey = key
+      .replace(/-----BEGIN RSA PRIVATE KEY-----/g, '')
+      .replace(/-----END RSA PRIVATE KEY-----/g, '')
+      .replace(/-----BEGIN PRIVATE KEY-----/g, '') // 支持 PKCS#8 格式头（虽然支付宝通常是 PKCS#1）
+      .replace(/-----END PRIVATE KEY-----/g, '')
     
-    // 如果已经包含PEM头尾，直接返回（但需要确保格式正确）
-    if (trimmedKey.includes('BEGIN') && trimmedKey.includes('END')) {
-      // 确保换行符正确
-      return trimmedKey.replace(/\\n/g, '\n')
-    }
-    
-    // 否则添加PEM头尾
-    // 移除所有空白字符（包括换行、空格等）
-    const cleanKey = trimmedKey.replace(/\s/g, '')
+    // 2. 移除所有空白字符（包括换行、空格、制表符等）
+    cleanKey = cleanKey.replace(/\s+/g, '')
     
     if (cleanKey.length === 0) {
       throw new Error('Alipay private key is empty after cleaning')
     }
     
+    // 3. 重新构建标准的 PEM 格式
     // 每64个字符换行
     let formattedKey = '-----BEGIN RSA PRIVATE KEY-----\n'
     for (let i = 0; i < cleanKey.length; i += 64) {
@@ -350,16 +350,54 @@ export async function releaseEscrowFunds(paymentId: string): Promise<boolean> {
       return true
     }
 
+    // Determine release status
+    let newEscrowStatus = 'RELEASED'
+    if (payment.distribution && typeof payment.distribution === 'object') {
+        const dist = payment.distribution as any
+        if (dist.deposit && dist.deposit > 0) {
+            newEscrowStatus = 'PARTIALLY_RELEASED' // Rent released, Deposit held
+            
+            // Create Deposit Record
+            try {
+                // Check if deposit already exists for this lease?
+                const leaseId = payment.metadata?.leaseId
+                if (leaseId) {
+                    const existingDeposits = await db.query('deposits', { leaseId })
+                    if (existingDeposits.length === 0) {
+                        await db.create('deposits', {
+                            userId: payment.userId,
+                            leaseId: leaseId,
+                            amount: dist.deposit,
+                            currency: payment.currency || 'CNY',
+                            status: 'HELD',
+                            heldBy: 'PLATFORM',
+                            refundedAmount: 0,
+                            deductions: [],
+                            metadata: {
+                                paymentId: paymentId,
+                                source: 'INITIAL_PAYMENT'
+                            }
+                        })
+                        console.log('Deposit record created for payment:', paymentId)
+                    }
+                }
+            } catch (depErr) {
+                console.error('Failed to create deposit record:', depErr)
+                // Continue with release, don't block
+            }
+        }
+    }
+
     // Update payment status
     await db.update('payments', paymentId, {
-      escrowStatus: 'RELEASED',
+      escrowStatus: newEscrowStatus,
       status: 'COMPLETED', // Ensure it is completed
       updatedAt: new Date()
     })
 
     // In a real system, here we would trigger payouts to Stripe Connect accounts
     // or WeChat/Alipay Merchant accounts based on payment.distribution
-    console.log(`[Funds Released] Payment ${paymentId} released. Distribution:`, payment.distribution)
+    console.log(`[Funds Released] Payment ${paymentId} released. Status: ${newEscrowStatus}. Distribution:`, payment.distribution)
 
     return true
   } catch (error) {
@@ -450,22 +488,24 @@ export async function createPayment(
 }
 
 // NEW: 分账计算引擎
-export async function calculateRentDistribution(leaseId: string, rentAmount: number, totalAmount: number): Promise<PaymentDistribution> {
+export async function calculateRentDistribution(leaseId: string, rentAmount: number, totalAmount: number, leaseObject?: any, explicitDeposit?: number): Promise<PaymentDistribution> {
   const region = getAppRegion()
-  let lease: any
+  let lease: any = leaseObject
 
-  if (region === 'global') {
-    // Supabase/Prisma
-    lease = await prisma.lease.findUnique({
-      where: { id: leaseId },
-      include: {
-        property: { include: { landlord: { include: { landlordProfile: true } } } }
-      }
-    }) as any
-  } else {
-    // CloudBase (Simplified for MVP)
-    const db = getDatabaseAdapter()
-    lease = await db.findById('leases', leaseId)
+  if (!lease) {
+    if (region === 'global') {
+      // Supabase/Prisma
+      lease = await prisma.lease.findUnique({
+        where: { id: leaseId },
+        include: {
+          property: { include: { landlord: { include: { landlordProfile: true } } } }
+        }
+      }) as any
+    } else {
+      // CloudBase (Simplified for MVP)
+      const db = getDatabaseAdapter()
+      lease = await db.findById('leases', leaseId)
+    }
   }
 
   if (!lease) {
@@ -499,41 +539,12 @@ export async function calculateRentDistribution(leaseId: string, rentAmount: num
   // Landlord Net = Total - PlatformFee - Commission
   // Note: Total includes Deposit. Deposit is passed through to Landlord?
   // User says: "Deposit: Held in platform (D)".
-  // Wait. "Settlement: Deposit: Continue frozen in platform... Rent: Platform deducts fees, then releases to Landlord".
-  // So Deposit is NOT released to Landlord yet!
-  // My logic `releaseEscrowFunds` releases EVERYTHING.
-  // This is wrong for Deposit.
-  // Deposit should stay in Escrow?
-  // User says: "Settlement & Split... Deposit: Continue frozen... Rent: Platform deducts fees... releases to Landlord".
+  // "Settlement: Deposit: Continue frozen in platform... Rent: Platform deducts fees, then releases to Landlord".
   
-  // So `landlordNet` calculated here should be the RELEASEABLE amount from RENT only?
-  // But `totalAmount` collected includes Deposit.
+  // So `landlordNet` here should be the RELEASEABLE amount from RENT only.
+  // `deposit` is separate and stays in platform.
   
-  // If `releaseEscrowFunds` is called on Check-in, it should ONLY release the RENT portion.
-  // The DEPOSIT portion should remain HELD.
-  
-  // How to handle partial release?
-  // Stripe PaymentIntent capture is all or nothing usually?
-  // Manual capture allows partial capture (and refund the rest).
-  // But we want to KEEP the rest (Deposit).
-  // We can capture the FULL amount.
-  // But then the funds are in our Platform Account.
-  // We transfer the RENT portion to Landlord/Agents.
-  // We KEEP the DEPOSIT portion in Platform Account (until lease end).
-  
-  // So:
-  // `landlordNet` here should be `rentAmount - platformFee - commissions`.
-  // `deposit` is separate.
-  
-  // `PaymentDistribution` should probably track `deposit` separately.
-  // But for now, `landlordNet` + `fees` + `deposit` = `totalAmount`.
-  // Wait, `landlordNet` is what Landlord gets NOW.
-  // So `landlordNet` = `rentAmount` - `fees`.
-  // The `deposit` is NOT in `landlordNet`.
-  
-  // So `total` check: `platformFee + listingAgentFee + tenantAgentFee + landlordNet + deposit` should equal `totalAmount`.
-  
-  const deposit = totalAmount - rentAmount
+  const deposit = explicitDeposit !== undefined ? explicitDeposit : (totalAmount - rentAmount)
   const landlordNet = Number((rentAmount - platformFee - listingAgentFee - tenantAgentFee).toFixed(2))
 
   return {
@@ -541,8 +552,8 @@ export async function calculateRentDistribution(leaseId: string, rentAmount: num
     platformFee,
     listingAgentFee,
     tenantAgentFee,
-    landlordNet, // This is Rent Net
-    deposit,     // New field to track deposit
+    landlordNet, 
+    deposit,     
     currency: region === 'china' ? 'CNY' : 'USD',
     details: {
       listingAgentId: lease.listingAgentId || undefined,
@@ -557,21 +568,23 @@ export async function createRentPayment(
   userId: string,
   leaseId: string,
   rentAmount: number,
-  depositAmount: number, // Added
-  paymentMethod?: 'stripe' | 'alipay' | 'wechat'
+  depositAmount: number, 
+  paymentMethod?: 'stripe' | 'alipay' | 'wechat',
+  leaseObject?: any 
 ): Promise<PaymentResult> {
   const region = getAppRegion()
   const db = getDatabaseAdapter()
   const totalAmount = rentAmount + depositAmount
   
   // 1. Calculate Distribution
-  const distribution = await calculateRentDistribution(leaseId, rentAmount, totalAmount)
+  // Pass depositAmount explicitly
+  const distribution = await calculateRentDistribution(leaseId, rentAmount, totalAmount, leaseObject, depositAmount)
 
   // 2. Get lease and property info for description
   let propertyId: string | null = null
   let propertyTitle = ''
   try {
-    const lease = await db.findById('leases', leaseId)
+    const lease = leaseObject || await db.findById('leases', leaseId)
     if (lease) {
       propertyId = lease.propertyId
       const property = await db.findById('properties', lease.propertyId)
@@ -612,51 +625,63 @@ export async function createRentPayment(
   const payment = await db.create('payments', paymentData)
 
   // 4. Initiate Payment
-  if (region === 'global') {
-    const transferGroup = `rent_${leaseId}_${payment.id}`
-    await db.update('payments', payment.id, {
-        metadata: { 
-          ...paymentData.metadata,
-          transferGroup, 
-          leaseId 
-        }
-    })
-    
-    const stripeResult = await createStripePaymentIntent(
-      userId, 
-      totalAmount, 
-      'usd', 
-      {
-        leaseId,
-        paymentId: payment.id,
-        type: 'RENT'
-      },
-      'manual', 
-      transferGroup
-    )
-    
-    return {
-      ...stripeResult,
-      paymentId: payment.id, // 确保返回paymentId
-      distribution
-    }
-  } else {
-    // China Region
-    const method = paymentMethod || 'alipay'
-    const subject = `房租支付 - 合同号 ${leaseId}`
-    
-    let result: PaymentResult
-    
-    if (method === 'alipay') {
-        result = await createAlipayOrder(userId, totalAmount, subject, { leaseId, paymentId: payment.id, type: 'RENT' }, true)
+  try {
+    if (region === 'global') {
+      const transferGroup = `rent_${leaseId}_${payment.id}`
+      await db.update('payments', payment.id, {
+          metadata: { 
+            ...paymentData.metadata,
+            transferGroup, 
+            leaseId 
+          }
+      })
+      
+      const stripeResult = await createStripePaymentIntent(
+        userId, 
+        totalAmount, 
+        'usd', 
+        {
+          leaseId,
+          paymentId: payment.id,
+          type: 'RENT'
+        },
+        'manual', 
+        transferGroup
+      )
+      
+      return {
+        ...stripeResult,
+        paymentId: payment.id, // 确保返回paymentId
+        distribution
+      }
     } else {
-        result = await createWechatPayOrder(userId, totalAmount, subject, { leaseId, paymentId: payment.id, type: 'RENT' }, true)
+      // China Region
+      const method = paymentMethod || 'alipay'
+      const subject = `房租支付 - 合同号 ${leaseId}`
+      
+      let result: PaymentResult
+      
+      if (method === 'alipay') {
+          result = await createAlipayOrder(userId, totalAmount, subject, { leaseId, paymentId: payment.id, type: 'RENT' }, true)
+      } else {
+          result = await createWechatPayOrder(userId, totalAmount, subject, { leaseId, paymentId: payment.id, type: 'RENT' }, true)
+      }
+      
+      return {
+        ...result,
+        paymentId: payment.id, // 确保返回paymentId
+        distribution
+      }
     }
-    
+  } catch (error: any) {
+    console.error('Payment provider error:', error)
+    // Return success with error message so the payment record is preserved and accessible
     return {
-      ...result,
-      paymentId: payment.id, // 确保返回paymentId
-      distribution
+      success: true,
+      paymentId: payment.id,
+      distribution,
+      error: `Payment provider error: ${error.message}`,
+      paymentUrl: undefined
     }
   }
 }
@@ -670,10 +695,8 @@ export async function releaseRentPayment(paymentId: string): Promise<{ success: 
       return { success: false, message: 'Payment not found' }
   }
 
-  if (payment.status !== 'COMPLETED' && payment.status !== 'PAID') { // Accept PAID as well if used
-     // In China flow, callback might set it to COMPLETED. 
-     // For Stripe manual capture, it might be 'requires_capture' on Stripe side, but we track 'PENDING' until webhook updates it?
-     // Actually, if capture_method=manual, the status is 'requires_capture'. We need to capture it first.
+  if (payment.status !== 'COMPLETED' && payment.status !== 'PAID') {
+     return { success: false, message: 'Payment must be completed before releasing funds.' }
   }
   
   if (payment.escrowStatus !== 'HELD_IN_ESCROW') {

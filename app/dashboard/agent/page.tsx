@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Home, Users, DollarSign, TrendingUp, MessageSquare, FileText, Building, UserPlus } from "lucide-react"
 import { PropertyCard } from "@/components/dashboard/property-card"
+import { TenantApplications } from "@/components/dashboard/tenant-applications"
 import { MessageCenter } from "@/components/dashboard/message-center"
 import { useToast } from "@/hooks/use-toast"
 
@@ -32,6 +33,7 @@ export default function AgentDashboard() {
   const [tenants, setTenants] = useState<any[]>([])
   const [userName, setUserName] = useState("Agent")
   const [loading, setLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState("properties")
 
   useEffect(() => {
     const userStr = localStorage.getItem("user")
@@ -94,11 +96,12 @@ export default function AgentDashboard() {
       if (!token) return
 
       // Fetch agent statistics
-      const [propertiesRes, landlordRes, tenantRes, messagesRes] = await Promise.all([
+      const [propertiesRes, landlordRes, tenantRes, messagesRes, pendingAppsRes] = await Promise.all([
         fetch("/api/agent/properties", { headers: { Authorization: `Bearer ${token}` } }),
         fetch("/api/agent/landlords", { headers: { Authorization: `Bearer ${token}` } }),
         fetch("/api/agent/tenants", { headers: { Authorization: `Bearer ${token}` } }),
         fetch("/api/messages/unread-count", { headers: { Authorization: `Bearer ${token}` } }),
+        fetch("/api/applications?userType=agent&status=PENDING", { headers: { Authorization: `Bearer ${token}` } }),
       ])
 
       if (propertiesRes.ok) {
@@ -122,6 +125,11 @@ export default function AgentDashboard() {
       if (messagesRes.ok) {
         const data = await messagesRes.json()
         setStats(prev => ({ ...prev, unreadMessages: data.count || 0 }))
+      }
+      
+      if (pendingAppsRes.ok) {
+        const data = await pendingAppsRes.json()
+        setStats(prev => ({ ...prev, pendingDeals: data.applications?.length || 0 }))
       }
 
       // Fetch recent activity
@@ -162,7 +170,7 @@ export default function AgentDashboard() {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
           <Card>
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
@@ -244,9 +252,10 @@ export default function AgentDashboard() {
         </Card>
 
         {/* Main Content Tabs */}
-        <Tabs defaultValue="properties" className="space-y-6">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList>
             <TabsTrigger value="properties">{t('properties')}</TabsTrigger>
+            <TabsTrigger value="applications">{t('applications') || "Applications"}</TabsTrigger>
             <TabsTrigger value="landlords">{t('landlords')}</TabsTrigger>
             <TabsTrigger value="tenants">{t('tenants')}</TabsTrigger>
             <TabsTrigger value="messages">{t('messages')}</TabsTrigger>
@@ -255,8 +264,16 @@ export default function AgentDashboard() {
           <TabsContent value="properties">
             <Card>
               <CardHeader>
-                <CardTitle>{t('managedProperties') || "Managed Properties"}</CardTitle>
-                <CardDescription>{t('propertiesUnderManagement') || "Properties under your management"}</CardDescription>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>{t('managedProperties') || "Managed Properties"}</CardTitle>
+                    <CardDescription>{t('propertiesUnderManagement') || "Properties under your management"}</CardDescription>
+                  </div>
+                  <Button onClick={() => router.push("/dashboard/landlord/add-property")}>
+                    <Building className="h-4 w-4 mr-2" />
+                    {t('addProperty') || "Add Property"}
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
                 {loading ? (
@@ -290,6 +307,10 @@ export default function AgentDashboard() {
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="applications">
+            <TenantApplications userType="agent" />
           </TabsContent>
 
           <TabsContent value="landlords">

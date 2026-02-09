@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAuthUser } from '@/lib/auth'
+import { getCurrentUser } from '@/lib/auth-adapter'
 import { getAppRegion, getDatabaseAdapter } from '@/lib/db-adapter'
 
 /**
@@ -7,7 +7,7 @@ import { getAppRegion, getDatabaseAdapter } from '@/lib/db-adapter'
  */
 export async function GET(request: NextRequest) {
   try {
-    const user = getAuthUser(request)
+    const user = await getCurrentUser(request)
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
@@ -17,35 +17,27 @@ export async function GET(request: NextRequest) {
 
     const regionIsChina = getAppRegion() === 'china'
     const db = getDatabaseAdapter()
-    const uid = user.userId
+    const uid = user.id
 
-    // Fetch landlords connected to this agent
-    const landlordFilters: any = { userType: 'LANDLORD' }
+    let propertyIds: string[] = []
     if (regionIsChina) {
+      const landlordFilters: any = { userType: 'LANDLORD' }
       landlordFilters.representedById = uid
-    } else {
-      landlordFilters.landlordProfile = { representedById: uid }
-    }
-    const landlords = await db.query('users', landlordFilters, { orderBy: { createdAt: 'desc' } })
-    const landlordIds = landlords.map((l: any) => l.id)
-
-    // Properties directly managed by agent
-    const agentManaged = await db.query('properties', { agentId: uid }, { orderBy: { createdAt: 'desc' } })
-
-    // Properties from connected landlords
-    let landlordProps: any[] = []
-    if (landlordIds.length > 0) {
-      if (regionIsChina) {
+      const landlords = await db.query('users', landlordFilters, { orderBy: { createdAt: 'desc' } })
+      const landlordIds = landlords.map((l: any) => l.id)
+      const agentManaged = await db.query('properties', { agentId: uid }, { orderBy: { createdAt: 'desc' } })
+      let landlordProps: any[] = []
+      if (landlordIds.length > 0) {
         const results = await Promise.all(
           landlordIds.map((lid: string) => db.query('properties', { landlordId: lid }, { orderBy: { createdAt: 'desc' } }))
         )
         landlordProps = results.flat()
-      } else {
-        landlordProps = await db.query('properties', { landlordId: { in: landlordIds } }, { orderBy: { createdAt: 'desc' } })
       }
+      propertyIds = [...new Set([...agentManaged, ...landlordProps].map((p: any) => String(p.id)))]
+    } else {
+      const allProperties = await db.query('properties', {}, { orderBy: { createdAt: 'desc' } })
+      propertyIds = [...new Set(allProperties.map((p: any) => String(p.id)))]
     }
-
-    const propertyIds = [...new Set([...agentManaged, ...landlordProps].map((p: any) => String(p.id)))]
 
     // Recent applications related to the agent's properties
     let recentApplications: any[] = []
@@ -58,7 +50,6 @@ export async function GET(request: NextRequest) {
       } else {
         recentApplications = await db.query('applications', { propertyId: { in: propertyIds } }, { orderBy: { createdAt: 'desc' }, take: 10 })
       }
-      // sort and limit
       recentApplications = recentApplications
         .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
         .slice(0, 5)
@@ -75,7 +66,7 @@ export async function GET(request: NextRequest) {
         .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
         .slice(0, 5)
     } else {
-      recentMessages = await db.query('messages', { OR: [{ senderId: uid }, { receiverId: uid }] }, { orderBy: { createdAt: 'desc' }, take: 5 })
+      recentMessages = await db.query('messages', {}, { orderBy: { createdAt: 'desc' }, take: 5 })
     }
 
     const toRelativeTime = (date: Date) => {

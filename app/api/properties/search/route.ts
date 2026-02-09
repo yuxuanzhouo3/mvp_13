@@ -29,8 +29,8 @@ export async function GET(request: NextRequest) {
     // 对于 CloudBase，需要先查询所有符合条件的，然后在内存中过滤
     // 对于 Prisma，可以使用复杂的查询条件
     if (region === 'china') {
-      // CloudBase: 只使用精确匹配的字段
-      // 城市和州的模糊匹配需要在查询后处理
+      // CloudBase: 移除 status 过滤，改为内存过滤，以防大小写不匹配
+      delete filters.status
     } else {
       // Prisma: 可以使用 contains
       if (city) {
@@ -73,18 +73,24 @@ export async function GET(request: NextRequest) {
     if (petFriendly === 'true') filters.petFriendly = true
 
     // 使用数据库适配器查询
+    console.log('Search executing with filters:', JSON.stringify(filters))
     let allProperties = await db.query('properties', filters, {
       orderBy: { createdAt: 'desc' }
     })
+    console.log(`CloudBase query returned ${allProperties.length} properties`)
     
     // 对于 CloudBase，需要在内存中过滤
     if (region === 'china') {
       // 过滤城市（模糊匹配）
       if (city) {
         const cityLower = city.toLowerCase()
-        allProperties = allProperties.filter((p: any) => 
-          p.city && p.city.toLowerCase().includes(cityLower)
-        )
+        allProperties = allProperties.filter((p: any) => {
+          const match = p.city && p.city.toLowerCase().includes(cityLower)
+          if (!match) {
+             // console.log(`Property ${p.id} skipped: city '${p.city}' does not include '${cityLower}'`)
+          }
+          return match
+        })
       }
       
       // 过滤州（模糊匹配）
@@ -113,6 +119,8 @@ export async function GET(request: NextRequest) {
         allProperties = allProperties.filter((p: any) => p.bathrooms >= filters._minBathrooms)
       }
     }
+    
+    console.log(`After memory filtering: ${allProperties.length} properties`)
     
     // 分页处理
     const total = allProperties.length

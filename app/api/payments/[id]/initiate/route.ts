@@ -128,6 +128,8 @@ export async function POST(
       ...(paymentResult.clientSecret && { metadata: { ...(typeof payment.metadata === 'object' ? payment.metadata : {}), clientSecret: paymentResult.clientSecret } })
     })
 
+    console.log(`[Payment Initiate] Success. Method: ${paymentMethod}, URL: ${paymentResult.paymentUrl}`)
+
     return NextResponse.json({
       success: true,
       paymentUrl: paymentResult.paymentUrl,

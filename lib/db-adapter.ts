@@ -344,7 +344,131 @@ export class SupabaseAdapter implements DatabaseAdapter {
       queryOptions.take = options.take
     }
     
-    return model.findMany(queryOptions) as Promise<T[]>
+    try {
+      return model.findMany(queryOptions) as Promise<T[]>
+    } catch (error: any) {
+      const errorMsg = String(error?.message || '')
+      const lower = errorMsg.toLowerCase()
+      const isColumnMissing =
+        lower.includes('does not exist') ||
+        lower.includes('unknown column') ||
+        lower.includes('unknown argument')
+      if (!isColumnMissing) {
+        throw error
+      }
+      const tableNameMap: Record<string, string> = {
+        users: 'User',
+        properties: 'Property',
+        applications: 'Application',
+        payments: 'Payment',
+        deposits: 'Deposit',
+        disputes: 'Dispute',
+        messages: 'Message',
+        savedProperties: 'SavedProperty',
+        notifications: 'Notification',
+        events: 'Event',
+        agentProfiles: 'AgentProfile',
+        tenantProfiles: 'TenantProfile',
+        landlordProfiles: 'LandlordProfile',
+      }
+      const tableName = tableNameMap[collection]
+      if (!tableName) {
+        throw error
+      }
+      const columnsResult: any[] = await prisma.$queryRawUnsafe(
+        `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1`,
+        tableName
+      )
+      const fallbackColumns = columnsResult.length
+        ? columnsResult
+        : (await prisma.$queryRawUnsafe(
+            `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1`,
+            tableName.toLowerCase()
+          ) as any[])
+      const actualTableName = columnsResult.length ? tableName : tableName.toLowerCase()
+      const existingColumns = new Set(
+        (fallbackColumns || []).map((col: any) => String(col.column_name))
+      )
+      const selectableColumns = Array.from(existingColumns)
+        .map((col) => `"${col}"`)
+        .join(', ')
+      const normalizedFilters = filters ? this.normalizeFilters(filters) : {}
+      const conditions: string[] = []
+      const values: any[] = []
+      let index = 1
+      Object.keys(normalizedFilters || {}).forEach((key) => {
+        if (key.startsWith('_')) {
+          return
+        }
+        const value = normalizedFilters[key]
+        if (
+          value &&
+          typeof value === 'object' &&
+          !Array.isArray(value) &&
+          !(value instanceof Date)
+        ) {
+          const handled =
+            value.gte !== undefined ||
+            value.lte !== undefined ||
+            value.gt !== undefined ||
+            value.lt !== undefined
+          if (value.gte !== undefined) {
+            conditions.push(`"${key}" >= $${index}`)
+            values.push(value.gte)
+            index += 1
+          }
+          if (value.lte !== undefined) {
+            conditions.push(`"${key}" <= $${index}`)
+            values.push(value.lte)
+            index += 1
+          }
+          if (value.gt !== undefined) {
+            conditions.push(`"${key}" > $${index}`)
+            values.push(value.gt)
+            index += 1
+          }
+          if (value.lt !== undefined) {
+            conditions.push(`"${key}" < $${index}`)
+            values.push(value.lt)
+            index += 1
+          }
+          if (!handled) {
+            conditions.push(`"${key}" = $${index}`)
+            values.push(value)
+            index += 1
+          }
+        } else if (value !== undefined) {
+          conditions.push(`"${key}" = $${index}`)
+          values.push(value)
+          index += 1
+        }
+      })
+      const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+      let orderClause = ''
+      if (queryOptions.orderBy) {
+        const [orderKey, orderValue] = Object.entries(queryOptions.orderBy)[0] as [string, any]
+        if (existingColumns.has(orderKey)) {
+          const direction = String(orderValue).toLowerCase() === 'asc' ? 'ASC' : 'DESC'
+          orderClause = `ORDER BY "${orderKey}" ${direction}`
+        }
+      } else if (existingColumns.has('createdAt')) {
+        orderClause = `ORDER BY "createdAt" DESC`
+      }
+      let limitClause = ''
+      if (queryOptions.take !== undefined) {
+        limitClause = `LIMIT $${index}`
+        values.push(queryOptions.take)
+        index += 1
+      }
+      let offsetClause = ''
+      if (queryOptions.skip !== undefined) {
+        offsetClause = `OFFSET $${index}`
+        values.push(queryOptions.skip)
+        index += 1
+      }
+      const sql = `SELECT ${selectableColumns} FROM "${actualTableName}" ${whereClause} ${orderClause} ${limitClause} ${offsetClause}`
+      return prisma.$queryRawUnsafe(sql, ...values) as Promise<T[]>
+    }
   }
 
   private normalizeFilters(filters: any): any {

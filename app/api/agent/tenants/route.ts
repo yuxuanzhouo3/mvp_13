@@ -18,19 +18,11 @@ export async function GET(request: NextRequest) {
 
     const db = getDatabaseAdapter()
 
-    // 构建查询条件：只获取属于当前中介的租客
+    const isChina = process.env.NEXT_PUBLIC_APP_REGION === 'china'
     const filters: any = {
       userType: 'TENANT'
     }
-    
-    // 数据隔离 logic
-    if (process.env.NEXT_PUBLIC_APP_REGION !== 'china') {
-      // Supabase (Global): 嵌套查询 TenantProfile
-      filters.tenantProfile = {
-        representedById: user.id
-      }
-    } else {
-      // CloudBase (China): 直接查询根字段
+    if (isChina) {
       filters.representedById = user.id
     }
 
@@ -39,14 +31,13 @@ export async function GET(request: NextRequest) {
       orderBy: { createdAt: 'desc' }
     })
     
-    // 内存过滤（双重保障，兼容不同数据库行为）
-    const tenants = allUsers.filter((t: any) => {
-      if (t.userType !== 'TENANT') return false
-      
-      // 检查 representedById (可能在根对象或 tenantProfile 中)
-      const repId = t.representedById || t.tenantProfile?.representedById
-      return repId === user.id
-    })
+    const tenants = isChina
+      ? allUsers.filter((t: any) => {
+          if (t.userType !== 'TENANT') return false
+          const repId = t.representedById || t.tenantProfile?.representedById
+          return repId === user.id
+        })
+      : allUsers.filter((t: any) => t.userType === 'TENANT')
 
     console.log(`Found ${tenants.length} tenants for agent ${user.id}`)
 

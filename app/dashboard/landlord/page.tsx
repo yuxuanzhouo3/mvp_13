@@ -84,6 +84,19 @@ export default function LandlordDashboard() {
           const hh = String(dt.getHours()).padStart(2, '0')
           const mm = String(dt.getMinutes()).padStart(2, '0')
           const timeStr = regionIsChina ? `${y}-${m}-${d} ${hh}:${mm}` : dt.toLocaleString()
+          const getLocalizedStatus = (status: string) => {
+            if (!status) return "PENDING"
+            const upper = status.toUpperCase()
+            switch (upper) {
+              case 'PENDING': return tApplication('pending')
+              case 'APPROVED': return tApplication('approved')
+              case 'REJECTED': return tApplication('rejected')
+              case 'WITHDRAWN': return tApplication('withdrawn')
+              case 'AGENT_APPROVED': return tApplication('agentApproved') || "Agent Approved"
+              default: return status
+            }
+          }
+
           return {
             id: app.id,
             type: "application",
@@ -91,7 +104,7 @@ export default function LandlordDashboard() {
               ? t('newApplicationForProperty', { title: app.property?.title || t('property') })
               : `New application for ${app.property?.title || 'Property'}`,
             time: timeStr,
-            status: app.status || "PENDING",
+            status: getLocalizedStatus(app.status || "PENDING"),
           }
         })
         setRecentActivity(recent)

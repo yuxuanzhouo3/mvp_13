@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { useParams, useRouter } from "next/navigation"
+import { useTranslations } from 'next-intl'
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -19,6 +20,9 @@ export default function LandlordPropertyDetailPage() {
   const params = useParams()
   const router = useRouter()
   const { toast } = useToast()
+  const t = useTranslations('property')
+  const tDashboard = useTranslations('dashboard')
+  const tCommon = useTranslations('common')
   const [property, setProperty] = useState<any>(null)
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(false)
@@ -27,6 +31,7 @@ export default function LandlordPropertyDetailPage() {
   const [uploading, setUploading] = useState(false)
   const [currentImageIndex, setCurrentImageIndex] = useState(0)
   const currencySymbol = getCurrencySymbol()
+  const [userType, setUserType] = useState<string>("landlord")
   const [formData, setFormData] = useState({
     title: "",
     description: "",
@@ -57,6 +62,12 @@ export default function LandlordPropertyDetailPage() {
   }
 
   useEffect(() => {
+    const userStr = localStorage.getItem("user")
+    if (userStr) {
+      const user = JSON.parse(userStr)
+      if (user.userType?.toUpperCase() === "AGENT") setUserType("agent")
+    }
+
     if (params.id) {
       fetchProperty()
     }
@@ -98,12 +109,12 @@ export default function LandlordPropertyDetailPage() {
           status: data.property.status || "AVAILABLE",
         })
       } else {
-        throw new Error("Failed to fetch property")
+        throw new Error(t('failedToLoad') || "Failed to fetch property")
       }
     } catch (error: any) {
       toast({
-        title: "Error",
-        description: error.message || "Failed to load property",
+        title: tCommon('error') || "Error",
+        description: error.message || t('failedToLoad') || "Failed to load property",
         variant: "destructive",
       })
     } finally {
@@ -211,35 +222,35 @@ export default function LandlordPropertyDetailPage() {
 
   if (loading) {
     return (
-      <DashboardLayout userType="landlord">
-        <div className="text-center py-12">Loading property details...</div>
+      <DashboardLayout userType={userType as any}>
+        <div className="text-center py-12">{tCommon('loading') || "Loading property details..."}</div>
       </DashboardLayout>
     )
   }
 
   if (!property) {
     return (
-      <DashboardLayout userType="landlord">
+      <DashboardLayout userType={userType as any}>
         <div className="text-center py-12">
-          <p className="text-muted-foreground mb-4">Property not found</p>
-          <Button onClick={() => router.push("/dashboard/landlord")}>Back to Dashboard</Button>
+          <p className="text-muted-foreground mb-4">{t('notFound') || "Property not found"}</p>
+          <Button onClick={() => router.push(userType === "agent" ? "/dashboard/agent" : "/dashboard/landlord")}>{tDashboard('backToDashboard') || "Back to Dashboard"}</Button>
         </div>
       </DashboardLayout>
     )
   }
 
   return (
-    <DashboardLayout userType="landlord">
+    <DashboardLayout userType={userType as any}>
       <div className="space-y-6">
         <div className="flex items-center justify-between">
-          <Button variant="ghost" onClick={() => router.push("/dashboard/landlord")}>
+          <Button variant="ghost" onClick={() => router.push(userType === "agent" ? "/dashboard/agent" : "/dashboard/landlord")}>
             <ArrowLeft className="mr-2 h-4 w-4" />
-            Back
+            {tCommon('back') || "Back"}
           </Button>
           {!editing && (
             <Button onClick={() => setEditing(true)}>
               <Edit className="mr-2 h-4 w-4" />
-              Edit Property
+              {t('edit') || "Edit Property"}
             </Button>
           )}
         </div>

@@ -24,6 +24,7 @@ export default function TenantDashboard() {
   const tHero = useTranslations('hero')
   const tCommon = useTranslations('common')
   const currencySymbol = getCurrencySymbol()
+  const isChina = process.env.NEXT_PUBLIC_APP_REGION === 'china'
   const [searchQuery, setSearchQuery] = useState("")
   const [savedProperties, setSavedProperties] = useState<any[]>([])
   const [searchResults, setSearchResults] = useState<any[]>([])
@@ -47,20 +48,55 @@ export default function TenantDashboard() {
 
   const renderAppStatus = (status?: string) => {
     const s = (status || '').toUpperCase()
+    let variant: "default" | "secondary" | "destructive" | "outline" | "success" | "warning" = "default"
+    let label = t('status')
+
     switch (s) {
       case 'APPROVED':
-        return t('approved')
+        variant = "success"
+        label = t('approved')
+        break
+      case 'AGENT_APPROVED':
+        variant = "warning"
+        label = t('agentApproved') || "中介已通过"
+        break
       case 'PENDING':
-        return t('pending')
+        variant = "secondary"
+        label = t('pending')
+        break
       case 'REJECTED':
-        return t('rejected')
+        variant = "destructive"
+        label = t('rejected')
+        break
       case 'WITHDRAWN':
-        return t('withdrawn')
+        variant = "outline"
+        label = t('withdrawn')
+        break
       case 'UNDER_REVIEW':
-        return t('underReview')
+        variant = "secondary"
+        label = t('underReview')
+        break
       default:
-        return t('status')
+        variant = "outline"
+        label = status || t('status')
     }
+    
+    // Using a custom Badge wrapper or styling since "success" variant might not exist in standard shadcn Badge
+    const getBadgeStyle = (v: string) => {
+      switch(v) {
+        case 'success': return "bg-green-500 hover:bg-green-600 border-transparent text-white"
+        case 'warning': return "bg-yellow-500 hover:bg-yellow-600 border-transparent text-white" 
+        case 'destructive': return "bg-red-500 hover:bg-red-600 border-transparent text-white"
+        case 'secondary': return "bg-secondary hover:bg-secondary/80 border-transparent text-secondary-foreground"
+        default: return "text-foreground"
+      }
+    }
+
+    return (
+      <Badge className={getBadgeStyle(variant)} variant={variant === 'success' || variant === 'warning' ? 'default' : variant as any}>
+        {label}
+      </Badge>
+    )
   }
 
   // Fetch user data and stats
@@ -187,14 +223,20 @@ export default function TenantDashboard() {
   const handleCheckIn = async (leaseId: string) => {
     if (!confirm(t('confirmCheckIn') + "?")) return
     
-    // Find payment for this lease
-    const payment = payments.find(p => 
-      p.escrowStatus === 'HELD_IN_ESCROW' && 
-      (p.metadata?.leaseId === leaseId || p.description?.includes(leaseId))
-    )
+    // Find payment for this lease - using robust matching logic similar to render
+    const lease = leases.find(l => l.id === leaseId)
+    const payment = payments.find(p => {
+      // Method 1: Metadata leaseId match
+      if (p.metadata && typeof p.metadata === 'object' && (p.metadata as any).leaseId === leaseId) return true
+      // Method 2: Description match
+      if (p.description && p.description.includes(leaseId)) return true
+      // Method 3: Context match (Property + Status) - Fallback if metadata is missing
+      if (lease && p.propertyId === lease.propertyId && p.type === 'RENT' && p.status === 'PENDING' && p.escrowStatus === 'HELD_IN_ESCROW') return true
+      return false
+    })
     
     if (!payment) {
-      alert("No escrow payment found for this lease.")
+      alert(t('noEscrowPaymentFound') || "未找到该租赁的托管支付订单。请联系房东或中介确认订单是否已生成。")
       return
     }
 
@@ -206,11 +248,19 @@ export default function TenantDashboard() {
       })
       
       if (res.ok) {
-        alert(t('fundsReleased'))
-        fetchData() // Refresh
+        alert(t('fundsReleased') || "确认入住成功！资金已释放。")
+        fetchData()
       } else {
         const err = await res.json()
-        alert(err.error || "Failed to confirm check-in")
+        // Handle specific error cases
+        if (err.message && err.message.includes('Invalid escrow status')) {
+          if (payment.escrowStatus === 'RELEASED') {
+            alert("该订单资金已释放，无需重复确认。")
+            fetchData()
+            return
+          }
+        }
+        alert(err.error || err.message || "Failed to confirm check-in")
       }
     } catch (e) {
       console.error(e)
@@ -515,12 +565,26 @@ export default function TenantDashboard() {
                             {escrowPayment && (
                               <div className="text-right">
                                 <div className="text-sm font-medium text-amber-600 mb-1">
-                                  {isChina ? "资金托管中" : (t('fundsHeldInEscrow') || "Funds Held in Escrow")}
+                                  {isChina 
+                                    ? (escrowPayment.escrowStatus === 'RELEASED' ? "资金已释放" : "资金托管中") 
+                                    : (escrowPayment.escrowStatus === 'RELEASED' ? "Funds Released" : (t('fundsHeldInEscrow') || "Funds Held in Escrow"))}
                                 </div>
-                                <Button onClick={() => handleCheckIn(lease.id)} className="w-full md:w-auto">
-                                  <CheckCircle className="mr-2 h-4 w-4" />
-                                  {isChina ? "确认入住" : t('confirmCheckIn')}
-                                </Button>
+                                {escrowPayment.status === 'PENDING' ? (
+                                  <Button onClick={() => setActiveTab('payments')} className="w-full md:w-auto">
+                                    <CheckCircle className="mr-2 h-4 w-4" />
+                                    {isChina ? "去支付" : "Pay Now"}
+                                  </Button>
+                                ) : escrowPayment.escrowStatus === 'HELD_IN_ESCROW' ? (
+                                  <Button onClick={() => handleCheckIn(lease.id)} className="w-full md:w-auto">
+                                    <CheckCircle className="mr-2 h-4 w-4" />
+                                    {isChina ? "确认入住" : t('confirmCheckIn')}
+                                  </Button>
+                                ) : (
+                                  <Button disabled variant="outline" className="w-full md:w-auto">
+                                    <CheckCircle className="mr-2 h-4 w-4" />
+                                    {isChina ? "已确认入住" : "Check-in Confirmed"}
+                                  </Button>
+                                )}
                               </div>
                             )}
                             <Button variant="outline" size="sm" onClick={() => window.location.href=`/properties/${lease.propertyId}`}>
@@ -587,7 +651,7 @@ export default function TenantDashboard() {
                     }
                   }}>
                     <Search className="mr-2 h-4 w-4" />
-                    Search
+                    {isChina ? "搜索" : "Search"}
                   </Button>
                 </div>
               </CardContent>
@@ -650,7 +714,7 @@ export default function TenantDashboard() {
                           </div>
                         </div>
                         <div className="text-right">
-                          <Badge variant={application.status === "APPROVED" ? "default" : "secondary"}>
+                          <Badge variant={application.status === "APPROVED" || application.status === "AGENT_APPROVED" ? "default" : "secondary"}>
                             {renderAppStatus(application.status)}
                           </Badge>
                           <div className="mt-2">

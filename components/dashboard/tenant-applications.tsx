@@ -11,7 +11,11 @@ import { Check, X, Eye, MessageSquare } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { getCurrencySymbol } from "@/lib/utils"
 
-export function TenantApplications() {
+interface TenantApplicationsProps {
+  userType?: 'landlord' | 'agent'
+}
+
+export function TenantApplications({ userType = 'landlord' }: TenantApplicationsProps) {
   const router = useRouter()
   const { toast } = useToast()
   const t = useTranslations('dashboard')
@@ -34,6 +38,8 @@ export function TenantApplications() {
         return tApplication('withdrawn')
       case 'UNDER_REVIEW':
         return tApplication('underReview')
+      case 'AGENT_APPROVED':
+        return tApplication('agentApproved') || "Agent Approved"
       default:
         return tApplication('status')
     }
@@ -41,14 +47,14 @@ export function TenantApplications() {
 
   useEffect(() => {
     fetchApplications()
-  }, [])
+  }, [userType])
 
   const fetchApplications = async () => {
     try {
       const token = localStorage.getItem("auth-token")
       if (!token) return
 
-      const response = await fetch("/api/applications?userType=landlord", {
+      const response = await fetch(`/api/applications?userType=${userType}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
 
@@ -68,23 +74,28 @@ export function TenantApplications() {
       const token = localStorage.getItem("auth-token")
       if (!token) return
 
+      const newStatus = userType === 'agent' ? 'AGENT_APPROVED' : 'APPROVED'
+
       const response = await fetch(`/api/applications/${applicationId}`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ status: "APPROVED" }),
+        body: JSON.stringify({ status: newStatus }),
       })
 
       if (response.ok) {
         toast({
           title: tCommon('success'),
-          description: tApplication('approved') || "The application has been approved successfully",
+          description: userType === 'agent'
+            ? (tApplication('agentApproved') || "Application approved by agent")
+            : (tApplication('approved') || "The application has been approved successfully"),
         })
         fetchApplications()
       } else {
-        throw new Error(tCommon('error') || "Failed to approve application")
+        const data = await response.json()
+        throw new Error(data.error || tCommon('error') || "Failed to approve application")
       }
     } catch (error: any) {
       toast({
@@ -116,7 +127,8 @@ export function TenantApplications() {
         })
         fetchApplications()
       } else {
-        throw new Error(tCommon('error') || "Failed to decline application")
+        const data = await response.json()
+        throw new Error(data.error || tCommon('error') || "Failed to decline application")
       }
     } catch (error: any) {
       toast({
@@ -125,6 +137,25 @@ export function TenantApplications() {
         variant: "destructive",
       })
     }
+  }
+
+  const canReview = (application: any) => {
+    if (userType === 'agent') {
+      // Agent can review PENDING applications
+      return application.status === 'PENDING'
+    }
+    if (userType === 'landlord') {
+      // Landlord can review AGENT_APPROVED applications?
+      // User requirement: "If agent has processed it, landlord should NOT be able to process it"
+      // So if status is AGENT_APPROVED, Landlord CANNOT review.
+      if (application.status === 'AGENT_APPROVED') return false
+      
+      // Landlord can review PENDING applications ONLY IF there is no agent
+      if (application.status === 'PENDING' && !application.property?.agentId) return true
+      
+      return false
+    }
+    return false
   }
 
   if (loading) {
@@ -173,7 +204,7 @@ export function TenantApplications() {
                   </div>
                   <Badge
                     variant={
-                      application.status === "APPROVED"
+                      application.status === "APPROVED" || application.status === "AGENT_APPROVED"
                         ? "default"
                         : application.status === "PENDING"
                           ? "secondary"
@@ -224,12 +255,12 @@ export function TenantApplications() {
                   <Button 
                     size="sm" 
                     variant="outline"
-                    onClick={() => router.push(`/dashboard/landlord/messages?userId=${application.tenantId}`)}
+                    onClick={() => router.push(`/dashboard/${userType}/messages?userId=${application.tenantId}`)}
                   >
                     <MessageSquare className="mr-2 h-4 w-4" />
                     {t('messages')}
                   </Button>
-                  {application.status === "PENDING" && (
+                  {canReview(application) && (
                     <>
                       <Button 
                         size="sm" 
@@ -237,7 +268,7 @@ export function TenantApplications() {
                         onClick={() => handleApprove(application.id)}
                       >
                         <Check className="mr-2 h-4 w-4" />
-                        {tApplication('approved')}
+                        {tApplication('approve')}
                       </Button>
                       <Button 
                         size="sm" 
@@ -245,9 +276,14 @@ export function TenantApplications() {
                         onClick={() => handleDecline(application.id)}
                       >
                         <X className="mr-2 h-4 w-4" />
-                        {tApplication('rejected')}
+                        {tApplication('reject')}
                       </Button>
                     </>
+                  )}
+                  {userType === 'landlord' && application.status === 'AGENT_APPROVED' && (
+                    <span className="text-sm text-muted-foreground self-center italic">
+                      {tApplication('agentApproved') || "Agent Approved"}
+                    </span>
                   )}
                 </div>
               </div>

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAuthUser } from '@/lib/auth'
+import { getCurrentUser } from '@/lib/auth-adapter'
 import { getDatabaseAdapter, getAppRegion } from '@/lib/db-adapter'
 
 /**
@@ -8,7 +8,7 @@ import { getDatabaseAdapter, getAppRegion } from '@/lib/db-adapter'
  */
 export async function GET(request: NextRequest) {
   try {
-    const user = getAuthUser(request)
+    const user = await getCurrentUser(request)
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
@@ -19,41 +19,29 @@ export async function GET(request: NextRequest) {
     const db = getDatabaseAdapter()
     const isChina = getAppRegion() === 'china'
 
-    // 获取与该中介建立合作关系的房东列表
-    const landlordFilters: any = { userType: 'LANDLORD' }
+    let properties: any[] = []
     if (isChina) {
-      landlordFilters.representedById = user.userId
-    } else {
-      landlordFilters.landlordProfile = { representedById: user.userId }
-    }
-    const landlords = await db.query('users', landlordFilters, { orderBy: { createdAt: 'desc' } })
-    const landlordIds = landlords.map((l: any) => l.id)
-
-    // 获取中介直接管理的房源
-    const agentManaged = await db.query('properties', { agentId: user.userId }, { orderBy: { createdAt: 'desc' } })
-
-    // 获取合作房东发布的房源
-    let landlordProperties: any[] = []
-    if (landlordIds.length > 0) {
-      if (isChina) {
-        // CloudBase 不支持 in/OR 复杂查询，逐个房东查询再合并
+      const landlordFilters: any = { userType: 'LANDLORD' }
+      landlordFilters.representedById = user.id
+      const landlords = await db.query('users', landlordFilters, { orderBy: { createdAt: 'desc' } })
+      const landlordIds = landlords.map((l: any) => l.id)
+      const agentManaged = await db.query('properties', { agentId: user.id }, { orderBy: { createdAt: 'desc' } })
+      let landlordProperties: any[] = []
+      if (landlordIds.length > 0) {
         const results = await Promise.all(
           landlordIds.map((lid: string) => db.query('properties', { landlordId: lid }, { orderBy: { createdAt: 'desc' } }))
         )
         landlordProperties = results.flat()
-      } else {
-        // Prisma 支持 in 查询
-        landlordProperties = await db.query('properties', { landlordId: { in: landlordIds } }, { orderBy: { createdAt: 'desc' } })
       }
+      const mergedMap = new Map<string, any>()
+      ;[...agentManaged, ...landlordProperties].forEach((p: any) => {
+        const id = String(p.id)
+        if (!mergedMap.has(id)) mergedMap.set(id, p)
+      })
+      properties = Array.from(mergedMap.values())
+    } else {
+      properties = await db.query('properties', {}, { orderBy: { createdAt: 'desc' } })
     }
-
-    // 合并房源并去重
-    const mergedMap = new Map<string, any>()
-    ;[...agentManaged, ...landlordProperties].forEach((p: any) => {
-      const id = String(p.id)
-      if (!mergedMap.has(id)) mergedMap.set(id, p)
-    })
-    const properties = Array.from(mergedMap.values())
     
     // 为每个房源添加房东信息
     const propertiesWithLandlord = await Promise.all(

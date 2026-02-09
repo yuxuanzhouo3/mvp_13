@@ -16,7 +16,16 @@ export async function GET(request: NextRequest) {
     }
 
     const db = getDatabaseAdapter()
-    const dbUser = await db.findUserById(user.id)
+    let dbUser = null
+    try {
+      dbUser = await db.findUserById(user.id)
+    } catch {}
+    if (!dbUser && user.email) {
+      try {
+        dbUser = await db.findUserByEmail(user.email)
+      } catch {}
+    }
+    const resolvedUserId = dbUser?.id || user.id
 
     // 获取所有租约
     let leases = await db.query('leases', {})
@@ -24,10 +33,10 @@ export async function GET(request: NextRequest) {
     // 根据用户类型过滤
     if (dbUser?.userType === 'TENANT') {
       // 租客看到自己的租约
-      leases = leases.filter((l: any) => l.tenantId === user.id)
+      leases = leases.filter((l: any) => l.tenantId === resolvedUserId)
     } else if (dbUser?.userType === 'LANDLORD') {
       // 房东看到自己房源的租约
-      const properties = await db.query('properties', { landlordId: user.id })
+      const properties = await db.query('properties', { landlordId: resolvedUserId })
       const propertyIds = properties.map((p: any) => p.id)
       leases = leases.filter((l: any) => l.propertyId && propertyIds.includes(l.propertyId))
     }

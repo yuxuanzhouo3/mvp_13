@@ -14,7 +14,7 @@ import { CreditCard, Smartphone } from "lucide-react"
 interface PaymentMethodDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSelectMethod: (method: 'alipay' | 'wechat' | 'stripe' | 'paypal') => void
+  onSelectMethod: (method: 'alipay' | 'wechat' | 'stripe' | 'paypal') => Promise<void>
   amount: number
   currency: string
 }
@@ -29,6 +29,21 @@ export function PaymentMethodDialog({
   const region = process.env.NEXT_PUBLIC_APP_REGION || 'global'
   const isChina = region === 'china'
   const currencySymbol = currency === 'CNY' ? '¥' : '$'
+  const [loading, setLoading] = useState(false)
+
+  const handleSelect = async (method: 'alipay' | 'wechat' | 'stripe' | 'paypal') => {
+    setLoading(true)
+    try {
+      await onSelectMethod(method)
+      // If success, the page usually redirects, so we might not need to close.
+      // But if we want to be safe:
+      // onOpenChange(false) 
+    } catch (error) {
+      console.error("Payment method selection failed", error)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -50,12 +65,11 @@ export function PaymentMethodDialog({
               {/* 支付宝 */}
               <Button
                 variant="outline"
-                className="h-24 flex flex-col items-center justify-center space-y-2 hover:bg-blue-50 hover:border-blue-500"
-                onClick={() => {
-                  onSelectMethod('alipay')
-                  onOpenChange(false)
-                }}
+                disabled={loading}
+                className="h-24 flex flex-col items-center justify-center space-y-2 hover:bg-blue-50 hover:border-blue-500 relative"
+                onClick={() => handleSelect('alipay')}
               >
+                {loading && <div className="absolute inset-0 bg-white/50 flex items-center justify-center rounded-lg" />}
                 <div className="w-12 h-12 bg-blue-500 rounded-lg flex items-center justify-center">
                   <CreditCard className="h-6 w-6 text-white" />
                 </div>
@@ -65,12 +79,11 @@ export function PaymentMethodDialog({
               {/* 微信支付 */}
               <Button
                 variant="outline"
-                className="h-24 flex flex-col items-center justify-center space-y-2 hover:bg-green-50 hover:border-green-500"
-                onClick={() => {
-                  onSelectMethod('wechat')
-                  onOpenChange(false)
-                }}
+                disabled={loading}
+                className="h-24 flex flex-col items-center justify-center space-y-2 hover:bg-green-50 hover:border-green-500 relative"
+                onClick={() => handleSelect('wechat')}
               >
+                {loading && <div className="absolute inset-0 bg-white/50 flex items-center justify-center rounded-lg" />}
                 <div className="w-12 h-12 bg-green-500 rounded-lg flex items-center justify-center">
                   <Smartphone className="h-6 w-6 text-white" />
                 </div>
@@ -82,12 +95,11 @@ export function PaymentMethodDialog({
               {/* Stripe */}
               <Button
                 variant="outline"
-                className="h-24 flex flex-col items-center justify-center space-y-2 hover:bg-purple-50 hover:border-purple-500"
-                onClick={() => {
-                  onSelectMethod('stripe')
-                  onOpenChange(false)
-                }}
+                disabled={loading}
+                className="h-24 flex flex-col items-center justify-center space-y-2 hover:bg-purple-50 hover:border-purple-500 relative"
+                onClick={() => handleSelect('stripe')}
               >
+                {loading && <div className="absolute inset-0 bg-white/50 flex items-center justify-center rounded-lg" />}
                 <div className="w-12 h-12 bg-purple-500 rounded-lg flex items-center justify-center">
                   <CreditCard className="h-6 w-6 text-white" />
                 </div>
@@ -97,12 +109,11 @@ export function PaymentMethodDialog({
               {/* PayPal */}
               <Button
                 variant="outline"
-                className="h-24 flex flex-col items-center justify-center space-y-2 hover:bg-blue-50 hover:border-blue-500"
-                onClick={() => {
-                  onSelectMethod('paypal')
-                  onOpenChange(false)
-                }}
+                disabled={loading}
+                className="h-24 flex flex-col items-center justify-center space-y-2 hover:bg-blue-50 hover:border-blue-500 relative"
+                onClick={() => handleSelect('paypal')}
               >
+                {loading && <div className="absolute inset-0 bg-white/50 flex items-center justify-center rounded-lg" />}
                 <div className="w-12 h-12 bg-blue-500 rounded-lg flex items-center justify-center">
                   <CreditCard className="h-6 w-6 text-white" />
                 </div>

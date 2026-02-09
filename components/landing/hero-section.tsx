@@ -7,13 +7,26 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Search, MapPin, Home, Shield } from "lucide-react"
 import Link from "next/link"
+import { useToast } from "@/hooks/use-toast"
 
 function SearchBar() {
   const router = useRouter()
+  const { toast } = useToast()
   const t = useTranslations('hero')
   const [searchQuery, setSearchQuery] = useState("")
 
   const handleSearch = () => {
+    const token = localStorage.getItem("auth-token")
+    if (!token) {
+      toast({
+        title: "Login Required",
+        description: "Please login to continue.",
+        variant: "destructive",
+      })
+      router.push("/auth/login")
+      return
+    }
+
     if (searchQuery.trim()) {
       router.push(`/search?q=${encodeURIComponent(searchQuery)}`)
     } else {
@@ -43,6 +56,22 @@ function SearchBar() {
 
 export function HeroSection() {
   const t = useTranslations('hero')
+  const router = useRouter()
+  const { toast } = useToast()
+
+  const handleNavigation = (path: string) => {
+    const token = localStorage.getItem("auth-token")
+    if (!token) {
+      toast({
+        title: "Login Required",
+        description: "Please login to continue.",
+        variant: "destructive",
+      })
+      router.push("/auth/login")
+    } else {
+      router.push(path)
+    }
+  }
 
   return (
     <section className="relative py-20 lg:py-32 overflow-hidden">
@@ -70,17 +99,13 @@ export function HeroSection() {
           </p>
 
           <div className="mt-10 flex flex-col sm:flex-row gap-4 justify-center">
-            <Button size="lg" className="text-lg px-8 py-6" asChild>
-              <Link href="/search">
-                <Home className="mr-2 h-5 w-5" />
-                {t('findAHome')}
-              </Link>
+            <Button size="lg" className="text-lg px-8 py-6" onClick={() => handleNavigation('/search')}>
+              <Home className="mr-2 h-5 w-5" />
+              {t('findAHome')}
             </Button>
-            <Button size="lg" variant="outline" className="text-lg px-8 py-6 bg-transparent" asChild>
-              <Link href="/list-property">
-                <Shield className="mr-2 h-5 w-5" />
-                {t('listYourProperty')}
-              </Link>
+            <Button size="lg" variant="outline" className="text-lg px-8 py-6 bg-transparent" onClick={() => handleNavigation('/list-property')}>
+              <Shield className="mr-2 h-5 w-5" />
+              {t('listYourProperty')}
             </Button>
           </div>
 

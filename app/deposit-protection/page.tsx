@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Progress } from "@/components/ui/progress"
 import { Shield, Clock, CheckCircle, AlertTriangle, Gavel, FileText } from "lucide-react"
 import { getCurrencySymbol } from "@/lib/utils"
+import { useTranslations } from "next-intl"
 
 const depositStatus = {
   totalAmount: 2800,
@@ -20,32 +21,34 @@ const depositStatus = {
 
 export default function DepositProtectionPage() {
   const currencySymbol = getCurrencySymbol()
+  const t = useTranslations('depositProtectionPage')
+  
   const timeline = [
     {
       date: "2023-12-15",
-      title: "Deposit Received",
-      description: `Security deposit of ${currencySymbol}2,800 received and held in escrow`,
+      title: t('timelineEvent1Title'),
+      description: t('timelineEvent1Desc', { amount: `${currencySymbol}2,800` }),
       status: "completed",
       icon: CheckCircle,
     },
     {
       date: "2023-12-16",
-      title: "Lease Agreement Signed",
-      description: "Digital lease agreement executed by both parties",
+      title: t('timelineEvent2Title'),
+      description: t('timelineEvent2Desc'),
       status: "completed",
       icon: FileText,
     },
     {
       date: "2024-01-01",
-      title: "Tenancy Started",
-      description: "Tenant moved in, deposit protection period active",
+      title: t('timelineEvent3Title'),
+      description: t('timelineEvent3Desc'),
       status: "completed",
       icon: CheckCircle,
     },
     {
       date: "2024-12-31",
-      title: "Lease End Date",
-      description: "Expected lease termination and deposit review",
+      title: t('timelineEvent4Title'),
+      description: t('timelineEvent4Desc'),
       status: "pending",
       icon: Clock,
     },
@@ -61,9 +64,9 @@ export default function DepositProtectionPage() {
             <div className="flex justify-center">
               <Shield className="h-16 w-16 text-primary" />
             </div>
-            <h1 className="text-4xl font-bold">Deposit Protection Center</h1>
+            <h1 className="text-4xl font-bold">{t('title')}</h1>
             <p className="text-xl text-muted-foreground">
-              Your security deposits are protected with full transparency and dispute resolution
+              {t('subtitle')}
             </p>
           </div>
 
@@ -74,48 +77,48 @@ export default function DepositProtectionPage() {
                 <div>
                   <CardTitle className="flex items-center space-x-2">
                     <Shield className="h-5 w-5 text-primary" />
-                    <span>Deposit Status</span>
+                    <span>{t('depositStatus')}</span>
                   </CardTitle>
                   <CardDescription>{depositStatus.property}</CardDescription>
                 </div>
-                <Badge className="bg-green-100 text-green-800 border-green-200">Protected</Badge>
+                <Badge className="bg-green-100 text-green-800 border-green-200">{t('protected')}</Badge>
               </div>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="text-center">
                   <div className="text-3xl font-bold text-primary">{currencySymbol}{depositStatus.totalAmount.toLocaleString()}</div>
-                  <div className="text-sm text-muted-foreground">Total Deposit</div>
+                  <div className="text-sm text-muted-foreground">{t('totalDeposit')}</div>
                 </div>
                 <div className="text-center">
                   <div className="text-3xl font-bold text-green-600">{currencySymbol}{depositStatus.heldAmount.toLocaleString()}</div>
-                  <div className="text-sm text-muted-foreground">Held in Escrow</div>
+                  <div className="text-sm text-muted-foreground">{t('heldInEscrow')}</div>
                 </div>
                 <div className="text-center">
                   <div className="text-3xl font-bold text-blue-600">100%</div>
-                  <div className="text-sm text-muted-foreground">Protection Level</div>
+                  <div className="text-sm text-muted-foreground">{t('protectionLevel')}</div>
                 </div>
               </div>
 
               <div className="space-y-4">
                 <div className="flex justify-between text-sm">
-                  <span>Deposit Protection Progress</span>
-                  <span>Active</span>
+                  <span>{t('progressTitle')}</span>
+                  <span>{t('active')}</span>
                 </div>
                 <Progress value={75} className="h-2" />
                 <div className="flex justify-between text-xs text-muted-foreground">
-                  <span>Deposit Received</span>
-                  <span>Expected Return: {new Date(depositStatus.expectedReturn).toLocaleDateString()}</span>
+                  <span>{t('depositReceived')}</span>
+                  <span>{t('expectedReturn')}: {new Date(depositStatus.expectedReturn).toLocaleDateString()}</span>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-4 border-t">
                 <div>
-                  <div className="text-sm font-medium">Tenant</div>
+                  <div className="text-sm font-medium">{t('tenant')}</div>
                   <div className="text-sm text-muted-foreground">{depositStatus.tenant}</div>
                 </div>
                 <div>
-                  <div className="text-sm font-medium">Landlord</div>
+                  <div className="text-sm font-medium">{t('landlord')}</div>
                   <div className="text-sm text-muted-foreground">{depositStatus.landlord}</div>
                 </div>
               </div>
@@ -125,8 +128,8 @@ export default function DepositProtectionPage() {
           {/* Timeline */}
           <Card>
             <CardHeader>
-              <CardTitle>Deposit Timeline</CardTitle>
-              <CardDescription>Track the complete history of your deposit</CardDescription>
+              <CardTitle>{t('timelineTitle')}</CardTitle>
+              <CardDescription>{t('timelineDesc')}</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-6">
@@ -159,10 +162,10 @@ export default function DepositProtectionPage() {
             <Card>
               <CardContent className="p-6 text-center">
                 <FileText className="h-8 w-8 text-primary mx-auto mb-4" />
-                <h3 className="font-semibold mb-2">Download Documents</h3>
-                <p className="text-sm text-muted-foreground mb-4">Access your lease agreement and deposit receipts</p>
+                <h3 className="font-semibold mb-2">{t('downloadDocs')}</h3>
+                <p className="text-sm text-muted-foreground mb-4">{t('downloadDocsDesc')}</p>
                 <Button variant="outline" className="w-full bg-transparent">
-                  Download
+                  {t('download')}
                 </Button>
               </CardContent>
             </Card>
@@ -170,10 +173,10 @@ export default function DepositProtectionPage() {
             <Card>
               <CardContent className="p-6 text-center">
                 <AlertTriangle className="h-8 w-8 text-orange-500 mx-auto mb-4" />
-                <h3 className="font-semibold mb-2">Report Issue</h3>
-                <p className="text-sm text-muted-foreground mb-4">Report property damage or maintenance issues</p>
+                <h3 className="font-semibold mb-2">{t('reportIssue')}</h3>
+                <p className="text-sm text-muted-foreground mb-4">{t('reportIssueDesc')}</p>
                 <Button variant="outline" className="w-full bg-transparent">
-                  Report
+                  {t('report')}
                 </Button>
               </CardContent>
             </Card>
@@ -181,10 +184,10 @@ export default function DepositProtectionPage() {
             <Card>
               <CardContent className="p-6 text-center">
                 <Gavel className="h-8 w-8 text-red-500 mx-auto mb-4" />
-                <h3 className="font-semibold mb-2">Dispute Resolution</h3>
-                <p className="text-sm text-muted-foreground mb-4">Start a formal dispute process if needed</p>
+                <h3 className="font-semibold mb-2">{t('disputeResolution')}</h3>
+                <p className="text-sm text-muted-foreground mb-4">{t('disputeResolutionDesc')}</p>
                 <Button variant="outline" className="w-full bg-transparent">
-                  Start Dispute
+                  {t('startDispute')}
                 </Button>
               </CardContent>
             </Card>

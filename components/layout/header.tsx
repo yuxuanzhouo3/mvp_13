@@ -2,14 +2,18 @@
 
 import { useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { useTranslations } from 'next-intl'
 import { Button } from "@/components/ui/button"
 import { ModeToggle } from "@/components/mode-toggle"
 import { Menu, Shield } from "lucide-react"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
+import { useToast } from "@/hooks/use-toast"
 
 export function Header() {
   const [isOpen, setIsOpen] = useState(false)
+  const router = useRouter()
+  const { toast } = useToast()
   const t = useTranslations('common')
   const tNav = useTranslations('navigation')
 
@@ -19,6 +23,23 @@ export function Header() {
     { name: tNav('howItWorks'), href: "/how-it-works" },
     { name: tNav('depositProtection'), href: "/deposit-protection" },
   ]
+
+  const handleNavClick = (e: React.MouseEvent, href: string) => {
+    if (href === '/search' || href === '/list-property') {
+      const token = localStorage.getItem("auth-token")
+      if (!token) {
+        e.preventDefault()
+        setIsOpen(false)
+        toast({
+          title: "Login Required",
+          description: "Please login to continue.",
+          variant: "destructive",
+        })
+        router.push("/auth/login")
+      }
+    }
+    if (isOpen) setIsOpen(false)
+  }
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -31,7 +52,12 @@ export function Header() {
         {/* Desktop Navigation */}
         <nav className="hidden md:flex items-center space-x-6">
           {navigation.map((item) => (
-            <Link key={item.name} href={item.href} className="text-sm font-medium transition-colors hover:text-primary">
+            <Link 
+              key={item.name} 
+              href={item.href} 
+              className="text-sm font-medium transition-colors hover:text-primary"
+              onClick={(e) => handleNavClick(e, item.href)}
+            >
               {item.name}
             </Link>
           ))}
@@ -62,7 +88,7 @@ export function Header() {
                     key={item.name}
                     href={item.href}
                     className="text-lg font-medium transition-colors hover:text-primary"
-                    onClick={() => setIsOpen(false)}
+                    onClick={(e) => handleNavClick(e, item.href)}
                   >
                     {item.name}
                   </Link>

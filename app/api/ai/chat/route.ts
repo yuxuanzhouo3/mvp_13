@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-adapter'
 import { parseTenantQuery, parseLandlordQuery } from '@/lib/ai-service'
 import { searchRentalProperties, searchTenants } from '@/lib/search-service'
-import { getDatabaseAdapter } from '@/lib/db-adapter'
+import { getDatabaseAdapter, getAppRegion } from '@/lib/db-adapter'
 import { deductQuota } from '@/lib/subscription-service'
 import { trackAISearch } from '@/lib/analytics'
 
@@ -22,10 +22,11 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json()
     const { query, userType } = body
+    const isChina = getAppRegion() === 'china'
 
     if (!query) {
       return NextResponse.json(
-        { error: 'Query cannot be empty' },
+        { error: isChina ? '查询内容不能为空' : 'Query cannot be empty' },
         { status: 400 }
       )
     }
@@ -34,7 +35,7 @@ export async function POST(request: NextRequest) {
     const quotaResult = await deductQuota(user.id, 1)
     if (!quotaResult.success) {
       return NextResponse.json(
-        { error: quotaResult.message || '配额不足' },
+        { error: quotaResult.message || (isChina ? '配额不足' : 'Insufficient quota') },
         { status: 403 }
       )
     }
@@ -50,16 +51,19 @@ export async function POST(request: NextRequest) {
       try {
         const criteria = await parseTenantQuery(query)
         const results = await searchRentalProperties({ ...criteria, query }, user.id)
+        const totalCount = results?.reduce((sum: number, r: any) => sum + (r.totalCount || 0), 0) || 0
 
         // 埋点：AI 搜索
-        await trackAISearch(user.id, query, results?.reduce((sum: number, r: any) => sum + (r.totalCount || 0), 0) || 0)
+        await trackAISearch(user.id, query, totalCount)
 
         return NextResponse.json({
           success: true,
           query,
           parsedCriteria: criteria,
           results: results || [],
-          message: `Found ${results?.reduce((sum: number, r: any) => sum + (r.totalCount || 0), 0) || 0} matching properties`
+          message: isChina 
+            ? `找到了 ${totalCount} 套匹配的房源`
+            : `Found ${totalCount} matching properties`
         })
       } catch (searchError: any) {
         console.error('Search error:', searchError)
@@ -69,7 +73,9 @@ export async function POST(request: NextRequest) {
           query,
           parsedCriteria: {},
           results: [],
-          message: 'No matching properties found. Try adjusting your search criteria.'
+          message: isChina 
+            ? '未找到匹配的房源，请尝试调整您的搜索条件。'
+            : 'No matching properties found. Try adjusting your search criteria.'
         })
       }
     } else if (actualUserType === 'LANDLORD') {
@@ -77,16 +83,23 @@ export async function POST(request: NextRequest) {
       try {
         const criteria = await parseLandlordQuery(query)
         const results = await searchTenants({ ...criteria, query }, user.id)
+        const totalCount = results?.length || 0
 
         // 埋点：AI 搜索
-        await trackAISearch(user.id, query, results?.length || 0)
+        await trackAISearch(user.id, query, totalCount)
 
         return NextResponse.json({
           success: true,
           query,
           parsedCriteria: criteria,
-          results: results || [],
-          message: `Found ${results?.length || 0} matching tenants`
+          results: [{
+            platform: isChina ? 'RentGuard' : 'RentGuard',
+            totalCount,
+            tenants: results || []
+          }],
+          message: isChina 
+            ? `找到了 ${totalCount} 位匹配的租客`
+            : `Found ${totalCount} matching tenants`
         })
       } catch (searchError: any) {
         console.error('Search error:', searchError)
@@ -96,25 +109,30 @@ export async function POST(request: NextRequest) {
           query,
           parsedCriteria: {},
           results: [],
-          message: 'No matching tenants found. Try adjusting your search criteria.'
+          message: isChina 
+            ? '未找到租住信息，请尝试其他搜索条件。'
+            : 'No matching tenants found. Try adjusting your search criteria.'
         })
       }
     } else {
       return NextResponse.json(
-        { error: 'Unsupported user type' },
+        { error: isChina ? '不支持的用户类型' : 'Unsupported user type' },
         { status: 400 }
       )
     }
   } catch (error: any) {
     console.error('AI chat error:', error)
+    const isChina = getAppRegion() === 'china'
     // 返回友好的错误消息
     return NextResponse.json(
       { 
         success: false,
-        error: 'Failed to process query', 
+        error: isChina ? '查询处理失败' : 'Failed to process query', 
         details: error.message,
         results: [],
-        message: 'Unable to process your query. Please try again or rephrase your search.'
+        message: isChina 
+          ? '无法处理您的查询。请重试或重新组织您的搜索语言。'
+          : 'Unable to process your query. Please try again or rephrase your search.'
       },
       { status: 500 }
     )

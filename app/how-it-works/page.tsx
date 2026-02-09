@@ -2,17 +2,20 @@ import { Header } from "@/components/layout/header"
 import { Footer } from "@/components/layout/footer"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Shield, Search, FileCheck, DollarSign } from "lucide-react"
+import { useTranslations } from "next-intl"
 
 export default function HowItWorksPage() {
+  const t = useTranslations('howItWorksPage')
+
   return (
     <div className="min-h-screen bg-background">
       <Header />
       <main className="container py-12">
         <div className="max-w-4xl mx-auto space-y-12">
           <div className="text-center space-y-4">
-            <h1 className="text-4xl font-bold">How It Works</h1>
+            <h1 className="text-4xl font-bold">{t('title')}</h1>
             <p className="text-xl text-muted-foreground">
-              Simple, secure, and transparent rental process
+              {t('subtitle')}
             </p>
           </div>
 
@@ -20,14 +23,14 @@ export default function HowItWorksPage() {
             <Card>
               <CardHeader>
                 <Search className="h-8 w-8 text-primary mb-2" />
-                <CardTitle>1. Search Properties</CardTitle>
+                <CardTitle>{t('step1Title')}</CardTitle>
                 <CardDescription>
-                  Use AI-powered search to find your ideal home
+                  {t('step1Desc')}
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground">
-                  Simply describe what you&apos;re looking for in natural language, and our AI will find matching properties from multiple platforms.
+                  {t('step1Content')}
                 </p>
               </CardContent>
             </Card>
@@ -35,14 +38,14 @@ export default function HowItWorksPage() {
             <Card>
               <CardHeader>
                 <FileCheck className="h-8 w-8 text-primary mb-2" />
-                <CardTitle>2. Apply & Get Approved</CardTitle>
+                <CardTitle>{t('step2Title')}</CardTitle>
                 <CardDescription>
-                  Submit your application and get approved quickly
+                  {t('step2Desc')}
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground">
-                  Apply directly through our platform. Landlords can review and approve applications efficiently.
+                  {t('step2Content')}
                 </p>
               </CardContent>
             </Card>
@@ -50,14 +53,14 @@ export default function HowItWorksPage() {
             <Card>
               <CardHeader>
                 <DollarSign className="h-8 w-8 text-primary mb-2" />
-                <CardTitle>3. Secure Deposit</CardTitle>
+                <CardTitle>{t('step3Title')}</CardTitle>
                 <CardDescription>
-                  Your deposit is protected with our escrow service
+                  {t('step3Desc')}
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground">
-                  Premium members can use our deposit protection service. Your deposit is held securely until the end of your lease.
+                  {t('step3Content')}
                 </p>
               </CardContent>
             </Card>
@@ -65,14 +68,14 @@ export default function HowItWorksPage() {
             <Card>
               <CardHeader>
                 <Shield className="h-8 w-8 text-primary mb-2" />
-                <CardTitle>4. Move In & Enjoy</CardTitle>
+                <CardTitle>{t('step4Title')}</CardTitle>
                 <CardDescription>
-                  Start your rental journey with peace of mind
+                  {t('step4Desc')}
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground">
-                  Move into your new home knowing your deposit is protected and any disputes will be handled fairly.
+                  {t('step4Content')}
                 </p>
               </CardContent>
             </Card>

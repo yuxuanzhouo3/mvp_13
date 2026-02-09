@@ -1,11 +1,20 @@
 "use client"
 
 import { useState } from "react"
+import { useRouter } from "next/navigation"
 import { useTranslations } from 'next-intl'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { MessageSquare, Send, Loader2 } from "lucide-react"
+import { 
+  Dialog, 
+  DialogContent, 
+  DialogDescription, 
+  DialogHeader, 
+  DialogTitle,
+  DialogFooter
+} from "@/components/ui/dialog"
+import { MessageSquare, Send, Loader2, Phone, Mail, CreditCard, DollarSign } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { PropertyCard } from "./property-card"
 import { getCurrencySymbol } from "@/lib/utils"
@@ -25,13 +34,15 @@ export function AIChat({ userType }: AIChatProps) {
   const [loading, setLoading] = useState(false)
   const [results, setResults] = useState<any>(null)
   const [history, setHistory] = useState<string[]>([])
+  const [selectedTenant, setSelectedTenant] = useState<any>(null)
+  const router = useRouter()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!query.trim()) {
       toast({
         title: tCommon('error'),
-        description: tCommon('error') || "Please enter search query",
+        description: isChina ? "请输入搜索内容" : "Please enter search query",
         variant: "destructive",
       })
       return
@@ -43,7 +54,7 @@ export function AIChat({ userType }: AIChatProps) {
       if (!token) {
         toast({
           title: tAuth('loginFailed'),
-          description: tAuth('loginFailed') || "AI search requires login",
+          description: isChina ? "AI 搜索需要登录" : "AI search requires login",
           variant: "destructive",
         })
         return
@@ -108,9 +119,9 @@ export function AIChat({ userType }: AIChatProps) {
         t('exampleQuery3') || "I need a property in Seattle, monthly rent $2000-$3000, lease at least 12 months",
       ])
     : (isChina ? [
-        "我是刚毕业的年轻人，想在大学附近或者热门商圈找个住处。预算1万以内，最好是拎包入住的公寓或者适合合租的联排，交通便利是首选。",
-        "我想找一套2万左右的高端房子，最好是市中心的高层或者海景房。要求装修现代，2室以上，如果有健身房或者管家服务就更好了。",
-        "我在深圳工作，想给一家人找个3室的大房子。预算3万以内，希望能带个私家花园或者大活动空间，方便孩子玩耍，还要有独立车库。",
+        "帮我筛选信用分大于700且月收入超过5000的潜在租客。",
+        "查找所有申请我的房产且愿意签订1年以上租约的租客。",
+        "显示所有状态为待审核的租房申请，按申请时间排序。",
       ] : [
         // 国际版房东推荐问题
         t('landlordExampleQuery1') || "I need tenants who can lease for 6+ months with rent up to $3000",
@@ -138,7 +149,9 @@ export function AIChat({ userType }: AIChatProps) {
               <Input
                 placeholder={
                   isChina
-                    ? "我是刚毕业的年轻人，想在大学附近或者热门商圈找个住处。预算1万以内，最好是拎包入住的公寓或者适合合租的联排，交通便利是首选。"
+                    ? (userType === "tenant"
+                      ? "我是刚毕业的年轻人，想在大学附近或者热门商圈找个住处。预算1万以内，最好是拎包入住的公寓或者适合合租的联排，交通便利是首选。"
+                      : "帮我筛选信用分大于700且月收入超过5000的潜在租客。")
                     : (userType === "tenant"
                       ? (t('exampleQuery1') || "I need a property within 3km, price $2000-$2500, lease 6 months or longer")
                       : (t('landlordExampleQuery1') || "I need tenants who can lease for 6+ months with rent up to $3000"))
@@ -154,7 +167,8 @@ export function AIChat({ userType }: AIChatProps) {
                   <Send className="h-4 w-4" />
                 )}
               </Button>
-            </div>
+
+    </div>
           </form>
 
           {/* Example Queries */}
@@ -182,7 +196,7 @@ export function AIChat({ userType }: AIChatProps) {
       {results && (
         <Card>
           <CardHeader>
-            <CardTitle>{t('search') || "Search Results"}</CardTitle>
+            <CardTitle>{t('searchResultTitle') || "Search Results"}</CardTitle>
             <CardDescription>{results.message}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -192,11 +206,12 @@ export function AIChat({ userType }: AIChatProps) {
                   <div className="flex items-center justify-between">
                     <h3 className="font-semibold">{result.platform}</h3>
                     <span className="text-sm text-muted-foreground">
-                      {result.totalCount} results
+                      {result.totalCount} {isChina ? "个结果" : "results"}
                     </span>
                   </div>
                   
-                  {userType === "tenant" && result.properties && (
+                  {/* 显示房源结果 (租客搜索) */}
+                  {result.properties && result.properties.length > 0 && (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                       {result.properties.slice(0, 6).map((property: any) => (
                         <PropertyCard
@@ -216,24 +231,25 @@ export function AIChat({ userType }: AIChatProps) {
                     </div>
                   )}
 
-                  {userType === "landlord" && result.results && (
+                  {/* 显示租客结果 (房东搜索) */}
+                  {result.tenants && result.tenants.length > 0 && (
                     <div className="space-y-2">
-                      {result.results.slice(0, 5).map((tenant: any, idx: number) => (
+                      {result.tenants.slice(0, 5).map((tenant: any, idx: number) => (
                         <Card key={idx}>
                           <CardContent className="p-4">
                             <div className="flex justify-between items-start">
                               <div>
                                 <h4 className="font-semibold">{tenant.name || `Tenant ${idx + 1}`}</h4>
                                 <p className="text-sm text-muted-foreground">{tenant.email}</p>
-                    {tenant.monthlyIncome && (
-                      <p className="text-sm">{t('monthlyIncome')}: {currencySymbol}{tenant.monthlyIncome.toLocaleString()}</p>
-                    )}
-                    {tenant.creditScore && (
-                      <p className="text-sm">{t('creditScore')}: {tenant.creditScore}</p>
-                    )}
+                                {tenant.monthlyIncome && (
+                                  <p className="text-sm">{t('monthlyIncome')}: {currencySymbol}{tenant.monthlyIncome.toLocaleString()}</p>
+                                )}
+                                {tenant.creditScore && (
+                                  <p className="text-sm">{t('creditScore')}: {tenant.creditScore}</p>
+                                )}
                               </div>
-                              <Button size="sm" variant="outline">
-                    {t('viewDetails')}
+                              <Button size="sm" variant="outline" onClick={() => setSelectedTenant(tenant)}>
+                                {t('viewDetails')}
                               </Button>
                             </div>
                           </CardContent>
@@ -256,7 +272,7 @@ export function AIChat({ userType }: AIChatProps) {
       {history.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle>{t('search') || "Search History"}</CardTitle>
+            <CardTitle>{t('searchHistoryTitle') || "Search History"}</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
@@ -274,6 +290,86 @@ export function AIChat({ userType }: AIChatProps) {
           </CardContent>
         </Card>
       )}
+
+      {/* Tenant Details Dialog */}
+      <Dialog open={!!selectedTenant} onOpenChange={(open) => !open && setSelectedTenant(null)}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>{t('tenantDetails') || (isChina ? "租客详情" : "Tenant Details")}</DialogTitle>
+            <DialogDescription>
+              {isChina 
+                ? "查看该租客的详细信息" 
+                : "View detailed information about this tenant."}
+            </DialogDescription>
+          </DialogHeader>
+          
+          {selectedTenant && (
+            <div className="space-y-4 py-4">
+              <div className="flex items-center space-x-4">
+                <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center text-primary font-bold text-lg">
+                  {selectedTenant.name?.charAt(0) || "T"}
+                </div>
+                <div>
+                  <h4 className="font-semibold">{selectedTenant.name}</h4>
+                  <p className="text-sm text-muted-foreground">{selectedTenant.email}</p>
+                </div>
+              </div>
+
+              <div className="grid gap-4 border rounded-lg p-4">
+                {selectedTenant.phone && (
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center text-sm text-muted-foreground">
+                      <Phone className="mr-2 h-4 w-4" />
+                      {t('phone') || (isChina ? "电话" : "Phone")}
+                    </div>
+                    <div className="font-medium">{selectedTenant.phone}</div>
+                  </div>
+                )}
+                
+                {selectedTenant.monthlyIncome && (
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center text-sm text-muted-foreground">
+                      <DollarSign className="mr-2 h-4 w-4" />
+                      {t('monthlyIncome')}
+                    </div>
+                    <div className="font-medium">{currencySymbol}{selectedTenant.monthlyIncome.toLocaleString()}</div>
+                  </div>
+                )}
+                
+                {selectedTenant.creditScore && (
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center text-sm text-muted-foreground">
+                      <CreditCard className="mr-2 h-4 w-4" />
+                      {t('creditScore')}
+                    </div>
+                    <div className="font-medium">{selectedTenant.creditScore}</div>
+                  </div>
+                )}
+
+                {selectedTenant.property && (
+                  <div className="pt-2 border-t mt-2">
+                    <p className="text-sm text-muted-foreground mb-1">{t('appliedFor') || (isChina ? "申请房源" : "Applied for")}:</p>
+                    <p className="font-medium truncate">{selectedTenant.property.title}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <DialogFooter className="flex space-x-2 sm:justify-end">
+            <Button variant="outline" onClick={() => setSelectedTenant(null)}>
+              {tCommon('close') || (isChina ? "关闭" : "Close")}
+            </Button>
+            <Button onClick={() => {
+              router.push(`/dashboard/landlord/messages?userId=${selectedTenant?.id}`)
+              setSelectedTenant(null)
+            }}>
+              <MessageSquare className="mr-2 h-4 w-4" />
+              {t('sendMessage') || (isChina ? "发消息" : "Message")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

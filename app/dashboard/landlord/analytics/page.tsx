@@ -6,6 +6,7 @@ import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { BarChart3, DollarSign, Home, Users } from "lucide-react"
 import { getCurrencySymbol } from "@/lib/utils"
+import { AnalyticsCharts } from "@/components/dashboard/analytics-charts"
 
 export default function AnalyticsPage() {
   const t = useTranslations('dashboard')
@@ -18,6 +19,8 @@ export default function AnalyticsPage() {
     occupancyRate: 0,
     loading: true
   })
+  const [revenueData, setRevenueData] = useState<any[]>([])
+  const [propertyStatusData, setPropertyStatusData] = useState<any[]>([])
 
   useEffect(() => {
     fetchAnalyticsData()
@@ -36,6 +39,22 @@ export default function AnalyticsPage() {
       if (propertiesRes.ok) {
         const propertiesData = await propertiesRes.json()
         totalProperties = propertiesData.pagination?.total || propertiesData.properties?.length || 0
+
+        // Calculate property status distribution
+        const props = propertiesData.properties || []
+        const statusCounts = props.reduce((acc: any, curr: any) => {
+          const status = curr.status || 'AVAILABLE'
+          acc[status] = (acc[status] || 0) + 1
+          return acc
+        }, {})
+
+        const pStatusData = [
+          { name: tProperty('available') || 'Available', value: statusCounts['AVAILABLE'] || 0, color: '#22c55e' },
+          { name: tProperty('occupied') || 'Rented', value: (statusCounts['RENTED'] || 0) + (statusCounts['OCCUPIED'] || 0), color: '#3b82f6' },
+          { name: tProperty('maintenance') || 'Maintenance', value: statusCounts['MAINTENANCE'] || 0, color: '#f97316' },
+        ].filter(item => item.value > 0)
+        
+        setPropertyStatusData(pStatusData)
       }
 
       // Fetch applications to get active tenants
@@ -95,6 +114,38 @@ export default function AnalyticsPage() {
             // 其他类型的支付，使用全额
             return sum + (p.amount || 0)
           }, 0)
+
+        // Calculate revenue trend (last 6 months)
+        const regionIsChina = process.env.NEXT_PUBLIC_APP_REGION === 'china'
+        const last6Months = Array.from({ length: 6 }, (_, i) => {
+          const d = new Date()
+          d.setMonth(d.getMonth() - (5 - i))
+          return {
+            month: d.getMonth(),
+            year: d.getFullYear(),
+            name: d.toLocaleString(regionIsChina ? 'zh-CN' : 'en-US', { month: 'short' }),
+            total: 0
+          }
+        })
+
+        payments.forEach((p: any) => {
+           if (p.status !== 'COMPLETED') return
+           const pDate = new Date(p.createdAt || p.paidAt || p.id)
+           const pMonth = pDate.getMonth()
+           const pYear = pDate.getFullYear()
+           
+           const monthData = last6Months.find(m => m.month === pMonth && m.year === pYear)
+           if (monthData) {
+             let amount = p.amount || 0
+             if (p.type === 'RENT' && p.distribution) {
+                const dist = typeof p.distribution === 'string' ? JSON.parse(p.distribution) : p.distribution
+                amount = (dist.landlordNet || 0)
+             }
+             monthData.total += amount
+           }
+        })
+        
+        setRevenueData(last6Months)
       }
 
       // 计算入住率
@@ -179,17 +230,13 @@ export default function AnalyticsPage() {
               </Card>
             </div>
 
-            <Card>
-              <CardHeader>
-                <CardTitle>{t('analyticsDashboard') || "Analytics Dashboard"}</CardTitle>
-                <CardDescription>{t('detailedAnalytics') || "Detailed analytics will be displayed here"}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <p className="text-center text-muted-foreground py-8">
-                  {t('analyticsCharts') || "Analytics charts and graphs will be implemented here"}
-                </p>
-              </CardContent>
-            </Card>
+            <div className="mt-6">
+              <AnalyticsCharts 
+                revenueData={revenueData} 
+                propertyStatusData={propertyStatusData}
+                currencySymbol={currencySymbol}
+              />
+            </div>
           </>
         )}
       </div>

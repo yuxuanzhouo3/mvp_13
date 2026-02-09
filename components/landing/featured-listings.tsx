@@ -9,9 +9,11 @@ import { Button } from "@/components/ui/button"
 import { MapPin, Bed, Bath, Square, Heart } from "lucide-react"
 import Image from "next/image"
 import { PropertyCard } from "@/components/dashboard/property-card"
+import { useToast } from "@/hooks/use-toast"
 
 export function FeaturedListings() {
   const router = useRouter()
+  const { toast } = useToast()
   const t = useTranslations('landing')
   const tCommon = useTranslations('common')
   const [listings, setListings] = useState<any[]>([])
@@ -52,6 +54,20 @@ export function FeaturedListings() {
     }
   }
 
+  const handleViewAll = () => {
+    const token = localStorage.getItem("auth-token")
+    if (!token) {
+      toast({
+        title: "Login Required",
+        description: "Please login to view all properties.",
+        variant: "destructive",
+      })
+      router.push("/auth/login")
+    } else {
+      router.push("/search")
+    }
+  }
+
   return (
     <section className="py-20 lg:py-32 bg-muted/30">
       <div className="container">
@@ -73,7 +89,7 @@ export function FeaturedListings() {
             </div>
 
             <div className="text-center mt-12">
-              <Button variant="outline" size="lg" onClick={() => router.push("/search")}>
+              <Button variant="outline" size="lg" onClick={handleViewAll}>
                 {t('viewAllProperties')}
               </Button>
             </div>

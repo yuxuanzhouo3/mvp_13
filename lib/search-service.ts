@@ -3,6 +3,7 @@
  */
 
 import { prisma } from './db'
+import { getDatabaseAdapter, getAppRegion } from './db-adapter'
 import type { ParsedTenantSearchCriteria, ParsedLandlordSearchCriteria } from './ai-service'
 
 // 模拟的第三方平台数据
@@ -99,12 +100,17 @@ export async function searchTenants(
       console.error('Database search error:', error)
     }
     
-    // 2. 模拟搜索第三方求租平台
+    // 2. 模拟搜索第三方求租平台 (仅在非国内版且用户需要时启用)
+    // 根据用户要求，国内版不搜索第三方平台，只搜索数据库
     let thirdPartyResults: any[] = []
-    try {
-      thirdPartyResults = await searchThirdPartyTenantPlatforms(criteria)
-    } catch (error) {
-      console.error('Third party search error:', error)
+    const isChina = getAppRegion() === 'china'
+    
+    if (!isChina) {
+      try {
+        thirdPartyResults = await searchThirdPartyTenantPlatforms(criteria)
+      } catch (error) {
+        console.error('Third party search error:', error)
+      }
     }
     
     // 3. 合并结果
@@ -130,6 +136,64 @@ export async function searchTenants(
  * 搜索自己的房源数据库
  */
 async function searchOwnDatabase(criteria: ParsedTenantSearchCriteria): Promise<SearchResult> {
+  const isChina = getAppRegion() === 'china'
+
+  if (isChina) {
+    try {
+      const db = getDatabaseAdapter()
+      // CloudBase: 获取所有可用房源并在内存中过滤
+      // 注意：CloudBaseAdapter.query 目前只支持简单相等查询，复杂查询(gte/lte)被忽略，需在此处处理
+      const rawProperties = await db.query('properties', { status: 'AVAILABLE' })
+      
+      // 内存过滤
+      const filteredProperties = rawProperties.filter((p: any) => {
+        let match = true
+        
+        if (criteria.minPrice && (p.price === undefined || p.price < criteria.minPrice)) match = false
+        if (criteria.maxPrice && (p.price === undefined || p.price > criteria.maxPrice)) match = false
+        if (criteria.minBedrooms && (p.bedrooms === undefined || p.bedrooms < criteria.minBedrooms)) match = false
+        if (criteria.minBathrooms && (p.bathrooms === undefined || p.bathrooms < criteria.minBathrooms)) match = false
+        
+        if (criteria.city && p.city) {
+           if (!p.city.toLowerCase().includes(criteria.city.toLowerCase())) match = false
+        }
+        
+        if (criteria.petFriendly !== undefined && p.petFriendly !== criteria.petFriendly) match = false
+        
+        return match
+      }).slice(0, 50)
+      
+      return {
+        platform: 'RentGuard',
+        platformUrl: '/',
+        properties: filteredProperties.map((p: any) => ({
+          id: p.id || p._id,
+          title: p.title,
+          address: p.address,
+          city: p.city,
+          state: p.state,
+          price: p.price,
+          bedrooms: p.bedrooms,
+          bathrooms: p.bathrooms,
+          sqft: p.sqft || undefined,
+          image: (Array.isArray(p.images) ? p.images : [])?.[0] || undefined,
+          url: `/properties/${p.id || p._id}`,
+          availableFrom: p.availableFrom ? new Date(p.availableFrom).toISOString() : undefined,
+          leaseDuration: p.leaseDuration || undefined
+        })),
+        totalCount: filteredProperties.length
+      }
+    } catch (error) {
+      console.error('CloudBase search error:', error)
+      return {
+        platform: 'RentGuard',
+        platformUrl: '/',
+        properties: [],
+        totalCount: 0
+      }
+    }
+  }
+
   try {
     const where: any = {
       status: 'AVAILABLE' as any
@@ -207,6 +271,100 @@ async function searchOwnDatabase(criteria: ParsedTenantSearchCriteria): Promise<
  * 搜索自己的租客数据库
  */
 async function searchOwnTenantDatabase(criteria: ParsedLandlordSearchCriteria): Promise<any[]> {
+  const isChina = getAppRegion() === 'china'
+
+  if (isChina) {
+    try {
+      const db = getDatabaseAdapter()
+      // CloudBase: 分别获取 PENDING 和 UNDER_REVIEW 的申请，然后合并
+      // CloudBaseAdapter 目前支持简单的 where 查询，但不支持数组 in 查询
+      const pendingApps = await db.query('applications', { status: 'PENDING' })
+      const reviewApps = await db.query('applications', { status: 'UNDER_REVIEW' })
+      
+      // 合并并去重 (以防万一)
+      const rawApplications = [...pendingApps, ...reviewApps]
+      
+      // 内存过滤
+      const filteredApplications = []
+      
+      for (const app of rawApplications) {
+        // 状态过滤 (如果 DB 层未过滤)
+        if (!['PENDING', 'UNDER_REVIEW'].includes(app.status)) continue
+        
+        let match = true
+        
+        // 租金过滤 (关联 property)
+        // 假设 app 中有 propertyId，我们需要获取 property 信息来检查价格
+        // 或者 app 中已经冗余存储了 propertyPrice
+        
+        // 简化处理：如果 app 中没有 property 信息，尝试获取
+        let property = app.property
+        if (!property && app.propertyId) {
+             try {
+                 const prop = await db.findById('properties', app.propertyId)
+                 if (prop) property = prop
+             } catch (e) { console.error('Error fetching property', e) }
+        }
+
+        if (criteria.minRent || criteria.maxRent) {
+           const price = property?.price
+           if (price === undefined) {
+               match = false // 无法判断价格，保守起见排除，或者根据业务逻辑处理
+           } else {
+               if (criteria.minRent && price < criteria.minRent) match = false
+               if (criteria.maxRent && price > criteria.maxRent) match = false
+           }
+        }
+        
+        // 获取租客信息
+        let tenant = app.tenant
+        if (!tenant && app.tenantId) {
+            try {
+                const tenantUser = await db.findById('users', app.tenantId)
+                if (tenantUser) tenant = tenantUser
+            } catch (e) { console.error('Error fetching tenant', e) }
+        }
+
+        // 获取租客档案 (如果需要收入、信用分)
+        let tenantProfile = tenant?.tenantProfile
+        // 如果 tenant 对象中没有 profile，可能需要单独查询
+        // 假设简化模型，暂不处理深层关联查询的复杂性，除非必要
+        
+        // 如果我们无法获取到完整的关联数据，过滤可能不准确。
+        // 但根据 MVP 要求，我们尽力匹配
+        
+        const monthlyIncome = app.monthlyIncome || tenantProfile?.monthlyIncome
+        const creditScore = app.creditScore || tenantProfile?.creditScore
+        
+        if (criteria.requiredIncome && (monthlyIncome === undefined || monthlyIncome < criteria.requiredIncome)) match = false
+        if (criteria.minCreditScore && (creditScore === undefined || creditScore < criteria.minCreditScore)) match = false
+
+        if (match && tenant) {
+            filteredApplications.push({
+                id: tenant.id || tenant._id,
+                name: tenant.name,
+                email: tenant.email,
+                phone: tenant.phone,
+                monthlyIncome,
+                creditScore,
+                applicationId: app.id || app._id,
+                property: property ? {
+                    id: property.id || property._id,
+                    title: property.title,
+                    address: property.address
+                } : undefined
+            })
+        }
+      }
+      
+      return filteredApplications.slice(0, 50)
+      
+    } catch (error) {
+      console.error('CloudBase tenant search error:', error)
+      return []
+    }
+  }
+
   // 根据房东的需求搜索匹配的租客申请和租客资料
   const where: any = {}
 

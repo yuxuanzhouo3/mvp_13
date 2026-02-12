@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-adapter'
 import { getDatabaseAdapter } from '@/lib/db-adapter'
+import { supabaseAdmin } from '@/lib/supabase'
 
 /**
  * 获取租约列表
@@ -26,6 +27,17 @@ export async function GET(request: NextRequest) {
       } catch {}
     }
     const resolvedUserId = dbUser?.id || user.id
+    let tokenUserId: string | null = null
+    const authHeader = request.headers.get('authorization')
+    if (authHeader && authHeader.startsWith('Bearer ') && supabaseAdmin) {
+      const token = authHeader.substring(7)
+      try {
+        const { data } = await supabaseAdmin.auth.getUser(token)
+        if (data?.user?.id) {
+          tokenUserId = String(data.user.id)
+        }
+      } catch {}
+    }
 
     // 获取所有租约
     let leases = await db.query('leases', {})
@@ -35,10 +47,16 @@ export async function GET(request: NextRequest) {
       // 租客看到自己的租约
       leases = leases.filter((l: any) => l.tenantId === resolvedUserId)
     } else if (dbUser?.userType === 'LANDLORD') {
-      // 房东看到自己房源的租约
-      const properties = await db.query('properties', { landlordId: resolvedUserId })
-      const propertyIds = properties.map((p: any) => p.id)
-      leases = leases.filter((l: any) => l.propertyId && propertyIds.includes(l.propertyId))
+      const landlordIdSet = new Set([String(resolvedUserId), String(user.id)])
+      if (tokenUserId) landlordIdSet.add(String(tokenUserId))
+      const properties = await db.query('properties', {})
+      const propertyIds = new Set(
+        properties
+          .filter((p: any) => landlordIdSet.has(String((p as any).landlordId ?? (p as any).landlord_id ?? '')))
+          .map((p: any) => p.id || p._id)
+          .filter(Boolean)
+      )
+      leases = leases.filter((l: any) => l.propertyId && propertyIds.has(l.propertyId))
     }
 
     // 排序

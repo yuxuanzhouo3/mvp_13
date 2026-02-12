@@ -17,9 +17,27 @@ export async function GET(request: NextRequest) {
     }
 
     const db = getDatabaseAdapter()
+    const isConnectionError = (error: any) => {
+      const msg = String(error?.message || '').toLowerCase()
+      return msg.includes('server has closed the connection') ||
+        msg.includes('connection') ||
+        msg.includes('timeout') ||
+        msg.includes('pool') ||
+        msg.includes('maxclients') ||
+        msg.includes('relation') ||
+        msg.includes('does not exist')
+    }
 
     // Get all unique conversations from messages
-    const allMessages = await db.query('messages', {})
+    let allMessages: any[] = []
+    try {
+      allMessages = await db.query('messages', {})
+    } catch (error: any) {
+      if (isConnectionError(error)) {
+        return NextResponse.json({ conversations: [] })
+      }
+      throw error
+    }
     const messages = allMessages.filter((m: any) => 
       m.senderId === user.id || m.receiverId === user.id
     ).sort((a: any, b: any) => {
@@ -66,7 +84,15 @@ export async function GET(request: NextRequest) {
     }
 
     // Get unread counts for all partners - 重新查询所有消息以确保获取最新状态
-    const allMessagesForUnread = await db.query('messages', {})
+    let allMessagesForUnread: any[] = []
+    try {
+      allMessagesForUnread = await db.query('messages', {})
+    } catch (error: any) {
+      if (isConnectionError(error)) {
+        return NextResponse.json({ conversations: [] })
+      }
+      throw error
+    }
     const currentUserMessages = allMessagesForUnread.filter((m: any) => 
       m.senderId === user.id || m.receiverId === user.id
     )

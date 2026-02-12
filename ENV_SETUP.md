@@ -1,5 +1,25 @@
 # 环境变量配置说明
 
+## 国际版 Supabase 登录（DIRECT_URL）
+
+若国际版登录出现 **「Unable to check out connection from the pool due to timeout」** 或「登录超时」，说明当前使用的 PgBouncer 连接池（`DATABASE_URL` 中 port 6543）在获取连接时超时。可改为使用**直连**（不经过 pooler）做登录查询。
+
+在 `.env` 或 `.env.local` 中增加 **DIRECT_URL**（与 `DATABASE_URL` 密码一致，仅主机和端口不同）：
+
+```env
+# 直连：用于登录等查询，绕过 PgBouncer 的 check out timeout
+# 格式：postgresql://postgres.项目REF:密码@db.项目REF.supabase.co:5432/postgres
+DIRECT_URL="postgresql://postgres.dhtfuyddjteoqduzvoqw:你的数据库密码@db.dhtfuyddjteoqduzvoqw.supabase.co:5432/postgres"
+```
+
+- 将 `你的数据库密码` 替换为与 `DATABASE_URL` 中相同的密码。
+- `dhtfuyddjteoqduzvoqw` 为项目 REF，若你使用其他 Supabase 项目，请改为对应 REF。
+- 在 Supabase 控制台：Project Settings → Database → Connection string 中可复制 **「Direct connection」** 的 URI 作为 `DIRECT_URL`。
+
+配置后重启开发服务器再尝试登录。
+
+---
+
 ## 支付宝支付配置
 
 在项目根目录创建 `.env.local` 文件（如果不存在），并添加以下配置：

@@ -14,6 +14,7 @@ export interface ParsedSearchCriteria {
   petFriendly?: boolean
   amenities?: string[]
   propertyType?: string
+  query?: string
 }
 
 export interface ParsedTenantSearchCriteria extends ParsedSearchCriteria {

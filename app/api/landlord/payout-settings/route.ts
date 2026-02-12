@@ -4,7 +4,7 @@ import { getDatabaseAdapter, getAppRegion } from '@/lib/db-adapter'
 
 export async function POST(request: NextRequest) {
   try {
-    const user = getAuthUser(request)
+    const user = await getAuthUser(request)
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }

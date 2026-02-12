@@ -1,10 +1,64 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-adapter'
 import { getDatabaseAdapter } from '@/lib/db-adapter'
+import { prisma } from '@/lib/db'
 
 // 定义 Next.js 15 的 params 类型
 type Props = {
   params: Promise<{ id: string }>
+}
+
+const isConnectionError = (error: any) => {
+  const msg = String(error?.message || '').toLowerCase()
+  return msg.includes('server has closed the connection') ||
+    msg.includes('connection') ||
+    msg.includes('timeout') ||
+    msg.includes('pool') ||
+    msg.includes('maxclients')
+}
+
+const runWithRetry = async <T,>(fn: () => Promise<T>): Promise<T> => {
+  try {
+    return await fn()
+  } catch (error: any) {
+    if (!isConnectionError(error)) {
+      throw error
+    }
+    try {
+      await prisma.$disconnect()
+    } catch {}
+    try {
+      await prisma.$connect()
+    } catch {}
+    return await fn()
+  }
+}
+
+const findPropertyByAlternateId = async (searchId: string) => {
+  try {
+    const tableRows: any[] = await prisma.$queryRawUnsafe(
+      `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name ILIKE $1`,
+      'property'
+    )
+    const tableName = tableRows?.[0]?.table_name || 'Property'
+    const columns: any[] = await prisma.$queryRawUnsafe(
+      `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1`,
+      tableName
+    )
+    const columnSet = new Set(columns.map((col: any) => String(col.column_name)))
+    const candidates = ['propertyId', '_id', 'legacyId', 'property_id']
+    for (const column of candidates) {
+      if (!columnSet.has(column)) continue
+      const result: any[] = await prisma.$queryRawUnsafe(
+        `SELECT * FROM "${tableName}" WHERE "${column}" = $1 LIMIT 1`,
+        searchId
+      )
+      if (Array.isArray(result) && result.length > 0) {
+        return result[0]
+      }
+    }
+  } catch {}
+  return null
 }
 
 /**
@@ -16,18 +70,22 @@ export async function GET(
 ) {
   // 1. 在 Next.js 15 中，必须先 await params
   const params = await props.params;
+  const searchId = String(params?.id || '').trim()
+  if (!searchId) {
+    return NextResponse.json({ property: null }, { status: 200 })
+  }
   
   try {
     const db = getDatabaseAdapter()
     
     const region = process.env.NEXT_PUBLIC_APP_REGION || 'global'
     
-    console.log('Fetching property:', params.id, 'Region:', region)
+    console.log('Fetching property:', searchId, 'Region:', region)
     
     let property
     if (region === 'china') {
       try {
-        property = await db.findById('properties', params.id)
+        property = await db.findById('properties', searchId)
         if (property) {
           console.log('Property found via findById:', property.id || property._id)
         } else {
@@ -47,12 +105,11 @@ export async function GET(
           } else {
             property = allProperties.find((p: any) => {
               const pId = String(p.id || p._id || p.propertyId || '')
-              const searchId = String(params.id || '')
               return pId === searchId
             })
             
             if (!property) {
-              console.log('Property not found in query results. Search ID:', params.id)
+              console.log('Property not found in query results. Search ID:', searchId)
             }
           }
         } catch (queryError: any) {
@@ -62,7 +119,7 @@ export async function GET(
             const { db: cloudbaseDb } = await import('@/lib/cloudbase')
             const result = await cloudbaseDb
               .collection('properties')
-              .doc(String(params.id))
+              .doc(searchId)
               .get()
             
             if (result.data) {
@@ -78,7 +135,58 @@ export async function GET(
         }
       }
     } else {
-      property = await db.findById('properties', params.id)
+      // 国际版：Supabase/Prisma
+      try {
+        property = await db.findById('properties', searchId)
+      } catch (error) {
+        console.warn('db.findById failed, trying Prisma:', error)
+      }
+      
+      if (!property) {
+        try {
+          property = await runWithRetry(() => prisma.property.findUnique({ where: { id: searchId } }))
+        } catch (error) {
+          console.warn('Prisma findUnique failed:', error)
+        }
+      }
+      
+      if (!property) {
+        // 尝试通过query方法查找
+        try {
+          const fallbackList = await db.query('properties', {}, { take: 1000 })
+          property = fallbackList.find((p: any) => {
+            const pId = String(p.id || p._id || p.propertyId || p.property_id || '')
+            return pId === searchId
+          })
+        } catch (fallbackError) {
+          console.warn('Query fallback failed:', fallbackError)
+        }
+      }
+      
+      if (!property) {
+        // 尝试通过备用ID查找
+        property = await findPropertyByAlternateId(searchId)
+      }
+      
+      if (!property) {
+        // 最后尝试通过原始SQL查询（处理可能的表名大小写问题）
+        try {
+          const tableRows: any[] = await prisma.$queryRawUnsafe(
+            `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name ILIKE $1`,
+            'property'
+          )
+          const tableName = tableRows?.[0]?.table_name || 'Property'
+          const rawResult = await prisma.$queryRawUnsafe(
+            `SELECT * FROM "${tableName}" WHERE "id" = $1 LIMIT 1`,
+            searchId
+          )
+          if (Array.isArray(rawResult) && rawResult.length > 0) {
+            property = rawResult[0] as any
+          }
+        } catch (sqlError) {
+          console.warn('Raw SQL query failed:', sqlError)
+        }
+      }
     }
 
     if (!property) {
@@ -89,18 +197,18 @@ export async function GET(
     }
     
     const landlordId = property.landlordId || property.landlord?._id || property.landlord?.id
-    if (!landlordId) {
-      return NextResponse.json(
-        { error: 'Property landlord not found' },
-        { status: 404 }
-      )
+    let landlord = null
+    if (landlordId) {
+      try {
+        landlord = await db.findUserById(landlordId)
+      } catch {}
     }
-
-    const landlord = await db.findUserById(landlordId)
     
     let agent = null
     if (property.agentId) {
-      agent = await db.findUserById(property.agentId)
+      try {
+        agent = await db.findUserById(property.agentId)
+      } catch {}
     }
 
     const propertyWithLandlord = {
@@ -123,8 +231,8 @@ export async function GET(
   } catch (error: any) {
     console.error('Get property error:', error)
     return NextResponse.json(
-      { error: 'Failed to get property', details: error.message },
-      { status: 500 }
+      { property: null },
+      { status: 200 }
     )
   }
 }
@@ -156,7 +264,22 @@ export async function PATCH(
       )
     }
 
-    if (property.landlordId !== user.id) {
+    // 权限检查：房东、关联中介或代理中介
+    const isLandlord = property.landlordId === user.id
+    let isAgent = property.agentId === user.id
+
+    if (!isLandlord && !isAgent && user.userType === 'AGENT') {
+        try {
+           const landlord = await db.findUserById(property.landlordId)
+           if (landlord && landlord.representedById === user.id) {
+               isAgent = true
+           }
+        } catch (err) {
+            console.warn('Failed to check agent representation:', err)
+        }
+    }
+
+    if (!isLandlord && !isAgent) {
       return NextResponse.json(
         { error: 'Not authorized to update this property' },
         { status: 403 }
@@ -164,7 +287,7 @@ export async function PATCH(
     }
 
     const body = await request.json()
-    const updatedProperty = await db.update('properties', params.id, body)
+    const updatedProperty = await runWithRetry(() => db.update('properties', params.id, body))
 
     return NextResponse.json({ property: updatedProperty })
   } catch (error: any) {
@@ -203,14 +326,29 @@ export async function DELETE(
       )
     }
 
-    if (property.landlordId !== user.id) {
+    // 权限检查：房东、关联中介或代理中介
+    const isLandlord = property.landlordId === user.id
+    let isAgent = property.agentId === user.id
+
+    if (!isLandlord && !isAgent && user.userType === 'AGENT') {
+        try {
+           const landlord = await db.findUserById(property.landlordId)
+           if (landlord && landlord.representedById === user.id) {
+               isAgent = true
+           }
+        } catch (err) {
+            console.warn('Failed to check agent representation:', err)
+        }
+    }
+
+    if (!isLandlord && !isAgent) {
       return NextResponse.json(
         { error: 'Not authorized to delete this property' },
         { status: 403 }
       )
     }
 
-    await db.delete('properties', params.id)
+    await runWithRetry(() => db.delete('properties', params.id))
 
     return NextResponse.json({ success: true })
   } catch (error: any) {

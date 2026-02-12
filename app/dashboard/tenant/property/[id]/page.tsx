@@ -27,7 +27,7 @@ export default function TenantPropertyDetailPage() {
       fetchProperty()
       checkSaved()
     }
-  }, [params.id])
+  }, [params.id, property?.id])
 
   const fetchProperty = async () => {
     try {
@@ -41,23 +41,15 @@ export default function TenantPropertyDetailPage() {
       if (response.ok) {
         const data = await response.json()
         console.log('Tenant property data received:', data)
-        if (data.property) {
-          setProperty(data.property)
-        } else {
-          throw new Error("Property data is missing")
-        }
+        setProperty(data.property || null)
       } else {
         const errorData = await response.json().catch(() => ({ error: 'Unknown error' }))
         console.error('Tenant failed to fetch property:', errorData)
-        throw new Error(errorData.error || errorData.details || "Failed to fetch property")
+        setProperty(null)
       }
     } catch (error: any) {
       console.error('Tenant fetch property error:', error)
-      toast({
-        title: process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '错误' : "Error",
-        description: error.message || (process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '加载房源失败' : "Failed to load property"),
-        variant: "destructive",
-      })
+      setProperty(null)
     } finally {
       setLoading(false)
     }
@@ -65,7 +57,7 @@ export default function TenantPropertyDetailPage() {
 
   const checkSaved = async () => {
     const token = localStorage.getItem("auth-token")
-    if (!token) return
+    if (!token || !params.id) return
 
     try {
       const response = await fetch("/api/saved-properties", {
@@ -73,11 +65,28 @@ export default function TenantPropertyDetailPage() {
       })
       if (response.ok) {
         const data = await response.json()
-        const saved = data.properties?.some((p: any) => p.id === params.id || p.id === String(params.id))
+        const savedIds = Array.isArray(data.savedPropertyIds)
+          ? data.savedPropertyIds.map((id: any) => String(id).trim())
+          : (data.properties || []).map((p: any) => String(p?.id ?? p?._id ?? p?.propertyId ?? p?.property_id ?? '').trim())
+        
+        // 检查多个可能的ID格式
+        const candidates = new Set(
+          [
+            String(params.id || '').trim(),
+            String(property?.id || '').trim(),
+            String(property?._id || '').trim(),
+            String(property?.propertyId || '').trim(),
+          ].filter(Boolean)
+        )
+        const saved = savedIds.some((id: string) => {
+          const normalizedId = String(id).trim()
+          return candidates.has(normalizedId)
+        })
         setIsSaved(saved)
       }
     } catch (error) {
       // Silent fail
+      console.warn('Failed to check saved status:', error)
     }
   }
 
@@ -123,6 +132,15 @@ export default function TenantPropertyDetailPage() {
           })
         } else {
           const data = await response.json()
+          // 如果返回"already saved"错误，说明已经收藏了，更新状态
+          if (data.error && data.error.includes('already saved')) {
+            setIsSaved(true)
+            toast({
+              title: "Info",
+              description: "Property is already saved",
+            })
+            return
+          }
           throw new Error(data.error || "Failed to save property")
         }
       }
@@ -154,7 +172,7 @@ export default function TenantPropertyDetailPage() {
           <p className="text-muted-foreground mb-4">
             {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '未找到房源' : 'Property not found'}
           </p>
-          <Button onClick={() => router.push("/dashboard/tenant")}>
+          <Button onClick={() => router.push(process.env.NEXT_PUBLIC_APP_REGION === 'china' ? "/search" : "/dashboard/tenant")}>
             {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '返回搜索' : 'Back to Search'}
           </Button>
         </div>
@@ -168,6 +186,22 @@ export default function TenantPropertyDetailPage() {
   const amenities = typeof property.amenities === 'string'
     ? JSON.parse(property.amenities || '[]')
     : (property.amenities || [])
+
+  const getLocalizedPropertyType = (type: string | undefined) => {
+    if (!type) return ''
+    const upper = String(type).toUpperCase()
+    if (process.env.NEXT_PUBLIC_APP_REGION !== 'china') return upper
+    const map: Record<string, string> = {
+      'APARTMENT': '公寓',
+      'HOUSE': '房屋',
+      'CONDO': '公寓',
+      'STUDIO': '工作室',
+      'TOWNHOUSE': '联排住宅',
+      'VILLA': '别墅',
+      'LUXURY': '豪华公寓'
+    }
+    return map[upper] || upper
+  }
 
   const nextImage = () => {
     if (images.length > 1) {
@@ -322,7 +356,7 @@ export default function TenantPropertyDetailPage() {
                         </div>
                       )}
                       <div>
-                        <div className="font-semibold">{property.propertyType}</div>
+                      <div className="font-semibold">{getLocalizedPropertyType(property.propertyType)}</div>
                         <div className="text-sm text-muted-foreground">
                           {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '类型' : 'Type'}
                         </div>
@@ -403,30 +437,35 @@ export default function TenantPropertyDetailPage() {
                   variant="outline" 
                   className="w-full"
                   onClick={() => {
-                    if (property.landlord) {
-                      router.push(`/dashboard/tenant/messages?userId=${property.landlord.id}`)
+                    const targetUser = property.agent || property.landlord
+                    if (targetUser) {
+                      router.push(`/dashboard/tenant/messages?userId=${targetUser.id}`)
                     }
                   }}
                 >
-                  {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '联系房东' : 'Contact Landlord'}
+                  {process.env.NEXT_PUBLIC_APP_REGION === 'china' 
+                    ? (property.agent ? '联系中介' : '联系房东') 
+                    : (property.agent ? 'Contact Agent' : 'Contact Landlord')}
                 </Button>
               </CardContent>
             </Card>
 
-            {property.landlord && (
+            {(property.agent || property.landlord) && (
               <Card>
                 <CardHeader>
                   <CardTitle>
-                    {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '房东信息' : 'Landlord Information'}
+                    {process.env.NEXT_PUBLIC_APP_REGION === 'china' 
+                      ? (property.agent ? '中介信息' : '房东信息') 
+                      : (property.agent ? 'Agent Information' : 'Landlord Information')}
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-2">
                     <div>
-                      <div className="font-semibold">{property.landlord.name}</div>
-                      <div className="text-sm text-muted-foreground">{property.landlord.email}</div>
-                      {property.landlord.phone && (
-                        <div className="text-sm text-muted-foreground">{property.landlord.phone}</div>
+                      <div className="font-semibold">{(property.agent || property.landlord)?.name}</div>
+                      <div className="text-sm text-muted-foreground">{(property.agent || property.landlord)?.email}</div>
+                      {(property.agent || property.landlord)?.phone && (
+                        <div className="text-sm text-muted-foreground">{(property.agent || property.landlord)?.phone}</div>
                       )}
                     </div>
                   </div>

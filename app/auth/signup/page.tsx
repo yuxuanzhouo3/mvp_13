@@ -17,6 +17,7 @@ function SignUpForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const ref = searchParams.get("ref")
+  const sig = searchParams.get("sig")
   const { toast } = useToast()
   const t = useTranslations('auth')
   const tCommon = useTranslations('common')
@@ -63,23 +64,52 @@ function SignUpForm() {
     setLoading(true)
 
     try {
-      const response = await fetch("/api/auth/signup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email,
-          password,
-          name: email.split("@")[0], // 使用邮箱前缀作为默认名称
-          phone: phone || undefined,
-          userType: userType.toUpperCase(),
-          ref: ref || undefined, // 传递邀请码
-        }),
-      })
+      // 添加超时控制
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 60000) // 60秒超时
+      
+      let response: Response
+      let data: any
+      
+      try {
+        response = await fetch("/api/auth/signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email,
+            password,
+            name: email.split("@")[0], // 使用邮箱前缀作为默认名称
+            phone: phone || undefined,
+            userType: userType.toUpperCase(),
+            ref: ref || undefined, // 传递邀请码
+            sig: sig || undefined,
+          }),
+          signal: controller.signal
+        })
+        clearTimeout(timeoutId)
+      } catch (fetchError: any) {
+        clearTimeout(timeoutId)
+        if (fetchError.name === 'AbortError') {
+          throw new Error(process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '请求超时，请稍后重试' : 'Request timeout, please try again')
+        }
+        throw new Error(process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '网络错误，请检查网络连接' : 'Network error, please check your connection')
+      }
 
-      const data = await response.json()
+      // 尝试解析响应
+      try {
+        const text = await response.text()
+        if (!text) {
+          throw new Error(process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '服务器返回空响应' : 'Server returned empty response')
+        }
+        data = JSON.parse(text)
+      } catch (parseError) {
+        console.error('[Signup Frontend] 解析响应失败:', parseError)
+        throw new Error(process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '服务器响应格式错误' : 'Invalid server response format')
+      }
 
       if (!response.ok) {
-        throw new Error(data.error || t('signupFailed'))
+        const errorMsg = data?.error || data?.message || t('signupFailed') || (process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '注册失败' : 'Signup failed')
+        throw new Error(errorMsg)
       }
 
       // 保存 token
@@ -104,19 +134,28 @@ function SignUpForm() {
         router.push("/dashboard/tenant")
       }
     } catch (error: any) {
-      // 如果错误信息已经包含了 "Registration failed" 或 "注册失败"，直接使用
-      // 否则添加前缀
-      let errorMessage = error.message || t('signupFailed')
-      const lower = errorMessage.toLowerCase()
-      if (!lower.includes('registration failed') && !lower.includes('注册失败') && !lower.includes('signup failed')) {
-        errorMessage = `${t('signupFailed')}: ${errorMessage}`
+      // 处理超时错误
+      if (error.name === 'AbortError' || error.message?.includes('timeout')) {
+        toast({
+          title: process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '请求超时' : 'Request timeout',
+          description: process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '请求超时，请稍后重试' : 'Request timeout, please try again',
+          variant: "destructive",
+        })
+      } else {
+        // 如果错误信息已经包含了 "Registration failed" 或 "注册失败"，直接使用
+        // 否则添加前缀
+        let errorMessage = error.message || t('signupFailed')
+        const lower = errorMessage.toLowerCase()
+        if (!lower.includes('registration failed') && !lower.includes('注册失败') && !lower.includes('signup failed')) {
+          errorMessage = `${t('signupFailed')}: ${errorMessage}`
+        }
+        
+        toast({
+          title: t('signupFailed'),
+          description: errorMessage,
+          variant: "destructive",
+        })
       }
-      
-      toast({
-        title: t('signupFailed'),
-        description: errorMessage,
-        variant: "destructive",
-      })
     } finally {
       setLoading(false)
     }

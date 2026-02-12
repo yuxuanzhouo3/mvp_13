@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-adapter'
 import { getDatabaseAdapter } from '@/lib/db-adapter'
-import { prisma } from '@/lib/db'
+import { prisma, withPrismaRetry } from '@/lib/db'
 
 /**
  * Get all available contacts for messaging
@@ -133,7 +133,7 @@ export async function GET(request: NextRequest) {
         }))
         const propertyIds = properties.map((p) => p.id)
         if (propertyIds.length > 0) {
-          const applications = await runWithRetry(() => prisma.application.findMany({
+          const applications = await withPrismaRetry(() => prisma.application.findMany({
             where: { propertyId: { in: propertyIds } },
             select: { tenantId: true, propertyId: true }
           }))
@@ -159,7 +159,7 @@ export async function GET(request: NextRequest) {
           }
         }
       } else if (currentUser.userType === 'TENANT') {
-        const applications = await runWithRetry(() => prisma.application.findMany({
+        const applications = await withPrismaRetry(() => prisma.application.findMany({
           where: { tenantId: user.id },
           select: { propertyId: true }
         }))

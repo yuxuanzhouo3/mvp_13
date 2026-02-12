@@ -35,29 +35,76 @@ export default function AgentDashboard() {
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState("properties")
 
+  const handleUnauthorized = () => {
+    localStorage.removeItem("auth-token")
+    localStorage.removeItem("user")
+    toast({
+      title: tCommon('error'),
+      description: t('loginRequired') || "Session expired, please login again",
+      variant: "destructive",
+    })
+    router.replace("/auth/login")
+  }
+
   useEffect(() => {
-    const userStr = localStorage.getItem("user")
-    if (userStr) {
-      const user = JSON.parse(userStr)
-      setUserName(user.name || "Agent")
-      
-      // Verify user is an agent
-      if (user.userType !== "AGENT") {
-        toast({
-          title: tCommon('error'),
-          description: t('accessDenied') || "This page is only for agents",
-          variant: "destructive",
-        })
-        if (user.userType === "TENANT") {
-          router.push("/dashboard/tenant")
-        } else if (user.userType === "LANDLORD") {
-          router.push("/dashboard/landlord")
-        }
+    const bootstrap = async () => {
+      const token = localStorage.getItem("auth-token")
+      if (!token) {
+        router.replace("/auth/login")
         return
       }
+
+      let user: any = null
+      const userStr = localStorage.getItem("user")
+      if (userStr) {
+        try {
+          user = JSON.parse(userStr)
+        } catch (e) {
+          localStorage.removeItem("user")
+        }
+      }
+
+      if (!user) {
+        const profileRes = await fetch("/api/auth/profile", {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (profileRes.status === 401 || profileRes.status === 403) {
+          handleUnauthorized()
+          return
+        }
+        if (profileRes.ok) {
+          const data = await profileRes.json().catch(() => ({}))
+          if (data.user) {
+            localStorage.setItem("user", JSON.stringify(data.user))
+            user = data.user
+          }
+        }
+      }
+
+      if (user) {
+        setUserName(user.name || "Agent")
+        const userType = String(user.userType || "").toUpperCase()
+        if (userType !== "AGENT") {
+          toast({
+            title: tCommon('error'),
+            description: t('accessDenied') || "This page is only for agents",
+            variant: "destructive",
+          })
+          if (userType === "TENANT") {
+            router.push("/dashboard/tenant")
+          } else if (userType === "LANDLORD") {
+            router.push("/dashboard/landlord")
+          } else {
+            router.push("/auth/login")
+          }
+          return
+        }
+      }
+
+      await fetchDashboardData(token)
     }
-    
-    fetchDashboardData()
+
+    bootstrap()
   }, [])
 
   const localizeRelativeTime = (time?: string) => {
@@ -90,12 +137,14 @@ export default function AgentDashboard() {
     }
   }
 
-  const fetchDashboardData = async () => {
+  const fetchDashboardData = async (providedToken?: string) => {
     try {
-      const token = localStorage.getItem("auth-token")
-      if (!token) return
+      const token = providedToken || localStorage.getItem("auth-token")
+      if (!token) {
+        router.replace("/auth/login")
+        return
+      }
 
-      // Fetch agent statistics
       const [propertiesRes, landlordRes, tenantRes, messagesRes, pendingAppsRes] = await Promise.all([
         fetch("/api/agent/properties", { headers: { Authorization: `Bearer ${token}` } }),
         fetch("/api/agent/landlords", { headers: { Authorization: `Bearer ${token}` } }),
@@ -103,6 +152,14 @@ export default function AgentDashboard() {
         fetch("/api/messages/unread-count", { headers: { Authorization: `Bearer ${token}` } }),
         fetch("/api/applications?userType=agent&status=PENDING", { headers: { Authorization: `Bearer ${token}` } }),
       ])
+
+      const unauthorized = [propertiesRes, landlordRes, tenantRes, messagesRes, pendingAppsRes].some(
+        (res) => res.status === 401 || res.status === 403
+      )
+      if (unauthorized) {
+        handleUnauthorized()
+        return
+      }
 
       if (propertiesRes.ok) {
         const data = await propertiesRes.json()
@@ -132,10 +189,13 @@ export default function AgentDashboard() {
         setStats(prev => ({ ...prev, pendingDeals: data.applications?.length || 0 }))
       }
 
-      // Fetch recent activity
       const activityRes = await fetch("/api/agent/activity", {
         headers: { Authorization: `Bearer ${token}` },
       })
+      if (activityRes.status === 401 || activityRes.status === 403) {
+        handleUnauthorized()
+        return
+      }
       if (activityRes.ok) {
         const data = await activityRes.json()
         setRecentActivity(data.activities || [])
@@ -269,7 +329,7 @@ export default function AgentDashboard() {
                     <CardTitle>{t('managedProperties') || "Managed Properties"}</CardTitle>
                     <CardDescription>{t('propertiesUnderManagement') || "Properties under your management"}</CardDescription>
                   </div>
-                  <Button onClick={() => router.push("/dashboard/landlord/add-property")}>
+                  <Button onClick={() => router.push("/dashboard/agent/add-property")}>
                     <Building className="h-4 w-4 mr-2" />
                     {t('addProperty') || "Add Property"}
                   </Button>

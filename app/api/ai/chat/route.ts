@@ -3,6 +3,7 @@ import { getCurrentUser } from '@/lib/auth-adapter'
 import { parseTenantQuery, parseLandlordQuery } from '@/lib/ai-service'
 import { searchRentalProperties, searchTenants } from '@/lib/search-service'
 import { getDatabaseAdapter, getAppRegion } from '@/lib/db-adapter'
+import { prisma } from '@/lib/db'
 import { deductQuota } from '@/lib/subscription-service'
 import { trackAISearch } from '@/lib/analytics'
 
@@ -69,8 +70,51 @@ export async function POST(request: NextRequest) {
       // 租客查询房源
       try {
         const criteria = await parseTenantQuery(query)
-        const results = await searchRentalProperties({ ...criteria, query }, resolvedUserId)
-        const totalCount = results?.reduce((sum: number, r: any) => sum + (r.totalCount || 0), 0) || 0
+        let results = await searchRentalProperties({ ...criteria, query }, resolvedUserId)
+        let totalCount = results?.reduce((sum: number, r: any) => sum + (r.totalCount || 0), 0) || 0
+        if (totalCount === 0) {
+          const normalizedQuery = query.trim().toLowerCase()
+          let rawProperties: any[] = []
+          if (isChina) {
+            rawProperties = await db.query('properties', {})
+          } else {
+            rawProperties = await prisma.property.findMany({ take: 50 })
+          }
+          const matched = rawProperties.filter((p: any) => {
+            const haystack = [
+              p.city,
+              p.state,
+              p.address,
+              p.title,
+              p.description
+            ]
+              .filter(Boolean)
+              .map((v: any) => String(v).toLowerCase())
+              .join(' ')
+            return normalizedQuery ? haystack.includes(normalizedQuery) : true
+          }).slice(0, 50)
+          results = [{
+            platform: 'RentGuard',
+            platformUrl: '/',
+            properties: matched.map((p: any) => ({
+              id: p.id || p._id,
+              title: p.title,
+              address: p.address,
+              city: p.city,
+              state: p.state,
+              price: p.price,
+              bedrooms: p.bedrooms,
+              bathrooms: p.bathrooms,
+              sqft: p.sqft || undefined,
+              image: (Array.isArray(p.images) ? p.images : [])?.[0] || undefined,
+              url: `/properties/${p.id || p._id}`,
+              availableFrom: p.availableFrom ? new Date(p.availableFrom).toISOString() : undefined,
+              leaseDuration: p.leaseDuration || undefined
+            })),
+            totalCount: matched.length
+          }]
+          totalCount = matched.length
+        }
 
         // 埋点：AI 搜索
         await trackAISearch(resolvedUserId, query, totalCount)

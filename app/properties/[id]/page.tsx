@@ -40,7 +40,7 @@ export default function PropertyDetailPage() {
       fetchProperty()
       checkSaved()
     }
-  }, [params.id])
+  }, [params.id, property?.id])
 
   const fetchProperty = async () => {
     try {
@@ -51,16 +51,12 @@ export default function PropertyDetailPage() {
 
       if (response.ok) {
         const data = await response.json()
-        setProperty(data.property)
+        setProperty(data.property || null)
       } else {
-        throw new Error("Failed to fetch property")
+        setProperty(null)
       }
     } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to load property",
-        variant: "destructive",
-      })
+      setProperty(null)
     } finally {
       setLoading(false)
     }
@@ -76,7 +72,13 @@ export default function PropertyDetailPage() {
       })
       if (response.ok) {
         const data = await response.json()
-        const saved = data.properties?.some((p: any) => p.id === params.id || p.id === String(params.id))
+        const savedIds = Array.isArray(data.savedPropertyIds)
+          ? data.savedPropertyIds.map((id: any) => String(id))
+          : (data.properties || []).map((p: any) => String(p?.id ?? p?._id ?? p?.propertyId ?? p?.property_id ?? ''))
+        const candidates = new Set(
+          [String(params.id || ''), String(property?.id || '')].filter(Boolean)
+        )
+        const saved = savedIds.some((id: string) => candidates.has(id))
         setIsSaved(saved)
       }
     } catch (error) {
@@ -163,7 +165,7 @@ export default function PropertyDetailPage() {
             <p className="text-muted-foreground mb-4">
               {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '未找到房源' : 'Property not found'}
             </p>
-            <Button onClick={() => router.push("/search")}>
+          <Button onClick={() => router.push(process.env.NEXT_PUBLIC_APP_REGION === 'china' ? "/search" : "/dashboard/tenant")}>
               {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '返回搜索' : 'Back to Search'}
             </Button>
           </div>

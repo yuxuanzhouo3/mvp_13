@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-adapter'
-import { getDatabaseAdapter, getAppRegion } from '@/lib/db-adapter'
+import { getDatabaseAdapter } from '@/lib/db-adapter'
 
 /**
  * Get all properties (for agents to browse and manage)
@@ -17,36 +17,52 @@ export async function GET(request: NextRequest) {
     }
 
     const db = getDatabaseAdapter()
-    const isChina = getAppRegion() === 'china'
-
-    let properties: any[] = []
-    if (isChina) {
-      const landlordFilters: any = { userType: 'LANDLORD' }
-      landlordFilters.representedById = user.id
-      const landlords = await db.query('users', landlordFilters, { orderBy: { createdAt: 'desc' } })
-      const landlordIds = landlords.map((l: any) => l.id)
-      const agentManaged = await db.query('properties', { agentId: user.id }, { orderBy: { createdAt: 'desc' } })
-      let landlordProperties: any[] = []
-      if (landlordIds.length > 0) {
-        const results = await Promise.all(
-          landlordIds.map((lid: string) => db.query('properties', { landlordId: lid }, { orderBy: { createdAt: 'desc' } }))
-        )
-        landlordProperties = results.flat()
+    const getField = (obj: any, keys: string[]) => {
+      for (const key of keys) {
+        const value = obj?.[key]
+        if (value !== undefined && value !== null && value !== '') return value
       }
-      const mergedMap = new Map<string, any>()
-      ;[...agentManaged, ...landlordProperties].forEach((p: any) => {
-        const id = String(p.id)
-        if (!mergedMap.has(id)) mergedMap.set(id, p)
-      })
-      properties = Array.from(mergedMap.values())
-    } else {
-      properties = await db.query('properties', {}, { orderBy: { createdAt: 'desc' } })
+      return undefined
     }
+    const getRepId = (obj: any) => {
+      return (
+        getField(obj, ['representedById', 'represented_by_id', 'tenant_representedById', 'tenant_represented_by_id', 'landlord_representedById', 'landlord_represented_by_id']) ??
+        getField(obj?.landlordProfile, ['representedById', 'represented_by_id']) ??
+        getField(obj?.tenantProfile, ['representedById', 'represented_by_id'])
+      )
+    }
+    let agentId = user.id
+    if (user.email) {
+      try {
+        const dbUser = await db.findUserByEmail(user.email)
+        if (dbUser?.id) agentId = dbUser.id
+      } catch (e) {
+        agentId = user.id
+      }
+    }
+    const agentIdSet = new Set([String(user.id), String(agentId)])
+
+    const allUsers = await db.query('users', {}, { orderBy: { createdAt: 'desc' } })
+    const representedLandlords = allUsers.filter((u: any) => {
+      const type = String(u.userType || '').toUpperCase()
+      if (type !== 'LANDLORD') return false
+      const repId = getRepId(u)
+      return agentIdSet.has(String(repId || ''))
+    })
+    const landlordIds = new Set(representedLandlords.map((l: any) => String(l.id)))
+
+    const allProperties = await db.query('properties', {}, { orderBy: { createdAt: 'desc' } })
+    const properties = allProperties.filter((p: any) => {
+      const pid = String(getField(p, ['agentId', 'agent_id']) || '')
+      const lid = String(getField(p, ['landlordId', 'landlord_id']) || '')
+      return agentIdSet.has(pid) || landlordIds.has(lid)
+    })
     
     // 为每个房源添加房东信息
     const propertiesWithLandlord = await Promise.all(
       properties.map(async (property: any) => {
-        const landlord = await db.findUserById(property.landlordId)
+        const landlordId = getField(property, ['landlordId', 'landlord_id'])
+        const landlord = landlordId ? await db.findUserById(String(landlordId)) : null
         return {
           ...property,
           landlord: landlord ? {

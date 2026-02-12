@@ -437,7 +437,8 @@
     "subtitle": "Find your ideal home",
     "searchFailed": "Search failed",
     "enterSearchContent": "Please enter search content",
-    "noPropertiesFound": "No properties found. Try a different search."
+    "noPropertiesFound": "No properties found. Try a different search.",
+    "foundCount": "Found {count} properties"
   },
   "property": {
     "title": "Properties",
@@ -489,7 +490,10 @@
     "updateSuccess": "Property updated successfully",
     "updateFailed": "Failed to update property",
     "uploadFailed": "Failed to upload images",
-    "edit": "Edit Property"
+    "edit": "Edit Property",
+    "stepSelectLandlord": "Step 1: Select Landlord",
+    "selectLandlordPlaceholder": "Select a landlord to represent",
+    "selectLandlord": "Select Landlord"
   },
   "application": {
     "title": "Applications",

@@ -17,6 +17,12 @@ if (supabaseUrl && supabaseAnonKey) {
   try {
     // Client-side Supabase client (uses anon key)
     supabase = createClient(supabaseUrl, supabaseAnonKey, {
+      global: {
+        headers: {
+          apikey: supabaseAnonKey,
+          Authorization: `Bearer ${supabaseAnonKey}`,
+        },
+      },
       auth: {
         persistSession: false, // We're using JWT for auth
       },
@@ -28,6 +34,12 @@ if (supabaseUrl && supabaseAnonKey) {
       supabaseUrl,
       serviceRoleKey,
       {
+        global: {
+          headers: {
+            apikey: serviceRoleKey,
+            Authorization: `Bearer ${serviceRoleKey}`,
+          },
+        },
         auth: {
           persistSession: false,
         },

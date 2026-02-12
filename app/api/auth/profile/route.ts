@@ -8,7 +8,7 @@ import { getAppRegion, getDatabaseAdapter } from '@/lib/db-adapter'
  */
 export async function GET(request: NextRequest) {
   try {
-    const user = getAuthUser(request)
+    const user = await getAuthUser(request)
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },
@@ -29,22 +29,41 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ user: profile })
     }
 
-    const profile = await prisma.user.findUnique({
-      where: { id: user.userId },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        phone: true,
-        avatar: true,
-        userType: true,
-        isPremium: true,
-        createdAt: true,
-        tenantProfile: true,
-        landlordProfile: true,
-      }
-    })
+    const timeoutPromise = new Promise<{ __timeout: true }>((resolve) =>
+      setTimeout(() => resolve({ __timeout: true }), 3000)
+    )
+    const profileResult = await Promise.race([
+      prisma.user.findUnique({
+        where: { id: user.userId },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          avatar: true,
+          userType: true,
+          isPremium: true,
+          createdAt: true,
+          tenantProfile: true,
+          landlordProfile: true,
+        }
+      }),
+      timeoutPromise
+    ])
 
+    if ((profileResult as any)?.__timeout) {
+      return NextResponse.json({
+        user: {
+          id: user.userId,
+          name: user.email ? user.email.split('@')[0] : '',
+          email: user.email,
+          userType: user.userType || 'TENANT',
+          isPremium: false
+        }
+      })
+    }
+
+    const profile = profileResult as any
     if (!profile) {
       return NextResponse.json(
         { error: 'User not found' },
@@ -72,7 +91,7 @@ export async function GET(request: NextRequest) {
  */
 export async function PATCH(request: NextRequest) {
   try {
-    const user = getAuthUser(request)
+    const user = await getAuthUser(request)
     if (!user) {
       return NextResponse.json(
         { error: 'Unauthorized' },

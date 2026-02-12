@@ -17,57 +17,83 @@ export async function GET(request: NextRequest) {
 
     const regionIsChina = getAppRegion() === 'china'
     const db = getDatabaseAdapter()
-    const uid = user.id
-
-    let propertyIds: string[] = []
-    if (regionIsChina) {
-      const landlordFilters: any = { userType: 'LANDLORD' }
-      landlordFilters.representedById = uid
-      const landlords = await db.query('users', landlordFilters, { orderBy: { createdAt: 'desc' } })
-      const landlordIds = landlords.map((l: any) => l.id)
-      const agentManaged = await db.query('properties', { agentId: uid }, { orderBy: { createdAt: 'desc' } })
-      let landlordProps: any[] = []
-      if (landlordIds.length > 0) {
-        const results = await Promise.all(
-          landlordIds.map((lid: string) => db.query('properties', { landlordId: lid }, { orderBy: { createdAt: 'desc' } }))
-        )
-        landlordProps = results.flat()
+    const getField = (obj: any, keys: string[]) => {
+      for (const key of keys) {
+        const value = obj?.[key]
+        if (value !== undefined && value !== null && value !== '') return value
       }
-      propertyIds = [...new Set([...agentManaged, ...landlordProps].map((p: any) => String(p.id)))]
-    } else {
-      const allProperties = await db.query('properties', {}, { orderBy: { createdAt: 'desc' } })
-      propertyIds = [...new Set(allProperties.map((p: any) => String(p.id)))]
+      return undefined
     }
+    const getRepId = (obj: any) => {
+      return (
+        getField(obj, ['representedById', 'represented_by_id', 'tenant_representedById', 'tenant_represented_by_id', 'landlord_representedById', 'landlord_represented_by_id']) ??
+        getField(obj?.tenantProfile, ['representedById', 'represented_by_id']) ??
+        getField(obj?.landlordProfile, ['representedById', 'represented_by_id'])
+      )
+    }
+    let agentId = user.id
+    if (user.email) {
+      try {
+        const dbUser = await db.findUserByEmail(user.email)
+        if (dbUser?.id) agentId = dbUser.id
+      } catch (e) {
+        agentId = user.id
+      }
+    }
+    const agentIdSet = new Set([String(user.id), String(agentId)])
+
+    const allUsers = await db.query('users', {}, { orderBy: { createdAt: 'desc' } })
+    const representedLandlords = allUsers.filter((u: any) => {
+      const type = String(u.userType || '').toUpperCase()
+      if (type !== 'LANDLORD') return false
+      const repId = getRepId(u)
+      return agentIdSet.has(String(repId || ''))
+    })
+    const landlordIdSet = new Set(representedLandlords.map((l: any) => String(l.id)))
+    const allProperties = await db.query('properties', {}, { orderBy: { createdAt: 'desc' } })
+    const scopedProperties = allProperties.filter((p: any) => {
+      const pid = String(getField(p, ['agentId', 'agent_id']) || '')
+      const lid = String(getField(p, ['landlordId', 'landlord_id']) || '')
+      return agentIdSet.has(pid) || landlordIdSet.has(lid)
+    })
+    const propertyIds = [...new Set(scopedProperties.map((p: any) => String(getField(p, ['id']) || '')).filter(Boolean))]
+    const userNameMap = new Map(
+      allUsers.map((u: any) => {
+        const id = String(getField(u, ['id', 'userId']) || '')
+        const name = u.name || u.email || ''
+        return [id, name]
+      })
+    )
+    const propertyTitleMap = new Map(
+      scopedProperties.map((p: any) => {
+        const id = String(getField(p, ['id']) || '')
+        const title = p.title || p.address || ''
+        return [id, title]
+      })
+    )
 
     // Recent applications related to the agent's properties
     let recentApplications: any[] = []
     if (propertyIds.length > 0) {
-      if (regionIsChina) {
-        const appResults = await Promise.all(
-          propertyIds.map((pid: string) => db.query('applications', { propertyId: pid }, { orderBy: { createdAt: 'desc' } }))
-        )
-        recentApplications = appResults.flat()
-      } else {
-        recentApplications = await db.query('applications', { propertyId: { in: propertyIds } }, { orderBy: { createdAt: 'desc' }, take: 10 })
-      }
-      recentApplications = recentApplications
+      const allApplications = await db.query('applications', {}, { orderBy: { createdAt: 'desc' } })
+      recentApplications = allApplications.filter((app: any) => {
+        const pid = String(getField(app, ['propertyId', 'property_id']) || '')
+        return propertyIds.includes(pid)
+      })
         .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
         .slice(0, 5)
     }
 
     // Recent messages for the agent
     let recentMessages: any[] = []
-    if (regionIsChina) {
-      const [sent, received] = await Promise.all([
-        db.query('messages', { senderId: uid }, { orderBy: { createdAt: 'desc' } }),
-        db.query('messages', { receiverId: uid }, { orderBy: { createdAt: 'desc' } }),
-      ])
-      recentMessages = [...sent, ...received]
-        .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-        .slice(0, 5)
-    } else {
-      recentMessages = await db.query('messages', {}, { orderBy: { createdAt: 'desc' }, take: 5 })
-    }
+    const allMessages = await db.query('messages', {}, { orderBy: { createdAt: 'desc' } })
+    recentMessages = allMessages.filter((m: any) => {
+      const sender = String(getField(m, ['senderId', 'sender_id']) || '')
+      const receiver = String(getField(m, ['receiverId', 'receiver_id']) || '')
+      return agentIdSet.has(sender) || agentIdSet.has(receiver)
+    })
+      .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 5)
 
     const toRelativeTime = (date: Date) => {
       const diffMs = Date.now() - new Date(date).getTime()
@@ -110,8 +136,8 @@ export async function GET(request: NextRequest) {
       ...recentApplications.map(app => ({
         type: 'application' as const,
         message: regionIsChina
-          ? `${(app.tenant?.name || app.tenantName || '租客')} 申请了 ${(app.property?.title || app.propertyTitle || '房源')}`
-          : `${(app.tenant?.name || app.tenantName || 'A tenant')} applied for ${(app.property?.title || app.propertyTitle || 'a property')}`,
+          ? `${(app.tenant?.name || app.tenantName || userNameMap.get(String(getField(app, ['tenantId', 'tenant_id']) || '')) || '租客')} 申请了 ${(app.property?.title || app.propertyTitle || propertyTitleMap.get(String(getField(app, ['propertyId', 'property_id']) || '')) || '房源')}`
+          : `${(app.tenant?.name || app.tenantName || userNameMap.get(String(getField(app, ['tenantId', 'tenant_id']) || '')) || 'A tenant')} applied for ${(app.property?.title || app.propertyTitle || propertyTitleMap.get(String(getField(app, ['propertyId', 'property_id']) || '')) || 'a property')}`,
         time: toRelativeTime(app.createdAt),
         status: mapStatus(app.status),
         timestamp: new Date(app.createdAt).getTime(),
@@ -119,8 +145,8 @@ export async function GET(request: NextRequest) {
       ...recentMessages.map(msg => ({
         type: 'message' as const,
         message: regionIsChina
-          ? `来自 ${(msg.sender?.name || msg.senderName || '某人')} 的新消息`
-          : `New message from ${(msg.sender?.name || msg.senderName || 'someone')}`,
+          ? `来自 ${(msg.sender?.name || msg.senderName || userNameMap.get(String(getField(msg, ['senderId', 'sender_id']) || '')) || '某人')} 的新消息`
+          : `New message from ${(msg.sender?.name || msg.senderName || userNameMap.get(String(getField(msg, ['senderId', 'sender_id']) || '')) || 'someone')}`,
         time: toRelativeTime(msg.createdAt),
         status: mapStatus(msg.isRead ? 'READ' : 'UNREAD'),
         timestamp: new Date(msg.createdAt).getTime(),

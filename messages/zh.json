@@ -446,7 +446,8 @@
     "subtitle": "找到您理想的家",
     "searchFailed": "搜索失败",
     "enterSearchContent": "请输入搜索内容",
-    "noPropertiesFound": "未找到租住信息，请尝试其他搜索条件。"
+    "noPropertiesFound": "未找到房源，请尝试其他搜索条件。",
+    "foundCount": "找到 {count} 个房源"
   },
   "property": {
     "title": "房源",

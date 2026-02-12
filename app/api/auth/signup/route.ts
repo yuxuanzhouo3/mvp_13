@@ -7,9 +7,32 @@ import { validateEmail } from '@/lib/validation'
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { email, password, name, phone, userType, agentId, ref } = body
+    const { email, password, name, phone, userType, agentId, ref, sig } = body
     // 优先使用 agentId，其次使用 ref 参数
-    const representedById = agentId || ref
+    let representedById = agentId || ref
+
+    // Verify signature if representedById is present to prevent unauthorized binding
+    if (representedById) {
+      try {
+        const crypto = require('crypto')
+        const secret = process.env.NEXTAUTH_SECRET || 'secret'
+        // userType defaults to TENANT if not provided, consistent with invite logic
+        const typeToVerify = (userType || 'TENANT').toString().toLowerCase()
+        
+        const expectedSig = crypto
+          .createHmac('sha256', secret)
+          .update(`${representedById}:${email}:${typeToVerify}`)
+          .digest('hex')
+        
+        if (sig !== expectedSig) {
+          console.warn(`[Signup] Invalid signature for representedById: ${representedById}. Ignoring binding.`)
+          representedById = null
+        }
+      } catch (e) {
+        console.error('[Signup] Signature verification failed:', e)
+        representedById = null
+      }
+    }
 
     const { getAppRegion } = await import('@/lib/db-adapter')
     const region = getAppRegion()

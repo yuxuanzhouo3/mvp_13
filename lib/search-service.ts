@@ -123,37 +123,291 @@ export async function searchTenants(
  */
 async function searchOwnDatabase(criteria: ParsedTenantSearchCriteria): Promise<SearchResult> {
   const isChina = getAppRegion() === 'china'
-
-  if (isChina) {
+  const rawQuery = criteria.query?.trim() || ''
+  const keywordTokens = rawQuery
+    ? rawQuery.toLowerCase().split(/[\s,]+/).filter((t) => t.length > 1)
+    : []
+  const hasLocationFilter = Boolean(criteria.city || criteria.state)
+  const getTokens = () => {
+    if (keywordTokens.length > 0) return keywordTokens
+    if (rawQuery) return [rawQuery.toLowerCase()]
+    return []
+  }
+  const applyFilters = (
+    items: any[],
+    options: {
+      useKeyword: boolean
+      useLocation: boolean
+      enforceStatus: boolean
+      enforceNumeric: boolean
+      enforcePet: boolean
+    }
+  ) => {
+    const tokens = options.useKeyword ? getTokens() : []
+    return items.filter((p: any) => {
+      if (options.enforceStatus && p.status) {
+        const normalizedStatus = String(p.status).toUpperCase()
+        if (!['AVAILABLE', 'ACTIVE', 'PUBLISHED'].includes(normalizedStatus)) return false
+      }
+      if (options.enforceNumeric) {
+        if (criteria.minPrice && (p.price === undefined || p.price < criteria.minPrice)) return false
+        if (criteria.maxPrice && (p.price === undefined || p.price > criteria.maxPrice)) return false
+        if (criteria.minBedrooms && (p.bedrooms === undefined || p.bedrooms < criteria.minBedrooms)) return false
+        if (criteria.minBathrooms && (p.bathrooms === undefined || p.bathrooms < criteria.minBathrooms)) return false
+      }
+      if (options.useLocation) {
+        if (criteria.city && (!p.city || !String(p.city).toLowerCase().includes(criteria.city.toLowerCase()))) return false
+        if (criteria.state && (!p.state || !String(p.state).toLowerCase().includes(criteria.state.toLowerCase()))) return false
+      }
+      if (tokens.length > 0) {
+        const haystack = [
+          p.city,
+          p.state,
+          p.address,
+          p.title,
+          p.description
+        ]
+          .filter(Boolean)
+          .map((v: any) => String(v).toLowerCase())
+          .join(' ')
+        const hit = tokens.some((token) => haystack.includes(token))
+        if (!hit) return false
+      }
+      if (options.enforcePet && criteria.petFriendly !== undefined && p.petFriendly !== criteria.petFriendly) return false
+      return true
+    })
+  }
+  const emptyResult: SearchResult = {
+    platform: 'RentGuard',
+    platformUrl: '/',
+    properties: [],
+    totalCount: 0
+  }
+  const buildResult = (items: any[]) => ({
+    platform: 'RentGuard',
+    platformUrl: '/',
+    properties: items.map((p: any) => ({
+      id: p.id || p._id,
+      title: p.title,
+      address: p.address,
+      city: p.city,
+      state: p.state,
+      price: p.price,
+      bedrooms: p.bedrooms,
+      bathrooms: p.bathrooms,
+      sqft: p.sqft || undefined,
+      image: (Array.isArray(p.images) ? p.images : [])?.[0] || undefined,
+      url: `/properties/${p.id || p._id}`,
+      availableFrom: p.availableFrom ? new Date(p.availableFrom).toISOString() : undefined,
+      leaseDuration: p.leaseDuration || undefined
+    })),
+    totalCount: items.length
+  })
+  const runCloudBase = async () => {
     try {
       const db = getDatabaseAdapter()
-      // CloudBase: 获取所有可用房源并在内存中过滤
-      // 注意：CloudBaseAdapter.query 目前只支持简单相等查询，复杂查询(gte/lte)被忽略，需在此处处理
-      const rawProperties = await db.query('properties', { status: 'AVAILABLE' })
-      
-      // 内存过滤
-      const filteredProperties = rawProperties.filter((p: any) => {
-        let match = true
-        
-        if (criteria.minPrice && (p.price === undefined || p.price < criteria.minPrice)) match = false
-        if (criteria.maxPrice && (p.price === undefined || p.price > criteria.maxPrice)) match = false
-        if (criteria.minBedrooms && (p.bedrooms === undefined || p.bedrooms < criteria.minBedrooms)) match = false
-        if (criteria.minBathrooms && (p.bathrooms === undefined || p.bathrooms < criteria.minBathrooms)) match = false
-        
-        if (criteria.city && p.city) {
-           if (!p.city.toLowerCase().includes(criteria.city.toLowerCase())) match = false
+      const rawProperties = await db.query('properties', {})
+      let filteredProperties = applyFilters(rawProperties, {
+        useKeyword: !hasLocationFilter,
+        useLocation: true,
+        enforceStatus: true,
+        enforceNumeric: true,
+        enforcePet: true
+      })
+      if (filteredProperties.length === 0 && rawQuery) {
+        filteredProperties = applyFilters(rawProperties, {
+          useKeyword: false,
+          useLocation: true,
+          enforceStatus: true,
+          enforceNumeric: true,
+          enforcePet: true
+        })
+      }
+      if (filteredProperties.length === 0 && rawQuery) {
+        filteredProperties = applyFilters(rawProperties, {
+          useKeyword: false,
+          useLocation: false,
+          enforceStatus: true,
+          enforceNumeric: true,
+          enforcePet: true
+        })
+      }
+      if (filteredProperties.length === 0 && rawQuery) {
+        filteredProperties = applyFilters(rawProperties, {
+          useKeyword: false,
+          useLocation: false,
+          enforceStatus: true,
+          enforceNumeric: false,
+          enforcePet: false
+        })
+      }
+      filteredProperties = filteredProperties.slice(0, 50)
+      return buildResult(filteredProperties)
+    } catch (error) {
+      console.error('CloudBase search error:', error)
+      return emptyResult
+    }
+  }
+  const runPrisma = async () => {
+    try {
+      const buildWhere = (options: {
+        includeStatus: boolean
+        includeKeyword: boolean
+        includeLocation: boolean
+        includeNumeric: boolean
+        includePet: boolean
+      }) => {
+        const where: any = {}
+        if (options.includeKeyword && !hasLocationFilter && keywordTokens.length > 0) {
+          where.OR = keywordTokens.flatMap((token) => ([
+            { city: { contains: token, mode: 'insensitive' } },
+            { state: { contains: token, mode: 'insensitive' } },
+            { address: { contains: token, mode: 'insensitive' } },
+            { title: { contains: token, mode: 'insensitive' } },
+            { description: { contains: token, mode: 'insensitive' } }
+          ]))
         }
-        
-        if (criteria.petFriendly !== undefined && p.petFriendly !== criteria.petFriendly) match = false
-        
-        return match
-      }).slice(0, 50)
-      
+
+        if (options.includeNumeric) {
+          if (criteria.minPrice || criteria.maxPrice) {
+            where.price = {}
+            if (criteria.minPrice) where.price.gte = criteria.minPrice
+            if (criteria.maxPrice) where.price.lte = criteria.maxPrice
+          }
+          if (criteria.minBedrooms) {
+            where.bedrooms = { gte: criteria.minBedrooms }
+          }
+          if (criteria.minBathrooms) {
+            where.bathrooms = { gte: criteria.minBathrooms }
+          }
+        }
+
+        if (options.includeLocation) {
+          if (criteria.city) {
+            where.city = { contains: criteria.city, mode: 'insensitive' }
+          }
+          if (criteria.state) {
+            where.state = { contains: criteria.state, mode: 'insensitive' }
+          }
+        }
+
+        if (options.includePet && criteria.petFriendly !== undefined) {
+          where.petFriendly = criteria.petFriendly
+        }
+        return where
+      }
+
+      const baseWhere = buildWhere({
+        includeStatus: true,
+        includeKeyword: true,
+        includeLocation: true,
+        includeNumeric: true,
+        includePet: true
+      })
+
+      let properties = await prisma.property.findMany({
+        where: baseWhere,
+        include: {
+          landlord: {
+            select: {
+              id: true,
+              name: true,
+              email: true
+            }
+          }
+        },
+        take: 50
+      })
+      properties = applyFilters(properties, {
+        useKeyword: false,
+        useLocation: false,
+        enforceStatus: true,
+        enforceNumeric: false,
+        enforcePet: false
+      })
+      if (properties.length === 0 && rawQuery) {
+        const relaxedWhere = buildWhere({
+          includeStatus: false,
+          includeKeyword: false,
+          includeLocation: true,
+          includeNumeric: true,
+          includePet: true
+        })
+        const relaxedProperties = await prisma.property.findMany({
+          where: relaxedWhere,
+          include: {
+            landlord: {
+              select: {
+                id: true,
+                name: true,
+                email: true
+              }
+            }
+          },
+          take: 200
+        })
+        let filtered = applyFilters(relaxedProperties, {
+          useKeyword: false,
+          useLocation: true,
+          enforceStatus: true,
+          enforceNumeric: true,
+          enforcePet: true
+        })
+        if (filtered.length === 0) {
+          filtered = applyFilters(relaxedProperties, {
+            useKeyword: false,
+            useLocation: false,
+            enforceStatus: true,
+            enforceNumeric: true,
+            enforcePet: true
+          })
+        }
+        if (filtered.length === 0) {
+          const allProperties = await prisma.property.findMany({
+            where: {},
+            include: {
+              landlord: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true
+                }
+              }
+            },
+            take: 200
+          })
+          filtered = applyFilters(allProperties, {
+            useKeyword: false,
+            useLocation: false,
+            enforceStatus: true,
+            enforceNumeric: false,
+            enforcePet: false
+          })
+        }
+        if (filtered.length === 0) {
+          const allProperties = await prisma.property.findMany({
+            where: {},
+            include: {
+              landlord: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true
+                }
+              }
+            },
+            take: 50
+          })
+          filtered = allProperties
+        }
+        properties = filtered
+      }
+
       return {
         platform: 'RentGuard',
         platformUrl: '/',
-        properties: filteredProperties.map((p: any) => ({
-          id: p.id || p._id,
+        properties: properties.map(p => ({
+          id: p.id,
           title: p.title,
           address: p.address,
           city: p.city,
@@ -163,94 +417,23 @@ async function searchOwnDatabase(criteria: ParsedTenantSearchCriteria): Promise<
           bathrooms: p.bathrooms,
           sqft: p.sqft || undefined,
           image: (Array.isArray(p.images) ? p.images : [])?.[0] || undefined,
-          url: `/properties/${p.id || p._id}`,
-          availableFrom: p.availableFrom ? new Date(p.availableFrom).toISOString() : undefined,
+          url: `/properties/${p.id}`,
+          availableFrom: p.availableFrom?.toISOString(),
           leaseDuration: p.leaseDuration || undefined
         })),
-        totalCount: filteredProperties.length
+        totalCount: properties.length
       }
     } catch (error) {
-      console.error('CloudBase search error:', error)
-      return {
-        platform: 'RentGuard',
-        platformUrl: '/',
-        properties: [],
-        totalCount: 0
-      }
+      console.error('Database search error:', error)
+      return emptyResult
     }
   }
 
-  try {
-    const where: any = {
-      status: 'AVAILABLE' as any
-    }
-
-    if (criteria.minPrice || criteria.maxPrice) {
-      where.price = {}
-      if (criteria.minPrice) where.price.gte = criteria.minPrice
-      if (criteria.maxPrice) where.price.lte = criteria.maxPrice
-    }
-
-    if (criteria.minBedrooms) {
-      where.bedrooms = { gte: criteria.minBedrooms }
-    }
-
-    if (criteria.minBathrooms) {
-      where.bathrooms = { gte: criteria.minBathrooms }
-    }
-
-    if (criteria.city) {
-      where.city = { contains: criteria.city, mode: 'insensitive' }
-    }
-
-    if (criteria.petFriendly !== undefined) {
-      where.petFriendly = criteria.petFriendly
-    }
-
-    const properties = await prisma.property.findMany({
-      where,
-      include: {
-        landlord: {
-          select: {
-            id: true,
-            name: true,
-            email: true
-          }
-        }
-      },
-      take: 50
-    })
-
-    return {
-      platform: 'RentGuard',
-      platformUrl: '/',
-      properties: properties.map(p => ({
-        id: p.id,
-        title: p.title,
-        address: p.address,
-        city: p.city,
-        state: p.state,
-        price: p.price,
-        bedrooms: p.bedrooms,
-        bathrooms: p.bathrooms,
-        sqft: p.sqft || undefined,
-        image: (Array.isArray(p.images) ? p.images : [])?.[0] || undefined,
-        url: `/properties/${p.id}`,
-        availableFrom: p.availableFrom?.toISOString(),
-        leaseDuration: p.leaseDuration || undefined
-      })),
-      totalCount: properties.length
-    }
-  } catch (error) {
-    console.error('Database search error:', error)
-    // 返回空结果
-    return {
-      platform: 'RentGuard',
-      platformUrl: '/',
-      properties: [],
-      totalCount: 0
-    }
+  if (isChina) {
+    return await runCloudBase()
   }
+
+  return await runPrisma()
 }
 
 /**

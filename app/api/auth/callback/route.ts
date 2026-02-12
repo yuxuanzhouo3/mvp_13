@@ -4,6 +4,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
+import jwt from 'jsonwebtoken'
 import { supabaseAdmin } from '@/lib/supabase'
 import { getDatabaseAdapter, getAppRegion } from '@/lib/db-adapter'
 import { trackEvent } from '@/lib/analytics'
@@ -71,10 +72,19 @@ export async function GET(request: NextRequest) {
       },
     })
 
-    // 重定向到前端，携带 token
-    const redirectUrl = new URL('/auth/callback', request.url)
-    redirectUrl.searchParams.set('token', data.session.access_token)
-    redirectUrl.searchParams.set('refresh_token', data.session.refresh_token)
+    const jwtToken = jwt.sign(
+      {
+        userId: dbUser.id,
+        id: dbUser.id,
+        email: dbUser.email,
+        userType: (dbUser.userType || 'TENANT').toString().toUpperCase(),
+      },
+      process.env.JWT_SECRET || 'your-secret-key',
+      { expiresIn: '7d' }
+    )
+
+    const redirectUrl = new URL('/auth/login', request.url)
+    redirectUrl.searchParams.set('token', jwtToken)
 
     return NextResponse.redirect(redirectUrl)
   } catch (error: any) {

@@ -33,22 +33,18 @@ export interface AuthResult {
 /**
  * 获取当前认证用户（统一接口）
  * 根据环境变量自动选择 Supabase Token 或 JWT Token 验证
- * 优先尝试 JWT（因为更通用），然后尝试 Supabase（仅国际版）
  */
 export async function getCurrentUser(request: NextRequest): Promise<AuthUser | null> {
   const region = getAppRegion()
   
-  // 先尝试 JWT（无论区域，因为可能用户使用 JWT token）
-  const jwtUser = await getCurrentUserFromJWT(request)
-  if (jwtUser) return jwtUser
-  
-  // 如果是国际版，再尝试 Supabase
   if (region === 'global') {
+    // 国际版：允许 Supabase Token 或 JWT Token（用于 Supabase 限流时的降级登录/注册）
     const supabaseUser = await getCurrentUserFromSupabase(request)
     if (supabaseUser) return supabaseUser
+    return await getCurrentUserFromJWT(request)
+  } else {
+    return await getCurrentUserFromJWT(request)
   }
-  
-  return null
 }
 
 /**
@@ -56,83 +52,33 @@ export async function getCurrentUser(request: NextRequest): Promise<AuthUser | n
  */
 async function getCurrentUserFromSupabase(request: NextRequest): Promise<AuthUser | null> {
   try {
-    // 检查 Supabase 是否已初始化
-    if (!supabaseAdmin) {
-      return null
-    }
-
     const authHeader = request.headers.get('authorization')
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return null
     }
 
     const token = authHeader.substring(7)
-    
-    // 使用 Supabase Admin 验证 token
-    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token)
-    
+    const client = supabaseAdmin || supabase
+    if (!client) {
+      return null
+    }
+
+    const { data: { user }, error } = await client.auth.getUser(token)
     if (error || !user) {
       return null
     }
 
-    // 从数据库获取用户详细信息
     const db = getDatabaseAdapter()
-    // 注意：如果你数据库用户主键不是 supabase user.id，这里会找不到
-    // 我们优先按 email 查找，避免两边 ID 不一致导致鉴权失败
-    let dbUser = null
-    try {
-      dbUser =
-        (user.email ? await db.findUserByEmail(user.email) : null) ||
-        (await db.findUserById(user.id))
-    } catch (dbError: any) {
-      // 如果数据库查询失败（连接池问题等），从 Supabase user metadata 中提取信息
-      const errorMsg = String(dbError?.message || '')
-      const lower = errorMsg.toLowerCase()
-      if (
-        lower.includes("can't reach database server") ||
-        lower.includes('can\\u2019t reach database server') ||
-        lower.includes('maxclients') ||
-        lower.includes('max clients reached') ||
-        lower.includes('pool_size') ||
-        lower.includes("can't reach") ||
-        lower.includes('connection') ||
-        lower.includes('timeout') ||
-        lower.includes('pooler')
-      ) {
-        console.warn('Database connection issue, using Supabase user metadata')
-        // 从 Supabase user metadata 中提取用户信息
-        const userMetadata = user.user_metadata || {}
-        return {
-          id: user.id,
-          email: user.email || '',
-          name: userMetadata.name || user.email?.split('@')[0] || '',
-          userType: userMetadata.userType || 'TENANT',
-          isPremium: false,
-          vipLevel: 'FREE',
-        }
-      }
-      // 其他数据库错误，也使用 Supabase metadata
-      console.warn('Database query failed, using Supabase user metadata:', errorMsg)
-      const userMetadata = user.user_metadata || {}
-      return {
-        id: user.id,
-        email: user.email || '',
-        name: userMetadata.name || user.email?.split('@')[0] || '',
-        userType: userMetadata.userType || 'TENANT',
-        isPremium: false,
-        vipLevel: 'FREE',
-      }
-    }
-    
+    const dbUser =
+      (user.email ? await db.findUserByEmail(user.email) : null) ||
+      (await db.findUserById(user.id))
+
     if (!dbUser) {
-      // 如果数据库中没有找到用户，但 Supabase 认证成功，使用 Supabase metadata
-      console.warn('User not found in database, but Supabase auth is valid. Using Supabase metadata.')
-      const userMetadata = user.user_metadata || {}
       return {
         id: user.id,
         email: user.email || '',
-        name: userMetadata.name || user.email?.split('@')[0] || '',
-        userType: userMetadata.userType || 'TENANT',
+        name: (user.user_metadata as any)?.name || (user.email ? user.email.split('@')[0] : ''),
+        userType: (user.user_metadata as any)?.userType || 'TENANT',
         isPremium: false,
         vipLevel: 'FREE',
       }
@@ -163,81 +109,19 @@ async function getCurrentUserFromJWT(request: NextRequest): Promise<AuthUser | n
     }
 
     const token = authHeader.substring(7)
-    let decoded: { userId: string; email: string; userType?: string }
-    
-    try {
-      decoded = jwt.verify(
-        token,
-        process.env.JWT_SECRET || 'your-secret-key'
-      ) as { userId: string; email: string; userType?: string }
-    } catch (jwtError) {
-      // JWT 验证失败（token 无效、过期等）
-      console.error('JWT verification failed:', jwtError)
-      return null
-    }
+    const decoded = jwt.verify(
+      token,
+      process.env.JWT_SECRET || 'your-secret-key'
+    ) as { userId: string; email: string }
 
     const db = getDatabaseAdapter()
-    let dbUser = null
-    
-    try {
-      // 先尝试通过 userId 查找
-      if (decoded.userId) {
-        dbUser = await db.findUserById(decoded.userId)
-      }
-      // 如果找不到，尝试通过 email 查找
-      if (!dbUser && decoded.email) {
-        dbUser = await db.findUserByEmail(decoded.email)
-      }
-    } catch (dbError: any) {
-      // 如果数据库查询失败（如连接池问题），从 JWT token 中提取用户信息
-      const errorMsg = String(dbError?.message || '')
-      const lower = errorMsg.toLowerCase()
-      if (
-        lower.includes("can't reach database server") ||
-        lower.includes('can\\u2019t reach database server') ||
-        lower.includes('maxclients') ||
-        lower.includes('max clients reached') ||
-        lower.includes('pool_size') ||
-        lower.includes("can't reach") ||
-        lower.includes('connection') ||
-        lower.includes('timeout') ||
-        lower.includes('pooler')
-      ) {
-        console.warn('Database connection issue, but JWT token is valid. Using token info only.')
-        // 如果数据库不可用，但 JWT token 有效，返回基于 token 的用户信息
-        // 这是关键修复：即使数据库不可用，也能从 token 中获取 userType
-        return {
-          id: decoded.userId,
-          email: decoded.email,
-          name: decoded.email.split('@')[0],
-          userType: decoded.userType || 'TENANT', // 从 token 中获取用户类型（关键！）
-          isPremium: false,
-          vipLevel: 'FREE',
-        }
-      }
-      // 其他数据库错误，也尝试从 token 中提取信息
-      console.warn('Database query failed, using JWT token info:', errorMsg)
-      return {
-        id: decoded.userId,
-        email: decoded.email,
-        name: decoded.email.split('@')[0],
-        userType: decoded.userType || 'TENANT',
-        isPremium: false,
-        vipLevel: 'FREE',
-      }
+    let dbUser = await db.findUserById(decoded.userId)
+    if (!dbUser && decoded.email) {
+      dbUser = await db.findUserByEmail(decoded.email)
     }
     
     if (!dbUser) {
-      // 如果数据库中没有找到用户，但 JWT token 有效，使用 token 中的信息
-      console.warn('User not found in database, but JWT token is valid. Using token info.')
-      return {
-        id: decoded.userId,
-        email: decoded.email,
-        name: decoded.email.split('@')[0],
-        userType: decoded.userType || 'TENANT',
-        isPremium: false,
-        vipLevel: 'FREE',
-      }
+      return null
     }
 
     return {
@@ -260,121 +144,52 @@ async function getCurrentUserFromJWT(request: NextRequest): Promise<AuthUser | n
 export async function signUpWithSupabase(
   email: string,
   password: string,
-  metadata?: { name?: string; phone?: string; userType?: string; representedById?: string }
+  metadata?: { name?: string; phone?: string; userType?: string }
 ): Promise<AuthResult> {
-  // 检查 Supabase 是否已初始化
+  // Supabase 未配置时直接走 JWT 注册
   if (!supabaseAdmin) {
-    console.warn('Supabase not initialized, falling back to JWT registration')
     return await signUpWithJWT(email, password, metadata)
   }
-
-  // 先尝试 Supabase 注册；若遇到限流或数据库连接问题则降级为"数据库 + JWT"
-  let data, error
-  try {
-    const result = await supabaseAdmin.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          name: metadata?.name,
-          phone: metadata?.phone,
-          userType: metadata?.userType || 'TENANT',
-          representedById: metadata?.representedById,
-        },
+  // 先尝试 Supabase 注册；若遇到限流则降级为“数据库 + JWT”
+  const { data, error } = await supabaseAdmin.auth.signUp({
+    email,
+    password,
+    options: {
+      data: {
+        name: metadata?.name,
+        phone: metadata?.phone,
+        userType: metadata?.userType || 'TENANT',
       },
-    })
-    data = result.data
-    error = result.error
-  } catch (supabaseError: any) {
-    // 如果 Supabase 调用本身失败（可能是网络问题），降级到 JWT
-    const errorMsg = String(supabaseError?.message || '')
-    const lower = errorMsg.toLowerCase()
-    if (
-      lower.includes("can't reach") ||
-      lower.includes('database server') ||
-      lower.includes('connection') ||
-      lower.includes('timeout') ||
-      lower.includes('pooler') ||
-      lower.includes('pool_size') ||
-      lower.includes('maxclients')
-    ) {
-      console.warn('Supabase connection failed, falling back to JWT registration')
-      return await signUpWithJWT(email, password, metadata)
-    }
-    throw new Error('注册失败：' + errorMsg)
-  }
+    },
+  })
 
   if (error || !data.user) {
     const msg = error?.message || '注册失败'
     const lower = msg.toLowerCase()
     // Supabase 常见提示：email rate limit exceeded / rate limit
-    // 或者数据库连接问题
-    // 或者邮箱验证失败（email address is invalid）
-    if (
-      lower.includes('rate limit') ||
-      lower.includes("can't reach") ||
-      lower.includes('database server') ||
-      lower.includes('connection') ||
-      lower.includes('email') && lower.includes('invalid') ||
-      lower.includes('email address') && lower.includes('invalid')
-    ) {
-      console.warn('Supabase registration issue (email validation or connection), falling back to JWT:', msg)
-      // 如果是邮箱验证问题，尝试用 JWT 注册（跳过 Supabase 验证）
-      try {
-        return await signUpWithJWT(email, password, metadata)
-      } catch (jwtError: any) {
-        // 如果 JWT 注册也失败（比如邮箱已存在），抛出更友好的错误
-        const region = getAppRegion()
-        const isChina = region === 'china'
-        const jwtErrorMsg = String(jwtError?.message || '')
-        const jwtLower = jwtErrorMsg.toLowerCase()
-        if (jwtLower.includes('already exists') || jwtLower.includes('已存在')) {
-          throw new Error(isChina ? '该邮箱已被注册' : 'Email already registered')
-        }
-        throw new Error(isChina ? `注册失败：${jwtErrorMsg}` : `Registration failed: ${jwtErrorMsg}`)
-      }
+    if (lower.includes('rate limit')) {
+      return await signUpWithJWT(email, password, metadata)
     }
-    const region = getAppRegion()
-    const isChina = region === 'china'
-    throw new Error(isChina ? msg : (msg.includes('注册失败') ? msg.replace('注册失败', 'Registration failed') : msg))
+    throw new Error(msg)
   }
 
   // 检查用户是否已在数据库中存在（可能通过 OAuth 创建）
   // ⚠️ 这里的业务库是 Prisma(Supabase Postgres)。如果你本地网络连不上 Supabase，会导致注册直接失败。
-  // 解决：DB 不可达时，允许"仅 Supabase Auth 注册成功"，不阻塞用户注册。
+  // 解决：DB 不可达时，允许“仅 Supabase Auth 注册成功”，不阻塞用户注册。
   let dbUser: any = null
   const db = getDatabaseAdapter()
   try {
     dbUser = await db.findUserByEmail(email)
   } catch (e: any) {
-    // 数据库查询失败，使用 Supabase 返回的信息（降级方案）
     const msg = String(e?.message || '')
     const lower = msg.toLowerCase()
-    const isConnectionError = 
+    if (
       lower.includes("can't reach database server") ||
       lower.includes('can\\u2019t reach database server') ||
       lower.includes('maxclients') ||
-      lower.includes('max clients reached') ||
-      lower.includes('pool_size') ||
-      lower.includes("can't reach") ||
-      lower.includes('connection') ||
-      lower.includes('timeout') ||
-      lower.includes('pooler') ||
-      lower.includes('prisma') ||
-      lower.includes('query')
-    
-    if (isConnectionError) {
-      console.warn('Database connection failed during Supabase registration, using Supabase user info')
-      // 数据库连接失败，生成 JWT token 以便后续使用
-      const jwtToken = jwt.sign(
-        { 
-          userId: data.user.id, 
-          email: data.user.email || email,
-          userType: metadata?.userType || (data.user.user_metadata as any)?.userType || 'TENANT'
-        },
-        process.env.JWT_SECRET || 'your-secret-key',
-        { expiresIn: '7d' }
-      )
+      lower.includes('max clients reached')
+    ) {
+      const token = data.session?.access_token || ''
       return {
         user: {
           id: data.user.id,
@@ -384,12 +199,10 @@ export async function signUpWithSupabase(
           isPremium: false,
           vipLevel: 'FREE',
         },
-        token: jwtToken, // 使用 JWT token 而不是 Supabase token
+        token,
       }
     }
-    // 其他错误也降级到 JWT 注册
-    console.warn('Database query failed during Supabase registration, falling back to JWT:', msg)
-    return await signUpWithJWT(email, password, metadata)
+    throw e
   }
 
   if (!dbUser) {
@@ -408,31 +221,13 @@ export async function signUpWithSupabase(
     } catch (createError: any) {
       const msg = String(createError?.message || '')
       const lower = msg.toLowerCase()
-      const isConnectionError = 
+      if (
         lower.includes("can't reach database server") ||
         lower.includes('can\\u2019t reach database server') ||
         lower.includes('maxclients') ||
-        lower.includes('max clients reached') ||
-        lower.includes('pool_size') ||
-        lower.includes("can't reach") ||
-        lower.includes('connection') ||
-        lower.includes('timeout') ||
-        lower.includes('pooler') ||
-        lower.includes('prisma') ||
-        lower.includes('query')
-      
-      if (isConnectionError) {
-        // 数据库连接失败，生成 JWT token
-        console.warn('Database connection failed during user creation, using Supabase user info')
-        const jwtToken = jwt.sign(
-          { 
-            userId: data.user.id, 
-            email: data.user.email || email,
-            userType: metadata?.userType || (data.user.user_metadata as any)?.userType || 'TENANT'
-          },
-          process.env.JWT_SECRET || 'your-secret-key',
-          { expiresIn: '7d' }
-        )
+        lower.includes('max clients reached')
+      ) {
+        const token = data.session?.access_token || ''
         return {
           user: {
             id: data.user.id,
@@ -442,7 +237,7 @@ export async function signUpWithSupabase(
             isPremium: false,
             vipLevel: 'FREE',
           },
-          token: jwtToken,
+          token,
         }
       }
       // 如果创建失败（可能是并发创建），尝试再次查找
@@ -451,25 +246,13 @@ export async function signUpWithSupabase(
       } catch {
         dbUser = null
       }
-      if (!dbUser) {
-        // 如果还是找不到，降级到 JWT 注册
-        console.warn('User creation failed, falling back to JWT registration:', msg)
-        return await signUpWithJWT(email, password, metadata)
-      }
+      if (!dbUser) throw new Error('创建用户失败: ' + msg)
     }
   }
 
-  // 如果 Supabase 返回了 session，生成 JWT token（避免数据库连接问题）
-  // 如果没有 session（需要邮箱验证），也生成 JWT token
-  const jwtToken = jwt.sign(
-    { 
-      userId: dbUser.id, 
-      email: dbUser.email,
-      userType: dbUser.userType 
-    },
-    process.env.JWT_SECRET || 'your-secret-key',
-    { expiresIn: '7d' }
-  )
+  // 如果 Supabase 返回了 session，直接使用
+  // 如果没有 session（需要邮箱验证），返回空 token，前端需要处理
+  const token = data.session?.access_token || ''
 
   return {
     user: {
@@ -480,7 +263,7 @@ export async function signUpWithSupabase(
       isPremium: dbUser.isPremium,
       vipLevel: dbUser.vipLevel || 'FREE',
     },
-    token: jwtToken, // 使用 JWT token 而不是 Supabase token
+    token,
   }
 }
 
@@ -491,155 +274,69 @@ export async function loginWithSupabase(
   email: string,
   password: string
 ): Promise<AuthResult> {
-  // 检查 Supabase 是否已初始化
+  // Supabase 未配置或未初始化时直接走 JWT，避免报错或长时间挂起
   if (!supabaseAdmin) {
-    console.warn('[loginWithSupabase] ⚠️ Supabase Admin 客户端未初始化')
-    console.warn('[loginWithSupabase] 检查环境变量:')
-    console.warn(`  - NEXT_PUBLIC_SUPABASE_URL: ${process.env.NEXT_PUBLIC_SUPABASE_URL ? '已配置' : '未配置'}`)
-    console.warn(`  - NEXT_PUBLIC_SUPABASE_ANON_KEY: ${process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ? '已配置' : '未配置'}`)
-    console.warn(`  - SUPABASE_SERVICE_ROLE_KEY: ${process.env.SUPABASE_SERVICE_ROLE_KEY ? '已配置' : '未配置'}`)
-    console.warn('[loginWithSupabase] 降级到 JWT 登录')
+    return await loginWithJWT(email, password)
+  }
+  // 先尝试 Supabase 登录；若失败（比如用户是降级注册的，仅在本地数据库存在）则改用 JWT 登录
+  const { data, error } = await supabaseAdmin.auth.signInWithPassword({
+    email,
+    password,
+  })
+
+  if (error || !data.user || !data.session) {
+    // 降级：尝试用本地数据库密码登录
     return await loginWithJWT(email, password)
   }
 
-  // 先尝试 Supabase 登录；若失败（比如用户是降级注册的，仅在本地数据库存在）则改用 JWT 登录
-  let data, error
-  try {
-    console.log('Attempting Supabase login for:', email)
-    const result = await supabaseAdmin.auth.signInWithPassword({
-      email,
-      password,
-    })
-    data = result.data
-    error = result.error
-    console.log('Supabase login result:', { 
-      hasUser: !!data?.user, 
-      hasSession: !!data?.session, 
-      error: error?.message 
-    })
-  } catch (supabaseError: any) {
-    console.error('Supabase login exception:', supabaseError)
-    // 如果 Supabase 调用本身失败（可能是网络问题），降级到 JWT
-    const errorMsg = String(supabaseError?.message || '')
-    const lower = errorMsg.toLowerCase()
-    if (
-      lower.includes("can't reach") ||
-      lower.includes('database server') ||
-      lower.includes('connection') ||
-      lower.includes('timeout') ||
-      lower.includes('pooler')
-    ) {
-      console.warn('Supabase connection failed, falling back to JWT login')
-      return await loginWithJWT(email, password)
-    }
-    // 其他错误也尝试 JWT 登录
-    console.warn('Supabase login error, falling back to JWT:', errorMsg)
-    try {
-      return await loginWithJWT(email, password)
-    } catch (jwtError: any) {
-      const region = getAppRegion()
-      const isChina = region === 'china'
-      // 直接抛出原始错误信息，不再添加前缀
-      throw new Error(errorMsg || (isChina ? '登录失败' : 'Login failed'))
-    }
+  // 从数据库获取用户详细信息
+  const timeoutMarker = Symbol('timeout')
+  const withTimeoutValue = async <T,>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof timeoutMarker> => {
+    return await Promise.race([
+      promise,
+      new Promise<typeof timeoutMarker>((resolve) => {
+        setTimeout(() => resolve(timeoutMarker), timeoutMs)
+      })
+    ])
   }
 
-  if (error || !data.user || !data.session) {
-    // Supabase 登录失败，检查是否是密码错误
-    const region = getAppRegion()
-    const isChina = region === 'china'
-    
-    console.warn('[loginWithSupabase] Supabase 登录失败:', {
-      hasError: !!error,
-      errorMessage: error?.message,
-      hasUser: !!data?.user,
-      hasSession: !!data?.session,
-      email: email
-    })
-    
-    // 如果是明确的认证错误（密码错误、邮箱未确认等），先尝试 JWT，如果也失败再抛出错误
-    const isAuthError = error?.message?.includes('Invalid login credentials') || 
-        error?.message?.includes('Email not confirmed') ||
-        error?.message?.includes('Invalid login')
-    
-    if (isAuthError) {
-      console.warn('[loginWithSupabase] 认证错误，尝试 JWT 登录作为降级方案')
-      try {
-        const jwtResult = await loginWithJWT(email, password)
-        console.log('[loginWithSupabase] ✅ JWT 登录成功（用户可能在数据库中但不在 Supabase Auth 中）')
-        return jwtResult
-      } catch (jwtError: any) {
-        // 如果 JWT 也失败，说明用户不存在或密码错误
-        console.error('[loginWithSupabase] ❌ JWT 登录也失败:', jwtError?.message)
-        throw new Error(isChina ? '邮箱或密码错误' : 'Invalid email or password')
-      }
-    }
-    
-    // 其他错误，尝试用本地数据库密码登录（JWT）
-    // 可能是用户在本地数据库中存在，但 Supabase 中没有
-    console.warn('[loginWithSupabase] 其他错误，尝试 JWT 登录:', error?.message)
-    try {
-      return await loginWithJWT(email, password)
-    } catch (jwtError: any) {
-      // 如果 JWT 也失败，说明用户不存在或密码错误
-      console.error('[loginWithSupabase] ❌ JWT 登录失败:', jwtError?.message)
-      throw new Error(isChina ? '邮箱或密码错误' : 'Invalid email or password')
-    }
+  const fallbackUser = {
+    id: data.user.id,
+    email: data.user.email || email,
+    name: (data.user.user_metadata as any)?.name || email.split('@')[0],
+    userType: (data.user.user_metadata as any)?.userType || 'TENANT',
+    isPremium: false,
+    vipLevel: 'FREE',
   }
 
-  // Supabase 登录成功，尝试从数据库获取用户详细信息
-  // 如果数据库连接失败，直接使用 Supabase 返回的信息并生成 JWT token
   let dbUser: any = null
   const db = getDatabaseAdapter()
-  
+  // 国际版 DB 可能较远，给 10s 避免过早超时
+  const dbTimeoutMs = 10000
   try {
-    dbUser = await db.findUserByEmail(email)
+    const result = await withTimeoutValue(db.findUserByEmail(email), dbTimeoutMs)
+    if (result === timeoutMarker) {
+      return {
+        user: fallbackUser,
+        token: data.session.access_token,
+      }
+    }
+    dbUser = result
   } catch (e: any) {
-    // 数据库查询失败，使用 Supabase 返回的信息（降级方案）
     const msg = String(e?.message || '')
     const lower = msg.toLowerCase()
-    // 检查是否是数据库连接问题
-    const isConnectionError = 
+    if (
       lower.includes("can't reach database server") ||
       lower.includes('can\\u2019t reach database server') ||
       lower.includes('maxclients') ||
-      lower.includes('max clients reached') ||
-      lower.includes('pool_size') ||
-      lower.includes("can't reach") ||
-      lower.includes('connection') ||
-      lower.includes('timeout') ||
-      lower.includes('pooler') ||
-      lower.includes('prisma') ||
-      lower.includes('query')
-    
-    if (isConnectionError) {
-      console.warn('Database connection failed, using Supabase user info with JWT token')
-    } else {
-      console.warn('Database query failed, using Supabase user info:', msg)
+      lower.includes('max clients reached')
+    ) {
+      return {
+        user: fallbackUser,
+        token: data.session.access_token,
+      }
     }
-    
-    // 生成 JWT token，包含从 Supabase metadata 中获取的用户类型
-    const userType = (data.user.user_metadata as any)?.userType || 'TENANT'
-    const jwtToken = jwt.sign(
-      { 
-        userId: data.user.id, 
-        email: data.user.email || email,
-        userType: userType
-      },
-      process.env.JWT_SECRET || 'your-secret-key',
-      { expiresIn: '7d' }
-    )
-    return {
-      user: {
-        id: data.user.id,
-        email: data.user.email || email,
-        name: (data.user.user_metadata as any)?.name || email.split('@')[0],
-        userType: userType,
-        isPremium: false,
-        vipLevel: 'FREE',
-      },
-      token: jwtToken, // 使用 JWT token，避免后续数据库连接问题
-    }
+    throw e
   }
 
   if (!dbUser) {
@@ -647,72 +344,37 @@ export async function loginWithSupabase(
     // 只有当 phone 有值时才传递，避免设置为 null
     const phoneValue = (data.user.user_metadata as any)?.phone
     try {
-      dbUser = await db.createUser({
+      const created = await withTimeoutValue(db.createUser({
         email,
-        password: '', // 由 Supabase 托管
+        password: '',
         name: (data.user.user_metadata as any)?.name || email.split('@')[0],
         ...(phoneValue && phoneValue.trim() !== '' ? { phone: phoneValue.trim() } : {}),
         userType: (data.user.user_metadata as any)?.userType || 'TENANT',
-        representedById: (data.user.user_metadata as any)?.representedById
-      })
+      }), dbTimeoutMs)
+      if (created === timeoutMarker) {
+        return {
+          user: fallbackUser,
+          token: data.session.access_token,
+        }
+      }
+      dbUser = created
     } catch (createError: any) {
-      // 如果创建用户失败（数据库连接问题），使用 Supabase 信息并生成 JWT token
       const msg = String(createError?.message || '')
       const lower = msg.toLowerCase()
-      const isConnectionError = 
+      if (
         lower.includes("can't reach database server") ||
         lower.includes('can\\u2019t reach database server') ||
         lower.includes('maxclients') ||
-        lower.includes('max clients reached') ||
-        lower.includes('pool_size') ||
-        lower.includes("can't reach") ||
-        lower.includes('connection') ||
-        lower.includes('timeout') ||
-        lower.includes('pooler') ||
-        lower.includes('prisma') ||
-        lower.includes('query')
-      
-      if (isConnectionError) {
-        console.warn('Database connection failed during user creation, using Supabase info')
-      } else {
-        console.warn('User creation failed, using Supabase info:', msg)
+        lower.includes('max clients reached')
+      ) {
+        return {
+          user: fallbackUser,
+          token: data.session.access_token,
+        }
       }
-      
-      // 使用 Supabase 信息并生成 JWT token
-      const userType = (data.user.user_metadata as any)?.userType || 'TENANT'
-      const jwtToken = jwt.sign(
-        { 
-          userId: data.user.id, 
-          email: data.user.email || email,
-          userType: userType
-        },
-        process.env.JWT_SECRET || 'your-secret-key',
-        { expiresIn: '7d' }
-      )
-      return {
-        user: {
-          id: data.user.id,
-          email: data.user.email || email,
-          name: (data.user.user_metadata as any)?.name || email.split('@')[0],
-          userType: userType,
-          isPremium: false,
-          vipLevel: 'FREE',
-        },
-        token: jwtToken,
-      }
+      throw createError
     }
   }
-
-  // 无论是否从数据库获取到用户，都生成 JWT token（避免后续数据库连接问题）
-  const jwtToken = jwt.sign(
-    { 
-      userId: dbUser.id, 
-      email: dbUser.email,
-      userType: dbUser.userType 
-    },
-    process.env.JWT_SECRET || 'your-secret-key',
-    { expiresIn: '7d' }
-  )
 
   return {
     user: {
@@ -723,7 +385,7 @@ export async function loginWithSupabase(
       isPremium: dbUser.isPremium,
       vipLevel: dbUser.vipLevel || (dbUser.isPremium ? 'PREMIUM' : 'FREE'),
     },
-    token: jwtToken, // 统一使用 JWT token
+    token: data.session.access_token,
   }
 }
 
@@ -733,16 +395,14 @@ export async function loginWithSupabase(
 export async function signUpWithJWT(
   email: string,
   password: string,
-  metadata?: { name?: string; phone?: string; userType?: string; representedById?: string }
+  metadata?: { name?: string; phone?: string; userType?: string }
 ): Promise<AuthResult> {
   const db = getDatabaseAdapter()
   
   // 检查用户是否已存在
   const existingUser = await db.findUserByEmail(email)
   if (existingUser) {
-    const region = getAppRegion()
-    const isChina = region === 'china'
-    throw new Error(isChina ? '该邮箱已被注册' : 'This email is already registered')
+    throw new Error('该邮箱已被注册')
   }
 
   // 加密密码
@@ -755,16 +415,11 @@ export async function signUpWithJWT(
     name: metadata?.name || email.split('@')[0],
     phone: metadata?.phone,
     userType: metadata?.userType || 'TENANT',
-    representedById: metadata?.representedById
   })
 
-  // 生成 JWT token（包含用户类型信息）
+  // 生成 JWT token
   const token = jwt.sign(
-    { 
-      userId: dbUser.id, 
-      email: dbUser.email,
-      userType: dbUser.userType 
-    },
+    { userId: dbUser.id, email: dbUser.email },
     process.env.JWT_SECRET || 'your-secret-key',
     { expiresIn: '7d' }
   )
@@ -790,86 +445,22 @@ export async function loginWithJWT(
   password: string
 ): Promise<AuthResult> {
   const db = getDatabaseAdapter()
-  const region = getAppRegion()
-  const isChina = region === 'china'
-  
-  console.log('[loginWithJWT] 开始 JWT 登录:', { email })
   
   // 查找用户
-  let dbUser
-  try {
-    dbUser = await db.findUserByEmail(email)
-    console.log('[loginWithJWT] 数据库查询结果:', {
-      found: !!dbUser,
-      hasPassword: !!dbUser?.password,
-      userId: dbUser?.id
-    })
-  } catch (dbError: any) {
-    const dbErrorMsg = String(dbError?.message || '')
-    const dbErrorLower = dbErrorMsg.toLowerCase()
-    
-    console.error('[loginWithJWT] ❌ 数据库查询失败:', {
-      message: dbErrorMsg,
-      code: dbError?.code,
-      email: email
-    })
-    
-    // 检查是否是数据库连接问题
-    const isConnectionError = 
-      dbErrorLower.includes("can't reach database server") ||
-      dbErrorLower.includes('can\\u2019t reach database server') ||
-      dbErrorLower.includes('maxclients') ||
-      dbErrorLower.includes('max clients reached') ||
-      dbErrorLower.includes('pool_size') ||
-      dbErrorLower.includes("can't reach") ||
-      dbErrorLower.includes('connection') ||
-      dbErrorLower.includes('timeout') ||
-      dbErrorLower.includes('pooler') ||
-      dbErrorLower.includes('database connection failed') ||
-      dbError?.code === 'P1001' ||
-      dbError?.code === 'P1017' ||
-      dbError?.code === 'P1000'
-    
-    if (isConnectionError) {
-      // 如果错误信息已经包含了详细的 URL 信息（说明是 SupabaseAdapter 抛出的），直接重新抛出
-      if (dbErrorMsg.includes('URL:')) {
-        throw dbError
-      }
-      throw new Error(isChina ? '数据库连接失败，请稍后重试' : 'Database connection failed, please try again later')
-    }
-    
-    // 其他数据库错误也抛出连接失败（避免泄露敏感信息）
-    throw new Error(isChina ? '数据库连接失败，请稍后重试' : 'Database connection failed, please try again later')
-  }
-  
-  if (!dbUser) {
-    console.warn('[loginWithJWT] ❌ 用户不存在:', email)
-    throw new Error(isChina ? '邮箱或密码错误' : 'Invalid email or password')
-  }
-  
-  if (!dbUser.password) {
-    console.warn('[loginWithJWT] ❌ 用户没有密码（可能是 Supabase 用户）:', email)
-    throw new Error(isChina ? '邮箱或密码错误' : 'Invalid email or password')
+  const dbUser = await db.findUserByEmail(email)
+  if (!dbUser || !dbUser.password) {
+    throw new Error('邮箱或密码错误')
   }
 
   // 验证密码
   const isValidPassword = await bcrypt.compare(password, dbUser.password)
-  console.log('[loginWithJWT] 密码验证结果:', { isValid: isValidPassword })
-  
   if (!isValidPassword) {
-    console.warn('[loginWithJWT] ❌ 密码错误:', email)
-    throw new Error(isChina ? '邮箱或密码错误' : 'Invalid email or password')
+    throw new Error('邮箱或密码错误')
   }
-  
-  console.log('[loginWithJWT] ✅ 密码验证成功')
 
-  // 生成 JWT token（包含用户类型信息，方便后续验证）
+  // 生成 JWT token
   const token = jwt.sign(
-    { 
-      userId: dbUser.id, 
-      email: dbUser.email,
-      userType: dbUser.userType 
-    },
+    { userId: dbUser.id, email: dbUser.email },
     process.env.JWT_SECRET || 'your-secret-key',
     { expiresIn: '7d' }
   )
@@ -893,7 +484,7 @@ export async function loginWithJWT(
 export async function signUp(
   email: string,
   password: string,
-  metadata?: { name?: string; phone?: string; userType?: string; representedById?: string }
+  metadata?: { name?: string; phone?: string; userType?: string }
 ): Promise<AuthResult> {
   const region = getAppRegion()
   
@@ -902,39 +493,14 @@ export async function signUp(
   if (region === 'china') {
     return await signUpWithJWT(email, password, metadata)
   } else {
-    // 国际版：先尝试 Supabase，如果失败（如速率限制、数据库连接问题、邮箱验证问题），降级到 JWT
+    // 国际版：先尝试 Supabase，如果失败（如速率限制），降级到 JWT
     try {
       return await signUpWithSupabase(email, password, metadata)
     } catch (error: any) {
-      const errorMsg = String(error?.message || '')
-      const lower = errorMsg.toLowerCase()
-      // 如果是速率限制、数据库连接问题、邮箱验证问题或其他可恢复的错误，降级到 JWT 注册
-      if (
-        lower.includes('rate limit') || 
-        lower.includes('too many') ||
-        lower.includes("can't reach") ||
-        lower.includes('database server') ||
-        lower.includes('connection') ||
-        lower.includes('timeout') ||
-        lower.includes('pool_size') ||
-        lower.includes('maxclients') ||
-        (lower.includes('email') && lower.includes('invalid')) ||
-        (lower.includes('email address') && lower.includes('invalid')) ||
-        lower.includes('registration failed')
-      ) {
-        console.warn('Supabase registration issue, falling back to JWT registration:', errorMsg)
-        try {
-          return await signUpWithJWT(email, password, metadata)
-        } catch (jwtError: any) {
-          // 如果 JWT 注册也失败（比如邮箱已存在），抛出更友好的错误
-          const jwtErrorMsg = String(jwtError?.message || '')
-          const jwtLower = jwtErrorMsg.toLowerCase()
-          // 在国际版，使用英文错误信息
-          if (jwtLower.includes('already exists') || jwtLower.includes('已存在') || jwtLower.includes('already registered')) {
-            throw new Error('Email already registered')
-          }
-          throw new Error(`Registration failed: ${jwtErrorMsg}`)
-        }
+      // 如果是速率限制错误，降级到 JWT 注册
+      if (error.message?.includes('rate limit') || error.message?.includes('too many')) {
+        console.warn('Supabase rate limit exceeded, falling back to JWT registration')
+        return await signUpWithJWT(email, password, metadata)
       }
       // 其他错误直接抛出
       throw error
@@ -983,7 +549,7 @@ export async function loginWithOAuth(provider: 'google' | 'github'): Promise<{ u
   }
 
   if (!supabase) {
-    throw new Error('Supabase 未初始化，无法使用 OAuth 登录')
+    throw new Error('OAuth 需要配置 Supabase，请检查环境变量')
   }
 
   const { data, error } = await supabase.auth.signInWithOAuth({

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { useTranslations } from 'next-intl'
 import { Button } from "@/components/ui/button"
@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Shield } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { supabase } from "@/lib/supabase"
 
 export default function LoginPage() {
   const router = useRouter()
@@ -20,68 +21,181 @@ export default function LoginPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
+  const searchParams = useSearchParams()
+
+  useEffect(() => {
+    const token = searchParams.get("token")
+    const error = searchParams.get("error")
+
+    if (error) {
+      toast({
+        description: error,
+        variant: "destructive",
+      })
+      return
+    }
+
+    if (!token) return
+
+    const completeOAuthLogin = async () => {
+      setLoading(true)
+      try {
+        localStorage.setItem("auth-token", token)
+        const response = await fetch("/api/auth/profile", {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) {
+          const errorMsg = data.error || t('invalidCredentials')
+          throw new Error(errorMsg)
+        }
+
+        if (data.user) {
+          localStorage.setItem("user", JSON.stringify(data.user))
+        }
+
+        const userType = (data.user?.userType || "").toUpperCase()
+        if (userType === "TENANT") {
+          router.push("/dashboard/tenant")
+        } else if (userType === "LANDLORD") {
+          router.push("/dashboard/landlord")
+        } else if (userType === "AGENT") {
+          router.push("/dashboard/agent")
+        } else {
+          router.push("/dashboard/tenant")
+        }
+      } catch (error: any) {
+        const errorMessage = error.message || t('invalidCredentials')
+        toast({
+          description: errorMessage,
+          variant: "destructive",
+        })
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    completeOAuthLogin()
+  }, [searchParams, router, toast, t])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
+    const isChina = process.env.NEXT_PUBLIC_APP_REGION === 'china'
+    const isGlobal = !isChina
 
     try {
-      // 不传递 region，让后端根据环境变量自动判断
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ email, password }),
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        // 直接使用 API 返回的错误消息，不添加前缀
-        const errorMsg = data.error || t('invalidCredentials')
-        console.error('[Login Frontend] 登录失败:', {
-          status: response.status,
-          error: errorMsg,
-          email: email
-        })
-        throw new Error(errorMsg)
+      const normalizedEmail = email.trim()
+      const normalizedPassword = password
+      const backendLogin = async (options?: { useJwtOnly?: boolean }) => {
+        const controller = new AbortController()
+        // 后端整次登录最长约 62s；前端 68s 超时
+        const timeoutMs = process.env.NEXT_PUBLIC_APP_REGION === 'china' ? 20000 : 68000
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+        // 8s 后提示“正在验证”，避免用户以为卡死
+        const hintId = setTimeout(() => {
+          toast({
+            description: isChina ? '正在验证，请稍候…' : 'Verifying, please wait…',
+            variant: 'default',
+          })
+        }, 8000)
+        try {
+          const response = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: { 
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ 
+              email: normalizedEmail, 
+              password: normalizedPassword, 
+              useJwtOnly: options?.useJwtOnly || false 
+            }),
+            signal: controller.signal
+          })
+          if (timeoutId) clearTimeout(timeoutId)
+          if (hintId) clearTimeout(hintId)
+          const text = await response.text()
+          const data = text ? JSON.parse(text) : {}
+          if (!response.ok) {
+            const errorMsg = data?.error || data?.message || t('invalidCredentials') || (process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '登录失败' : 'Login failed')
+            throw new Error(errorMsg)
+          }
+          if (!data?.token) {
+            throw new Error(process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '登录响应数据无效' : 'Invalid login response data')
+          }
+          localStorage.setItem("auth-token", data.token)
+          if (data.user) {
+            localStorage.setItem("user", JSON.stringify(data.user))
+          }
+          toast({
+            title: tCommon('success'),
+            description: t('loginSuccessful'),
+          })
+          const userType = (data.user?.userType || "").toUpperCase()
+          if (userType === "TENANT") {
+            router.replace("/dashboard/tenant")
+          } else if (userType === "LANDLORD") {
+            router.replace("/dashboard/landlord")
+          } else if (userType === "AGENT") {
+            router.replace("/dashboard/agent")
+          } else {
+            router.replace("/dashboard/tenant")
+          }
+          setLoading(false)
+          return true
+        } catch (fetchError: any) {
+          if (hintId) clearTimeout(hintId)
+          if (fetchError.name === 'AbortError') {
+            throw new Error(isChina ? '请求超时，请稍后重试' : 'Request timeout, please try again')
+          }
+          throw fetchError
+        }
       }
 
-      // 保存 token 和用户信息
-      if (data.token) {
-        localStorage.setItem("auth-token", data.token)
-        localStorage.setItem("user", JSON.stringify(data.user))
+      if (isGlobal) {
+        try {
+          await backendLogin()
+          return
+        } catch (globalError: any) {
+          const message = String(globalError?.message || '')
+          const lower = message.toLowerCase()
+          if (lower.includes('timeout') || lower.includes('rate limit') || lower.includes('too many')) {
+            await backendLogin({ useJwtOnly: true })
+            return
+          }
+          throw globalError
+        }
       }
 
-      toast({
-        title: tCommon('success'),
-        description: t('loginSuccessful'),
-      })
-
-      // 根据用户类型跳转
-      // 确保userType是字符串且大写
-      const userType = (data.user?.userType || "").toUpperCase()
-      
-      console.log("Login successful, userType:", userType, "Full user data:", data.user)
-      
-      if (userType === "TENANT") {
-        router.push("/dashboard/tenant")
-      } else if (userType === "LANDLORD") {
-        router.push("/dashboard/landlord")
-      } else if (userType === "AGENT") {
-        router.push("/dashboard/agent")
-      } else {
-        // 默认跳转到租客页面
-        console.warn("Unknown userType, defaulting to tenant:", userType)
-        router.push("/dashboard/tenant")
-      }
+      await backendLogin()
     } catch (error: any) {
-      // 直接使用错误信息，不再添加前缀（API 已经返回完整的错误信息）
-      const errorMessage = error.message || t('invalidCredentials')
+      // 处理超时错误
+      const message = String(error?.message || '')
+      if (error.name === 'AbortError' || message.includes('超时') || message.toLowerCase().includes('timeout')) {
+        toast({
+          title: isChina ? '请求超时' : 'Request timeout',
+          description: isChina ? '请求超时，请稍后重试' : 'Request timeout, please try again',
+          variant: "destructive",
+        })
+        setLoading(false)
+        return
+      }
+      
+      // 优化错误日志打印
+      console.error('[Login Frontend] Login Error Object:', error)
+      let errorMessage = error.message || String(error) || t('invalidCredentials')
+      if (isGlobal) {
+        const hasChinese = /[\u4e00-\u9fa5]/.test(errorMessage)
+        if (hasChinese) {
+          errorMessage = 'Login failed, please try again'
+        }
+      }
+      
+      console.error('[Login Frontend] Error Message:', errorMessage)
       
       // 只显示 description，避免重复显示 "Login failed"
       toast({
+        title: tCommon('error'),
         description: errorMessage,
         variant: "destructive",
       })

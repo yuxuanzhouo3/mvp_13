@@ -49,11 +49,11 @@ function SearchContent() {
       if (response.ok) {
         setProperties(data.properties || [])
       } else {
-        throw new Error(data.error || "搜索失败")
+        throw new Error(data.error || t('searchFailed'))
       }
     } catch (error: any) {
       toast({
-        title: "搜索失败",
+        title: t('searchFailed'),
         description: error.message,
         variant: "destructive",
       })
@@ -65,8 +65,8 @@ function SearchContent() {
   const handleSearch = async () => {
     if (!searchQuery.trim()) {
       toast({
-        title: "请输入搜索内容",
-        description: "请输入城市名称进行搜索",
+        title: t('enterSearchContent'),
+        description: t('enterSearchContent'),
         variant: "destructive",
       })
       return
@@ -87,8 +87,8 @@ function SearchContent() {
       })
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: '搜索失败' }))
-        throw new Error(errorData.error || `搜索失败: ${response.status}`)
+        const errorData = await response.json().catch(() => ({ error: t('searchFailed') }))
+        throw new Error(errorData.error || `${t('searchFailed')}: ${response.status}`)
       }
 
       const data = await response.json()
@@ -98,20 +98,20 @@ function SearchContent() {
       
       if (data.properties && data.properties.length === 0) {
         toast({
-          title: "未找到房源",
-          description: `在 "${searchQuery}" 未找到符合条件的房源`,
+          title: t('noPropertiesFound'),
+          description: t('noPropertiesFound'),
         })
       } else {
         toast({
-          title: "搜索成功",
-          description: `找到 ${data.properties?.length || 0} 个房源`,
+          title: tCommon('success'),
+          description: t('foundCount', { count: data.properties?.length || 0 }),
         })
       }
     } catch (error: any) {
       console.error('Search error:', error)
       toast({
-        title: "搜索失败",
-        description: error.message || "搜索时发生错误，请稍后重试",
+        title: t('searchFailed'),
+        description: error.message || t('searchFailed'),
         variant: "destructive",
       })
     } finally {
@@ -143,21 +143,38 @@ function SearchContent() {
                 </div>
                 <Button onClick={handleSearch} disabled={loading}>
                   <Search className="mr-2 h-4 w-4" />
-                  {loading ? tCommon('loading') : '搜索'}
+                  {loading ? tCommon('loading') : tCommon('search')}
                 </Button>
               </div>
             </CardContent>
           </Card>
 
+          {loading && (
+            <Card>
+              <CardContent className="p-12 text-center">
+                <p className="text-muted-foreground">{tCommon('loading')}</p>
+              </CardContent>
+            </Card>
+          )}
+
           {properties.length > 0 && (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {properties.map((property) => (
+                (() => {
+                  const normalizedId = String(
+                    property?.id ??
+                      property?._id ??
+                      property?.propertyId ??
+                      property?.property_id ??
+                      ''
+                  )
+                  return (
                 <PropertyCard 
-                  key={property.id} 
+                  key={normalizedId} 
                   property={{
-                    id: property.id,
+                    id: normalizedId,
                     title: property.title,
-                    location: `${property.city}, ${property.state}`,
+                    location: `${property.city || ''}${property.state ? `, ${property.state}` : ''}`.trim(),
                     price: property.price,
                     beds: property.bedrooms,
                     baths: property.bathrooms,
@@ -168,6 +185,8 @@ function SearchContent() {
                     status: property.status?.toLowerCase(),
                   }} 
                 />
+                  )
+                })()
               ))}
             </div>
           )}

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-adapter'
-import { getDatabaseAdapter } from '@/lib/db-adapter'
+import { createDatabaseAdapter, getDatabaseAdapter } from '@/lib/db-adapter'
 import { prisma } from '@/lib/db'
+import { supabaseAdmin } from '@/lib/supabase'
 import { trackEvent } from '@/lib/analytics'
 
 /**
@@ -193,6 +194,20 @@ export async function GET(request: NextRequest) {
 
     const region = process.env.NEXT_PUBLIC_APP_REGION || 'global'
     const db = getDatabaseAdapter()
+    const getField = (obj: any, keys: string[]) => {
+      for (const key of keys) {
+        const value = obj?.[key]
+        if (value !== undefined && value !== null && value !== '') return value
+      }
+      return undefined
+    }
+    const getRepId = (obj: any) => {
+      return (
+        getField(obj, ['representedById', 'represented_by_id', 'tenant_representedById', 'tenant_represented_by_id', 'landlord_representedById', 'landlord_represented_by_id']) ??
+        getField(obj?.tenantProfile, ['representedById', 'represented_by_id']) ??
+        getField(obj?.landlordProfile, ['representedById', 'represented_by_id'])
+      )
+    }
 
     const isConnectionError = (error: any) => {
       const msg = String(error?.message || '').toLowerCase()
@@ -220,36 +235,88 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    let useFallback = false
+    let effectiveDb = db
+    if (region === 'global') {
+      try {
+        await runWithRetry(() => prisma.user.count())
+      } catch (error: any) {
+        if (!isConnectionError(error)) {
+          throw error
+        }
+        useFallback = true
+        effectiveDb = createDatabaseAdapter('china')
+      }
+    }
+    const isPrisma = region === 'global' && !useFallback
+
     let dbUser = null
     try {
-      dbUser = region === 'global'
+      dbUser = isPrisma
         ? await runWithRetry(() => prisma.user.findUnique({
             where: { id: user.id },
             select: { id: true, userType: true, email: true }
           }))
-        : await db.findUserById(user.id)
+        : await effectiveDb.findUserById(user.id)
     } catch {}
     if (!dbUser && user.email) {
       try {
-        dbUser = await db.findUserByEmail(user.email)
+        dbUser = await effectiveDb.findUserByEmail(user.email)
       } catch {}
     }
     const resolvedUserId = dbUser?.id || user.id
+    const agentIdSet = new Set([String(user.id), String(resolvedUserId)])
+    let tokenUserId: string | null = null
+    const authHeader = request.headers.get('authorization')
+    if (authHeader && authHeader.startsWith('Bearer ') && supabaseAdmin) {
+      const token = authHeader.substring(7)
+      try {
+        const { data } = await supabaseAdmin.auth.getUser(token)
+        if (data?.user?.id) {
+          tokenUserId = String(data.user.id)
+        }
+      } catch {}
+    }
+    const landlordIdSet = new Set<string>([String(resolvedUserId), String(user.id)])
+    if (tokenUserId) landlordIdSet.add(String(tokenUserId))
 
     // 构建查询条件
     let applications: any[] = []
-    if (region === 'global') {
+    if (isPrisma) {
       const baseWhere: any = {}
+      let forceEmpty = false
       if (userType === 'tenant' || dbUser?.userType === 'TENANT') {
         baseWhere.tenantId = resolvedUserId
       } else if (userType === 'landlord' || dbUser?.userType === 'LANDLORD') {
+        const landlordIds = Array.from(landlordIdSet)
         const landlordProperties = await runWithRetry(() => prisma.property.findMany({
-          where: { landlordId: resolvedUserId },
+          where: { landlordId: landlordIds.length === 1 ? landlordIds[0] : { in: landlordIds } },
           select: { id: true }
         }))
         const propertyIds = landlordProperties.map((p) => p.id)
         if (propertyIds.length === 0) {
-          applications = []
+          forceEmpty = true
+        } else {
+          baseWhere.propertyId = { in: propertyIds }
+        }
+      } else if (userType === 'agent' || dbUser?.userType === 'AGENT') {
+        const agentIds = Array.from(agentIdSet)
+        const representedProfiles = await runWithRetry(() => prisma.landlordProfile.findMany({
+          where: { representedById: { in: agentIds } },
+          select: { userId: true }
+        }))
+        const representedLandlordIds = representedProfiles.map((p) => p.userId)
+        const orConditions: any[] = [{ agentId: { in: agentIds } }]
+        if (representedLandlordIds.length > 0) {
+          orConditions.push({ landlordId: { in: representedLandlordIds } })
+        }
+        const relatedProperties = await runWithRetry(() => prisma.property.findMany({
+          where: { OR: orConditions },
+          select: { id: true }
+        }))
+        const propertyIds = relatedProperties.map((p) => p.id)
+        if (propertyIds.length === 0) {
+          forceEmpty = true
         } else {
           baseWhere.propertyId = { in: propertyIds }
         }
@@ -258,7 +325,7 @@ export async function GET(request: NextRequest) {
         baseWhere.status = status.toUpperCase()
       }
 
-      if (applications.length === 0 && Object.keys(baseWhere).length > 0) {
+      if (!forceEmpty && applications.length === 0 && Object.keys(baseWhere).length > 0) {
         applications = await runWithRetry(() => prisma.application.findMany({
           where: baseWhere,
           include: {
@@ -266,7 +333,7 @@ export async function GET(request: NextRequest) {
             property: { select: { id: true, title: true, address: true } }
           }
         }))
-      } else if (applications.length === 0 && Object.keys(baseWhere).length === 0) {
+      } else if (!forceEmpty && applications.length === 0 && Object.keys(baseWhere).length === 0) {
         applications = await runWithRetry(() => prisma.application.findMany({
           include: {
             tenant: { select: { id: true, name: true, email: true, phone: true } },
@@ -275,88 +342,53 @@ export async function GET(request: NextRequest) {
         }))
       }
     } else {
-      applications = await db.query('applications', {})
+      applications = await effectiveDb.query('applications', {})
     }
     
     // 应用过滤
-    if (region !== 'global') {
+    if (!isPrisma) {
       if (userType === 'tenant' || dbUser?.userType === 'TENANT') {
-        applications = applications.filter((app: any) => app.tenantId === user.id)
+        applications = applications.filter((app: any) => String(getField(app, ['tenantId', 'tenant_id']) || '') === String(resolvedUserId))
       } else if (userType === 'landlord' || dbUser?.userType === 'LANDLORD') {
-        const properties = await db.query('properties', { landlordId: user.id })
-        const propertyIds = properties.map((p: any) => p.id)
-        applications = applications.filter((app: any) => propertyIds.includes(app.propertyId))
+        const properties = await effectiveDb.query('properties', {})
+        const propertyIds = new Set(
+          properties
+            .filter((p: any) => landlordIdSet.has(String(getField(p, ['landlordId', 'landlord_id']) || '')))
+            .map((p: any) => String(getField(p, ['id']) || ''))
+            .filter(Boolean)
+        )
+        applications = applications.filter((app: any) => {
+          const pid = String(getField(app, ['propertyId', 'property_id']) || '')
+          return pid && propertyIds.has(pid)
+        })
       } else if (userType === 'agent' || dbUser?.userType === 'AGENT') {
-        // 1. Get properties created by this agent
-        const agentProperties = await db.query('properties', { agentId: user.id })
-        
-        // 2. Get properties from landlords represented by this agent
-        // First, find all landlords represented by this agent
-        let representedLandlordIds: string[] = []
-        
-        // Method A: Check users table for representedById
-        try {
-          // This might not work efficiently if db adapter doesn't support advanced queries, 
-          // so we might need to fetch all landlords? No, that's bad.
-          // Let's assume we can query users by representedById if the adapter supports it.
-          // But the SupabaseAdapter implementation of query might be limited to specific collections.
-          // Let's rely on api/agent/landlords logic which we know works or we can replicate.
-          // Or simpler: fetch 'landlordProfiles' with representedById if available.
-          
-          // Let's try to find landlords where representedById == agent.id
-          // Since we don't have a direct "findUsers" with filter exposed easily in generic 'query' 
-          // (unless 'users' collection works), let's try 'users' or 'landlordProfiles'.
-          
-          // For domestic (CloudBase), 'users' collection usually works.
-          // For global (Prisma), 'users' might not be queryable via 'query' method depending on implementation.
-          // Let's look at db-adapter.ts again? 
-          // Actually, let's just stick to what we know: 
-          // If the agent created the property, agentId is set.
-          // If the landlord created it, agentId might be null.
-          
-          // Robust approach:
-          // Get all properties. (Might be heavy but safe for now given MVP scale)
-          // Filter those where property.agentId == user.id OR property.landlord.representedById == user.id
-          
-          // Optimization: 
-          // Fetch properties with agentId = user.id (we already have this: agentProperties)
-          // Fetch landlords represented by user.id -> then fetch their properties.
-          
-          const landlords = await db.query('users', { representedById: user.id })
-          representedLandlordIds = landlords.map((l: any) => l.id)
-          
-          // Also check LandlordProfiles if applicable
-          try {
-             const profiles = await db.query('landlordProfiles', { representedById: user.id })
-             const profileUserIds = profiles.map((p: any) => p.userId)
-             representedLandlordIds = [...new Set([...representedLandlordIds, ...profileUserIds])]
-          } catch (e) {
-             // Ignore if table doesn't exist
-          }
-        } catch (e) {
-          console.warn('Failed to fetch represented landlords', e)
-        }
-
-        let landlordProperties: any[] = []
-        if (representedLandlordIds.length > 0) {
-          // Fetch properties for each landlord
-          // Ideally: db.query('properties', { landlordId: { in: ids } })
-          // But CloudBase adapter workaround for 'in' query might be needed or handled.
-          // Let's do parallel requests for now or relying on the adapter to handle it if we pass an array?
-          // The CloudBase workaround memory says "splitting array queries into multiple single-value queries".
-          // Let's just loop.
-          const promises = representedLandlordIds.map(id => db.query('properties', { landlordId: id }))
-          const results = await Promise.all(promises)
-          landlordProperties = results.flat()
-        }
-
-        // Merge properties
-        const allProps = [...agentProperties, ...landlordProperties]
-        // Deduplicate by ID
-        const uniqueProps = Array.from(new Map(allProps.map(p => [p.id, p])).values())
-        
-        const propertyIds = uniqueProps.map((p: any) => p.id)
-        applications = applications.filter((app: any) => propertyIds.includes(app.propertyId))
+        const allUsers = await effectiveDb.query('users', {}, { orderBy: { createdAt: 'desc' } })
+        const representedLandlordIds = new Set(
+          allUsers
+            .filter((u: any) => {
+              const type = String(u.userType || '').toUpperCase()
+              if (type !== 'LANDLORD') return false
+              const repId = getRepId(u)
+              return agentIdSet.has(String(repId || ''))
+            })
+            .map((u: any) => String(getField(u, ['id', 'userId']) || ''))
+            .filter(Boolean)
+        )
+        const allProperties = await effectiveDb.query('properties', {}, { orderBy: { createdAt: 'desc' } })
+        const propertyIds = new Set(
+          allProperties
+            .filter((p: any) => {
+              const pid = String(getField(p, ['agentId', 'agent_id']) || '')
+              const lid = String(getField(p, ['landlordId', 'landlord_id']) || '')
+              return agentIdSet.has(pid) || (lid && representedLandlordIds.has(lid))
+            })
+            .map((p: any) => String(getField(p, ['id']) || ''))
+            .filter(Boolean)
+        )
+        applications = applications.filter((app: any) => {
+          const pid = String(getField(app, ['propertyId', 'property_id']) || '')
+          return pid && propertyIds.has(pid)
+        })
       }
 
       if (status) {
@@ -372,15 +404,15 @@ export async function GET(request: NextRequest) {
     })
 
     // 加载关联数据
-    if (region === 'global') {
+    if (isPrisma) {
       return NextResponse.json({ applications })
     }
 
     const applicationsWithRelations = await Promise.all(
       applications.map(async (app: any) => {
         const [property, tenant] = await Promise.all([
-          db.findById('properties', app.propertyId),
-          db.findUserById(app.tenantId),
+          effectiveDb.findById('properties', app.propertyId),
+          effectiveDb.findUserById(app.tenantId),
         ])
         return {
           ...app,

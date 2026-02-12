@@ -201,7 +201,7 @@ export default function ApplyPage() {
 
               <div className="flex space-x-4">
                 <Button type="submit" disabled={loading}>
-                  {loading ? tCommon('loading') : (t('submitApplication') || "Submit Application")}
+                  {loading ? tCommon('loading') : (process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '提交' : 'Submit')}
                 </Button>
                 <Button type="button" variant="outline" onClick={() => router.back()}>
                   {tCommon('cancel')}

@@ -17,26 +17,54 @@ export async function GET(request: NextRequest) {
     }
 
     const db = getDatabaseAdapter()
-
-    const isChina = process.env.NEXT_PUBLIC_APP_REGION === 'china'
-    const filters: any = {
-      userType: 'LANDLORD'
+    const getField = (obj: any, keys: string[]) => {
+      for (const key of keys) {
+        const value = obj?.[key]
+        if (value !== undefined && value !== null && value !== '') return value
+      }
+      return undefined
     }
-    if (isChina) {
-      filters.representedById = user.id
+    const getRepId = (obj: any) => {
+      return (
+        getField(obj, ['representedById', 'represented_by_id', 'tenant_representedById', 'tenant_represented_by_id', 'landlord_representedById', 'landlord_represented_by_id']) ??
+        getField(obj?.landlordProfile, ['representedById', 'represented_by_id']) ??
+        getField(obj?.tenantProfile, ['representedById', 'represented_by_id'])
+      )
     }
+    let agentId = user.id
+    if (user.email) {
+      try {
+        const dbUser = await db.findUserByEmail(user.email)
+        if (dbUser?.id) agentId = dbUser.id
+      } catch (e) {
+        agentId = user.id
+      }
+    }
+    const agentIdSet = new Set([String(user.id), String(agentId)])
 
-    const allUsers = await db.query('users', filters, {
+    const allUsers = await db.query('users', {}, {
       orderBy: { createdAt: 'desc' }
     })
-    
-    const landlords = isChina
-      ? allUsers.filter((u: any) => {
-          if (u.userType !== 'LANDLORD') return false
-          const repId = u.representedById || u.landlordProfile?.representedById
-          return repId === user.id
+    const allProperties = await db.query('properties', {}, { orderBy: { createdAt: 'desc' } })
+    const agentPropertyLandlordIds = new Set(
+      allProperties
+        .filter((p: any) => {
+          const pid = String(getField(p, ['agentId', 'agent_id']) || '')
+          return agentIdSet.has(pid)
         })
-      : allUsers.filter((u: any) => u.userType === 'LANDLORD')
+        .map((p: any) => String(getField(p, ['landlordId', 'landlord_id']) || ''))
+        .filter(Boolean)
+    )
+    
+    // 无论是国内版还是国际版，都只返回该中介代理的房东
+    // 这样避免了"Dashboard里有房东但提交时无权限"的问题
+    const landlords = allUsers.filter((u: any) => {
+      const type = String(u.userType || '').toUpperCase()
+      if (type !== 'LANDLORD') return false
+      const repId = getRepId(u)
+      const id = String(getField(u, ['id', 'userId']) || '')
+      return agentIdSet.has(String(repId || '')) || (id && agentPropertyLandlordIds.has(id))
+    })
 
     console.log(`Found ${landlords.length} landlords in database`)
 
@@ -45,8 +73,10 @@ export async function GET(request: NextRequest) {
       landlords.map(async (landlord: any) => {
         try {
           // 获取该房东的房源数量
-          const allProperties = await db.query('properties', {})
-          const properties = allProperties.filter((p: any) => p.landlordId === landlord.id)
+          const properties = allProperties.filter((p: any) => {
+            const lid = String(getField(p, ['landlordId', 'landlord_id']) || '')
+            return lid === String(landlord.id)
+          })
           
           return {
             id: landlord.id,

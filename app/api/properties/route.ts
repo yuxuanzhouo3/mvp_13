@@ -1,22 +1,50 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-adapter'
 import { getAuthUser } from '@/lib/auth'
-import { getDatabaseAdapter } from '@/lib/db-adapter'
+import { createDatabaseAdapter, getDatabaseAdapter } from '@/lib/db-adapter'
 import { prisma } from '@/lib/db'
 import { randomUUID } from 'crypto'
+import { supabaseAdmin } from '@/lib/supabase'
 
 /**
  * 创建房源
  */
 export async function POST(request: NextRequest) {
   try {
+    const region = process.env.NEXT_PUBLIC_APP_REGION || 'global'
     const db = getDatabaseAdapter()
+
+    const isConnectionError = (error: any) => {
+      const msg = String(error?.message || '').toLowerCase()
+      return msg.includes('server has closed the connection') ||
+        msg.includes('connection') ||
+        msg.includes('timeout') ||
+        msg.includes('pool') ||
+        msg.includes('maxclients')
+    }
+
+    const runWithRetry = async <T,>(fn: () => Promise<T>): Promise<T> => {
+      try {
+        return await fn()
+      } catch (error: any) {
+        if (!isConnectionError(error)) {
+          throw error
+        }
+        try {
+          await prisma.$disconnect()
+        } catch {}
+        try {
+          await prisma.$connect()
+        } catch {}
+        return await fn()
+      }
+    }
 
     let user = await getCurrentUser(request)
 
     // 如果 getCurrentUser 失败，尝试使用 legacy auth 并从 JWT token 中提取完整信息
     if (!user) {
-      const legacyAuth = getAuthUser(request)
+      const legacyAuth = await getAuthUser(request)
       if (legacyAuth) {
         // 尝试从 JWT token 中提取完整用户信息（包括 userType）
         let userType = 'TENANT' // 默认值
@@ -157,8 +185,11 @@ export async function POST(request: NextRequest) {
       }
       
       if (!isRepresented) {
+        const errorMsg = region === 'china' 
+          ? 'You do not represent this landlord - 您没有代理该房东的权限' 
+          : 'You do not have permission to represent this landlord.'
         return NextResponse.json(
-          { error: 'You do not represent this landlord - 您没有代理该房东的权限' },
+          { error: errorMsg },
           { status: 403 }
         )
       }
@@ -216,8 +247,6 @@ export async function POST(request: NextRequest) {
         processedImages = []
       }
     }
-    const region = process.env.NEXT_PUBLIC_APP_REGION || 'global'
-    
     // 如果是国内版（CloudBase），严格限制图片数据大小
     if (region === 'china') {
       // CloudBase 对单个文档大小有限制，base64 图片必须很小
@@ -320,7 +349,11 @@ export async function POST(request: NextRequest) {
     // 使用数据库适配器创建房源（统一接口）
     let property
     try {
-      property = await db.create('properties', sanitizedPropertyData)
+      if (region === 'global') {
+        property = await runWithRetry(() => db.create('properties', sanitizedPropertyData))
+      } else {
+        property = await db.create('properties', sanitizedPropertyData)
+      }
     } catch (dbError: any) {
       const errorMsg = String(dbError?.message || '')
       const lower = errorMsg.toLowerCase()
@@ -463,36 +496,98 @@ export async function GET(request: NextRequest) {
       }
     }
     
-    // 构建查询条件
     const filters: any = {}
+    let resolvedUserId: string | null = null
+    let tokenUserId: string | null = null
+    const authHeader = request.headers.get('authorization')
+    if (authHeader && authHeader.startsWith('Bearer ') && supabaseAdmin) {
+      const token = authHeader.substring(7)
+      try {
+        const { data } = await supabaseAdmin.auth.getUser(token)
+        if (data?.user?.id) {
+          tokenUserId = String(data.user.id)
+        }
+      } catch {}
+    }
+    
     if (landlordId) {
       filters.landlordId = landlordId
+      resolvedUserId = landlordId
     } else if (user) {
       // 如果未指定landlordId，只返回当前用户的房源
-      let resolvedUserId = user.id
+      resolvedUserId = user.id
       let landlordIds: string[] = []
+      const landlordIdSet = new Set<string>()
       try {
         const dbUser =
           (await db.findUserById(user.id)) ||
           (user.email ? await db.findUserByEmail(user.email) : null)
-        if (dbUser?.userType === 'LANDLORD') {
+        if (dbUser) {
           resolvedUserId = dbUser.id
+          if (dbUser.userType === 'LANDLORD' || dbUser.userType === 'AGENT') {
+            landlordIdSet.add(String(resolvedUserId))
+          }
+        } else if (user.email && supabaseAdmin) {
+          const userTables = ['User', 'user', 'users']
+          for (const tableName of userTables) {
+            const { data, error } = await supabaseAdmin
+              .from(tableName)
+              .select('id,userType,email')
+              .eq('email', user.email)
+              .limit(1)
+            if (!error && data && data.length > 0) {
+              const row = data[0]
+              resolvedUserId = String(row.id)
+              const type = String(row.userType || '').toUpperCase()
+              if (type === 'LANDLORD' || type === 'AGENT') {
+                landlordIdSet.add(String(resolvedUserId))
+              }
+              break
+            }
+          }
+        } else {
+          landlordIdSet.add(String(user.id))
         }
       } catch (error: any) {
         console.error('Error fetching user:', error)
+        landlordIdSet.add(String(user.id))
       }
-      if (resolvedUserId && user.id && resolvedUserId !== user.id) {
-        landlordIds = [user.id, resolvedUserId].map(String)
-      } else if (resolvedUserId) {
-        landlordIds = [String(resolvedUserId)]
+      if (user?.id) landlordIdSet.add(String(user.id))
+      if (resolvedUserId) landlordIdSet.add(String(resolvedUserId))
+      if (tokenUserId) landlordIdSet.add(String(tokenUserId))
+      landlordIds = Array.from(landlordIdSet)
+      if (landlordIds.length === 0 && tokenUserId) {
+        landlordIds = [tokenUserId]
       }
       if (landlordIds.length > 0) {
         filters.landlordId = landlordIds.length === 1 ? landlordIds[0] : { in: landlordIds }
         console.log('Querying properties for landlord:', landlordIds)
+      } else {
+        // 如果没有找到有效的 landlordId，返回空结果
+        return NextResponse.json({
+          properties: [],
+          pagination: {
+            page,
+            limit,
+            total: 0,
+            totalPages: 0
+          }
+        })
       }
+    } else {
+      // 如果没有用户认证，返回空结果
+      return NextResponse.json({
+        properties: [],
+        pagination: {
+          page,
+          limit,
+          total: 0,
+          totalPages: 0
+        }
+      })
     }
     
-    console.log('Properties query filters:', filters)
+    console.log('Properties query filters:', filters, 'resolvedUserId:', resolvedUserId)
 
     const propertySelect = {
       id: true,
@@ -525,14 +620,31 @@ export async function GET(request: NextRequest) {
     let total = 0
     let properties: any[] = []
     if (region === 'global') {
-      total = await runWithRetry(() => prisma.property.count({ where: filters }))
-      properties = await runWithRetry(() => prisma.property.findMany({
-        where: filters,
-        select: propertySelect,
-        orderBy: { createdAt: 'desc' },
-        skip: (page - 1) * limit,
-        take: limit,
-      }))
+      try {
+        total = await runWithRetry(() => prisma.property.count({ where: filters }))
+        properties = await runWithRetry(() => prisma.property.findMany({
+          where: filters,
+          select: propertySelect,
+          orderBy: { createdAt: 'desc' },
+          skip: (page - 1) * limit,
+          take: limit,
+        }))
+      } catch (error: any) {
+        if (!isConnectionError(error)) {
+          throw error
+        }
+        const fallbackDb = createDatabaseAdapter('china')
+        const safeFilters = typeof filters.landlordId === 'object' ? {} : filters
+        let allProperties = await fallbackDb.query('properties', safeFilters, {
+          orderBy: { createdAt: 'desc' }
+        })
+        if (typeof filters.landlordId === 'object' && filters.landlordId?.in) {
+          const landlordIdSet = new Set(filters.landlordId.in.map((id: any) => String(id)))
+          allProperties = allProperties.filter((p: any) => landlordIdSet.has(String(p.landlordId || p.landlord_id || '')))
+        }
+        total = allProperties.length
+        properties = allProperties.slice((page - 1) * limit, (page - 1) * limit + limit)
+      }
     } else {
       const safeFilters = typeof filters.landlordId === 'object' ? {} : filters
       const allProperties = await db.query('properties', safeFilters, {
@@ -575,9 +687,167 @@ export async function GET(request: NextRequest) {
     })
   } catch (error: any) {
     console.error('Get properties error:', error)
-    return NextResponse.json(
-      { error: 'Failed to get properties', details: error.message },
-      { status: 500 }
-    )
+    if (!supabaseAdmin) {
+      const { searchParams } = new URL(request.url)
+      const page = parseInt(searchParams.get('page') || '1')
+      const limit = parseInt(searchParams.get('limit') || '20')
+      return NextResponse.json({
+        properties: [],
+        pagination: {
+          page,
+          limit,
+          total: 0,
+          totalPages: 0
+        }
+      })
+    }
+    const normalizeProperty = (p: any) => ({
+      ...p,
+      landlordId: p.landlordId ?? p.landlord_id,
+      createdAt: p.createdAt ?? p.created_at,
+      updatedAt: p.updatedAt ?? p.updated_at,
+    })
+    const propertyTables = ['Property', 'property', 'properties']
+    const userTables = ['User', 'user', 'users']
+    const selectFrom = async (
+      tables: string[],
+      builder: (tableName: string) => Promise<{ data: any; error: any; count?: number | null }>
+    ) => {
+      let lastError: any = null
+      for (const tableName of tables) {
+        const { data, error, count } = await builder(tableName)
+        if (!error) {
+          return { data, count }
+        }
+        lastError = error
+      }
+      return { data: null, count: null, error: lastError }
+    }
+    const { searchParams } = new URL(request.url)
+    const landlordId = searchParams.get('landlordId')
+    const page = parseInt(searchParams.get('page') || '1')
+    const limit = parseInt(searchParams.get('limit') || '20')
+    const from = (page - 1) * limit
+    const to = from + limit - 1
+    let landlordIds: string[] = []
+    if (landlordId) {
+      landlordIds = [landlordId]
+    } else {
+      const authHeader = request.headers.get('authorization')
+      let tokenEmail = ''
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        try {
+          const jwt = require('jsonwebtoken')
+          const decoded = jwt.verify(
+            authHeader.substring(7),
+            process.env.JWT_SECRET || 'your-secret-key'
+          ) as { userId: string; email: string; userType?: string }
+          tokenEmail = decoded.email || ''
+          if (decoded.userId) {
+            landlordIds = [String(decoded.userId)]
+          }
+        } catch {}
+      }
+      if (landlordIds.length === 0 && tokenEmail) {
+        const { data: userRows } = await selectFrom(userTables, (tableName) =>
+          supabaseAdmin
+            .from(tableName)
+            .select('id,userType,email')
+            .eq('email', tokenEmail)
+            .limit(1)
+        )
+        const dbUser = userRows?.[0]
+        if (dbUser?.id) {
+          landlordIds = [String(dbUser.id)]
+        }
+      }
+    }
+    const buildQuery = (tableName: string, landlordField?: string, orderField?: string) => {
+      let query = supabaseAdmin
+        .from(tableName)
+        .select('*', { count: 'exact' })
+        .range(from, to)
+      if (orderField) {
+        query = query.order(orderField, { ascending: false })
+      }
+      if (landlordField) {
+        if (landlordIds.length === 1) {
+          query = query.eq(landlordField, landlordIds[0])
+        } else if (landlordIds.length > 1) {
+          query = query.in(landlordField, landlordIds)
+        }
+      }
+      return query
+    }
+    let properties: any[] = []
+    let count: number | null = null
+    for (const tableName of propertyTables) {
+      const attempts = [
+        { landlordField: 'landlordId', orderField: 'createdAt' },
+        { landlordField: 'landlord_id', orderField: 'created_at' },
+        { landlordField: 'landlordId', orderField: 'created_at' },
+        { landlordField: 'landlord_id', orderField: 'createdAt' },
+        { landlordField: 'landlordId', orderField: undefined },
+        { landlordField: 'landlord_id', orderField: undefined },
+        { landlordField: undefined, orderField: 'createdAt' },
+        { landlordField: undefined, orderField: 'created_at' },
+        { landlordField: undefined, orderField: undefined },
+      ]
+      let lastError: any = null
+      for (const attempt of attempts) {
+        const { data, error, count: countValue } = await buildQuery(
+          tableName,
+          attempt.landlordField,
+          attempt.orderField
+        )
+        if (!error) {
+          properties = (data || []).map(normalizeProperty)
+          count = typeof countValue === 'number' ? countValue : null
+          lastError = null
+          break
+        }
+        lastError = error
+      }
+      if (!lastError) {
+        break
+      }
+    }
+    if (!properties) {
+      properties = []
+    }
+    const landlordIdSet = new Set((properties || []).map((p: any) => p.landlordId).filter(Boolean))
+    let landlordMap = new Map<string, any>()
+    if (landlordIdSet.size > 0) {
+      const { data: landlords } = await selectFrom(userTables, (tableName) =>
+        supabaseAdmin
+          .from(tableName)
+          .select('id,name,email')
+          .in('id', Array.from(landlordIdSet))
+      )
+      if (landlords) {
+        landlordMap = new Map(landlords.map((l: any) => [String(l.id), l]))
+      }
+    }
+    const propertiesWithLandlord = (properties || []).map((property: any) => {
+      const landlord = landlordMap.get(String(property.landlordId))
+      return {
+        ...property,
+        landlord: landlord ? {
+          id: landlord.id,
+          name: landlord.name,
+          email: landlord.email,
+        } : null,
+      }
+    })
+    const total = typeof count === 'number' ? count : propertiesWithLandlord.length
+    return NextResponse.json({
+      properties: propertiesWithLandlord,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: total === 0 ? 0 : Math.ceil(total / limit)
+      }
+    })
   }
 }

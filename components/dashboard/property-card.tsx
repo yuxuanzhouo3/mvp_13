@@ -39,12 +39,19 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
   const tCommon = useTranslations('common')
   const [isSaved, setIsSaved] = useState(false)
   const [saving, setSaving] = useState(false)
+  const propertyId = String(
+    (property as any).id ??
+      (property as any)._id ??
+      (property as any).propertyId ??
+      (property as any).property_id ??
+      ''
+  )
 
   useEffect(() => {
     // Check if property is saved
     const checkSaved = async () => {
       const token = localStorage.getItem("auth-token")
-      if (!token || !showSaveButton) return
+      if (!token || !showSaveButton || !propertyId) return
 
       try {
         const response = await fetch("/api/saved-properties", {
@@ -52,15 +59,27 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
         })
         if (response.ok) {
           const data = await response.json()
-          const saved = data.properties?.some((p: any) => p.id === property.id || p.id === String(property.id))
+          const savedIds = Array.isArray(data.savedPropertyIds)
+            ? data.savedPropertyIds.map((id: any) => String(id).trim())
+            : (data.properties || []).map((p: any) => String(p?.id ?? p?._id ?? p?.propertyId ?? p?.property_id ?? '').trim())
+          
+          // 检查多个可能的ID格式
+          const normalizedPropertyId = String(propertyId).trim()
+          const saved = savedIds.some((id: string) => {
+            const normalizedId = String(id).trim()
+            return normalizedId === normalizedPropertyId || 
+                   normalizedId === String((property as any).id || '').trim() ||
+                   normalizedId === String((property as any)._id || '').trim()
+          })
           setIsSaved(saved)
         }
       } catch (error) {
         // Silent fail
+        console.warn('Failed to check saved status:', error)
       }
     }
     checkSaved()
-  }, [property.id, showSaveButton])
+  }, [propertyId, showSaveButton, property])
 
   const handleSave = async (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -78,7 +97,7 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
     try {
       if (isSaved) {
         // Remove from saved
-        const response = await fetch(`/api/saved-properties?propertyId=${property.id}`, {
+        const response = await fetch(`/api/saved-properties?propertyId=${propertyId}`, {
           method: "DELETE",
           headers: { Authorization: `Bearer ${token}` },
         })
@@ -97,7 +116,7 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
             "Content-Type": "application/json",
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ propertyId: property.id }),
+          body: JSON.stringify({ propertyId: propertyId }),
         })
         if (response.ok) {
           setIsSaved(true)
@@ -107,6 +126,15 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
           })
         } else {
           const data = await response.json()
+          // 如果返回"already saved"错误，说明已经收藏了，更新状态
+          if (data.error && data.error.includes('already saved')) {
+            setIsSaved(true)
+            toast({
+              title: tCommon('info') || 'Info',
+              description: t('alreadySaved') || "Property is already saved",
+            })
+            return
+          }
           throw new Error(data.error || (t('savePropertyFailed') || "Failed to save property"))
         }
       }
@@ -121,26 +149,49 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
     }
   }
 
-  const handleViewDetails = () => {
-    const userStr = localStorage.getItem("user")
-    if (userStr) {
-      const user = JSON.parse(userStr)
-      if (user.userType === "TENANT") {
-        router.push(`/dashboard/tenant/property/${property.id}`)
-        return
-      } else if (user.userType === "LANDLORD") {
-        router.push(`/dashboard/landlord/properties/${property.id}`)
-        return
-      } else if (user.userType === "AGENT") {
-        router.push(`/dashboard/agent/properties/${property.id}`)
-        return
-      }
+  const handleViewDetails = (e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation()
+      e.preventDefault()
     }
-    router.push(`/properties/${property.id}`)
+    if (!propertyId) {
+      console.warn('Property ID is missing')
+      return
+    }
+    try {
+      const userStr = localStorage.getItem("user")
+      if (userStr) {
+        try {
+          const user = JSON.parse(userStr)
+          if (user.userType === "TENANT") {
+            router.push(`/dashboard/tenant/property/${propertyId}`)
+            return
+          } else if (user.userType === "LANDLORD") {
+            router.push(`/dashboard/landlord/properties/${propertyId}`)
+            return
+          } else if (user.userType === "AGENT") {
+            router.push(`/dashboard/agent/properties/${propertyId}`)
+            return
+          }
+        } catch (parseError) {
+          console.warn('Failed to parse user data:', parseError)
+        }
+      }
+      router.push(`/properties/${propertyId}`)
+    } catch (error) {
+      console.error('Navigation error:', error)
+      toast({
+        title: tCommon('error'),
+        description: 'Failed to navigate to property details',
+        variant: "destructive",
+      })
+    }
   }
 
   return (
-    <Card className="overflow-hidden hover:shadow-lg transition-shadow">
+    <Card 
+      className="overflow-hidden hover:shadow-lg transition-shadow"
+    >
       <div className="relative">
         <Image
           src={property.image || "/placeholder.svg"}
@@ -153,11 +204,11 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
           <Button 
             size="icon" 
             variant="ghost" 
-            className={`absolute top-2 right-2 bg-background/80 hover:bg-background ${isSaved ? 'text-red-500' : ''}`}
+            className={`absolute top-2 right-2 bg-background/80 hover:bg-background ${isSaved ? 'text-red-500' : 'text-foreground'}`}
             onClick={handleSave}
             disabled={saving}
           >
-            <Heart className={`h-4 w-4 ${isSaved ? 'fill-current' : ''}`} />
+            <Heart className={`h-4 w-4 ${isSaved ? 'fill-red-500 text-red-500' : 'fill-none text-foreground'}`} />
           </Button>
         )}
         {property.status && (
@@ -272,7 +323,11 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
               </Button>
             </div>
           ) : (
-            <Button className="w-full" onClick={handleViewDetails}>
+            <Button className="w-full" onClick={(e) => {
+              e.stopPropagation()
+              e.preventDefault()
+              handleViewDetails(e)
+            }}>
               {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '查看详情' : (t('viewDetails') || tCommon('view'))}
             </Button>
           )}

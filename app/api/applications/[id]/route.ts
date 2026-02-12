@@ -4,6 +4,8 @@ import { getDatabaseAdapter } from '@/lib/db-adapter'
 import { trackEvent } from '@/lib/analytics'
 import { createRentPayment } from '@/lib/payment-service'
 
+import { prisma } from '@/lib/db'
+
 /**
  * 更新申请状态
  */
@@ -20,11 +22,42 @@ export async function PATCH(
       )
     }
 
+    const isConnectionError = (error: any) => {
+      const msg = String(error?.message || '').toLowerCase()
+      return msg.includes('server has closed the connection') ||
+        msg.includes('connection') ||
+        msg.includes('timeout') ||
+        msg.includes('pool') ||
+        msg.includes('maxclients')
+    }
+
+    const runWithRetry = async <T,>(fn: () => Promise<T>): Promise<T> => {
+      try {
+        return await fn()
+      } catch (error: any) {
+        if (!isConnectionError(error)) {
+          throw error
+        }
+        try {
+          await prisma.$disconnect()
+        } catch {}
+        try {
+          await prisma.$connect()
+        } catch {}
+        return await fn()
+      }
+    }
+
     const body = await request.json()
     let { status } = body
 
     const db = getDatabaseAdapter()
-    const application = await db.findById('applications', params.id)
+    const region = process.env.NEXT_PUBLIC_APP_REGION || 'global'
+    
+    // 使用 retry 包装查询
+    const application = region === 'global' 
+      ? await runWithRetry(() => db.findById('applications', params.id))
+      : await db.findById('applications', params.id)
 
     if (!application) {
       return NextResponse.json(
@@ -33,8 +66,30 @@ export async function PATCH(
       )
     }
 
-    // 获取房源信息
-    const property = await db.findById('properties', application.propertyId)
+    // 获取房源信息，包括agentId
+    let property
+    if (region === 'global') {
+      try {
+        property = await runWithRetry(() => prisma.property.findUnique({
+          where: { id: application.propertyId },
+          select: {
+            id: true,
+            landlordId: true,
+            agentId: true,
+            title: true,
+            price: true,
+            deposit: true,
+            status: true,
+          }
+        }))
+      } catch (error) {
+        console.warn('Prisma property query failed, trying db adapter:', error)
+        property = await db.findById('properties', application.propertyId)
+      }
+    } else {
+      property = await db.findById('properties', application.propertyId)
+    }
+    
     if (!property) {
       return NextResponse.json(
         { error: 'Property not found' },
@@ -102,10 +157,49 @@ export async function PATCH(
       }
     }
 
-    const updatedApplication = await db.update('applications', params.id, {
-      status: status,
-      reviewedDate: new Date(),
-    })
+    // 更新申请状态，使用重试机制
+    let updatedApplication
+    try {
+      if (region === 'global') {
+        updatedApplication = await runWithRetry(() => prisma.application.update({
+          where: { id: params.id },
+          data: {
+            status: status,
+            reviewedDate: new Date(),
+          }
+        }))
+      } else {
+        updatedApplication = await db.update('applications', params.id, {
+          status: status,
+          reviewedDate: new Date(),
+        })
+      }
+    } catch (updateError: any) {
+      console.error('Failed to update application:', updateError)
+      // 如果是国际版，尝试使用Prisma直接更新
+      if (region === 'global') {
+        try {
+          updatedApplication = await runWithRetry(() => prisma.application.update({
+            where: { id: params.id },
+            data: {
+              status: status,
+              reviewedDate: new Date(),
+            }
+          }))
+        } catch (retryError: any) {
+          console.error('Retry update also failed:', retryError)
+          return NextResponse.json(
+            { error: `Failed to update application: ${retryError.message || 'Unknown error'}` },
+            { status: 500 }
+          )
+        }
+      } else {
+        return NextResponse.json(
+          { error: `Failed to update application: ${updateError.message || 'Unknown error'}` },
+          { status: 500 }
+        )
+      }
+    }
 
     // 加载关联数据
     const tenant = await db.findUserById(application.tenantId)
@@ -132,7 +226,6 @@ export async function PATCH(
 
     // 中介批准后通知房东
     if (status === 'AGENT_APPROVED') {
-      const region = process.env.NEXT_PUBLIC_APP_REGION || 'global'
       const isChina = region === 'china'
       
       const notificationTitle = isChina 
@@ -161,8 +254,9 @@ export async function PATCH(
       }
     }
 
-    // 如果申请被批准 (APPROVED 或 AGENT_APPROVED)，创建租赁合同并提示支付
-    if (status === 'APPROVED' || status === 'AGENT_APPROVED') {
+    // 如果申请被批准 (APPROVED)，创建租赁合同并提示支付
+    // 注意：AGENT_APPROVED 只是中间状态，不创建合同
+    if (status === 'APPROVED') {
       // 获取租客的tenantAgentId（如果有中介代理）
       let tenantAgentId = null
       try {

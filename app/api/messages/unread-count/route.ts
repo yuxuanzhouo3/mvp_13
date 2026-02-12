@@ -16,12 +16,21 @@ export async function GET(request: NextRequest) {
     }
 
     const db = getDatabaseAdapter()
-    const messages = await db.query('messages', {
-      receiverId: user.id
-    })
-    const count = messages.filter((m: any) => {
+    let userId = user.id
+    if (user.email) {
+      try {
+        const dbUser = await db.findUserByEmail(user.email)
+        if (dbUser?.id) userId = dbUser.id
+      } catch (e) {
+        userId = user.id
+      }
+    }
+    const userIdSet = new Set([String(user.id), String(userId)])
+    const allMessages = await db.query('messages', {})
+    const count = allMessages.filter((m: any) => {
+      const receiver = String(m.receiverId || m.receiver_id || '')
       const isUnread = m.isRead === false || m.isRead === null || m.isRead === undefined || m.is_read === false
-      return isUnread
+      return userIdSet.has(receiver) && isUnread
     }).length
 
     return NextResponse.json({ count })

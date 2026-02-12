@@ -1,24 +1,41 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getAuthUser } from '@/lib/auth'
 import { getCurrentUser } from '@/lib/auth-adapter'
-import { getDatabaseAdapter } from '@/lib/db-adapter'
+import { createDatabaseAdapter, getDatabaseAdapter } from '@/lib/db-adapter'
 import { prisma } from '@/lib/db'
+import { supabaseAdmin } from '@/lib/supabase'
 
 /**
  * Get payments for current user
  */
 export async function GET(request: NextRequest) {
   try {
-    const user = await getCurrentUser(request)
+    let user = await getCurrentUser(request)
     if (!user) {
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
+      const legacy = await getAuthUser(request)
+      if (legacy) {
+        user = {
+          id: legacy.userId || legacy.id,
+          email: legacy.email || '',
+          userType: legacy.userType
+        }
+      }
+    }
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
     const region = process.env.NEXT_PUBLIC_APP_REGION || 'global'
     const db = getDatabaseAdapter()
-    let dbUser = null
+    const isConnectionError = (error: any) => {
+      const msg = String(error?.message || '').toLowerCase()
+      return msg.includes('server has closed the connection') ||
+        msg.includes('connection') ||
+        msg.includes('timeout') ||
+        msg.includes('pool') ||
+        msg.includes('maxclients')
+    }
+    let dbUser: any = null
     try {
       dbUser = await db.findUserById(user.id)
     } catch {}
@@ -28,113 +45,109 @@ export async function GET(request: NextRequest) {
       } catch {}
     }
     const resolvedUserId = dbUser?.id || user.id
-
-    let payments: any[] = []
-    if (region === 'global') {
-      payments = await prisma.payment.findMany({
-        select: {
-          id: true,
-          userId: true,
-          type: true,
-          amount: true,
-          status: true,
-          description: true,
-          propertyId: true,
-          transactionId: true,
-          paymentMethod: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-      })
-    } else {
-      payments = await db.query('payments', {})
+    const resolvedUserType = dbUser?.userType || user.userType
+    let tokenUserId: string | null = null
+    const authHeader = request.headers.get('authorization')
+    if (authHeader && authHeader.startsWith('Bearer ') && supabaseAdmin) {
+      const token = authHeader.substring(7)
+      try {
+        const { data } = await supabaseAdmin.auth.getUser(token)
+        if (data?.user?.id) {
+          tokenUserId = String(data.user.id)
+        }
+      } catch {}
     }
+
+    const where: any = {}
     
-    console.log('Payments API - Total payments found:', payments.length, 'User ID:', resolvedUserId, 'UserType:', dbUser?.userType)
-    
-    // 应用过滤
-    if (dbUser?.userType === 'TENANT') {
+    if (resolvedUserType === 'TENANT') {
       // Tenants see their own payments
-      const beforeFilter = payments.length
-      payments = payments.filter((p: any) => p.userId === resolvedUserId)
-      console.log('Payments API - After tenant filter:', payments.length, 'from', beforeFilter)
-    } else if (dbUser?.userType === 'LANDLORD') {
-      // Landlords see payments for their properties
-      const properties = region === 'global'
-        ? await prisma.property.findMany({
-            where: { landlordId: resolvedUserId },
-            select: { id: true },
-          })
-        : await db.query('properties', { landlordId: resolvedUserId })
-      const propertyIds = properties.map((p: any) => p.id)
-      payments = payments.filter((p: any) => p.propertyId && propertyIds.includes(p.propertyId))
+      where.userId = resolvedUserId
+    } else if (resolvedUserType === 'LANDLORD') {
+      const landlordIds = new Set<string>([String(resolvedUserId), String(user.id)])
+      if (tokenUserId) landlordIds.add(String(tokenUserId))
+      where.property = {
+        landlordId: landlordIds.size === 1 ? Array.from(landlordIds)[0] : { in: Array.from(landlordIds) }
+      }
+    }
+    let useFallback = false
+    if (region === 'global') {
+      try {
+        await prisma.payment.count()
+      } catch (error: any) {
+        if (!isConnectionError(error)) {
+          throw error
+        }
+        useFallback = true
+      }
+    }
+    const effectiveDb = useFallback ? createDatabaseAdapter('china') : db
+    if (region === 'global' && !useFallback) {
+      const payments = await prisma.payment.findMany({
+        where,
+        include: {
+          property: {
+            select: {
+              id: true,
+              title: true,
+              address: true
+            }
+          },
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true
+            }
+          }
+        },
+        orderBy: { createdAt: 'desc' }
+      })
+
+      return NextResponse.json({ payments })
     }
 
-    // 排序
-    payments.sort((a: any, b: any) => {
-      const dateA = new Date(a.createdAt).getTime()
-      const dateB = new Date(b.createdAt).getTime()
-      return dateB - dateA
-    })
+    let payments = await effectiveDb.query('payments', {})
+    if (resolvedUserType === 'TENANT') {
+      payments = payments.filter((p: any) => String(p.userId || p.user_id || '') === String(resolvedUserId))
+    } else if (resolvedUserType === 'LANDLORD') {
+      const landlordIds = new Set<string>([String(resolvedUserId), String(user.id)])
+      if (tokenUserId) landlordIds.add(String(tokenUserId))
+      const properties = await effectiveDb.query('properties', {})
+      const propertyIds = new Set(
+        properties
+          .filter((p: any) => landlordIds.has(String(p.landlordId || p.landlord_id || '')))
+          .map((p: any) => p.id || p._id)
+          .filter(Boolean)
+      )
+      payments = payments.filter((p: any) => {
+        const pid = String(p.propertyId || p.property_id || '')
+        return pid && propertyIds.has(pid)
+      })
+    }
 
-    // 加载关联数据
     const paymentsWithRelations = await Promise.all(
-      payments.map(async (payment: any) => {
-        let property = null
-        let paymentUser = null
-        
-        try {
-          if (payment.propertyId) {
-            property = region === 'global'
-              ? await prisma.property.findUnique({
-                  where: { id: payment.propertyId },
-                  select: { id: true, title: true, address: true },
-                })
-              : await db.findById('properties', payment.propertyId)
-          }
-        } catch (err) {
-          console.warn('Failed to load property for payment:', payment.id, err)
-        }
-        
-        try {
-          paymentUser = region === 'global'
-            ? await prisma.user.findUnique({
-                where: { id: payment.userId },
-                select: { id: true, name: true, email: true },
-              })
-            : await db.findUserById(payment.userId)
-        } catch (err) {
-          console.warn('Failed to load user for payment:', payment.id, err)
-        }
-        
-        // 确保metadata是对象格式
-        let metadata = payment.metadata
-        if (typeof metadata === 'string') {
-          try {
-            metadata = JSON.parse(metadata)
-          } catch {
-            metadata = {}
-          }
-        }
-        
+      payments.map(async (p: any) => {
+        const [property, paymentUser] = await Promise.all([
+          p.propertyId ? effectiveDb.findById('properties', p.propertyId) : null,
+          p.userId ? effectiveDb.findUserById(p.userId) : null
+        ])
         return {
-          ...payment,
-          metadata: metadata || {},
+          ...p,
           property: property ? {
             id: property.id,
             title: property.title,
-            address: property.address,
+            address: property.address
           } : null,
           user: paymentUser ? {
             id: paymentUser.id,
             name: paymentUser.name,
-            email: paymentUser.email,
-          } : null,
+            email: paymentUser.email
+          } : null
         }
       })
     )
 
-    console.log('Payments API - Returning payments:', paymentsWithRelations.length)
     return NextResponse.json({ payments: paymentsWithRelations })
   } catch (error: any) {
     console.error('Get payments error:', error)

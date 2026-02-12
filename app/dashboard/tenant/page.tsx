@@ -23,6 +23,7 @@ export default function TenantDashboard() {
   const t = useTranslations('dashboard')
   const tHero = useTranslations('hero')
   const tCommon = useTranslations('common')
+  const tFooter = useTranslations('footer')
   const currencySymbol = getCurrencySymbol()
   const isChina = process.env.NEXT_PUBLIC_APP_REGION === 'china'
   const [searchQuery, setSearchQuery] = useState("")
@@ -32,6 +33,8 @@ export default function TenantDashboard() {
   const [leases, setLeases] = useState<any[]>([])
   const [payments, setPayments] = useState<any[]>([])
   const [notifications, setNotifications] = useState<any[]>([])
+  const [hasSearched, setHasSearched] = useState(false)
+  const [searchLoading, setSearchLoading] = useState(false)
   const [stats, setStats] = useState({
     savedCount: 0,
     applicationsCount: 0,
@@ -78,7 +81,7 @@ export default function TenantDashboard() {
         break
       default:
         variant = "outline"
-        label = status || t('status')
+        label = status || (process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '状态' : 'Status')
     }
     
     // Using a custom Badge wrapper or styling since "success" variant might not exist in standard shadcn Badge
@@ -97,6 +100,23 @@ export default function TenantDashboard() {
         {label}
       </Badge>
     )
+  }
+
+  const resolveImageUrl = (images: any) => {
+    if (!images) return "/placeholder.svg"
+    if (Array.isArray(images)) {
+      return images[0] || "/placeholder.svg"
+    }
+    if (typeof images === "string") {
+      try {
+        const parsed = JSON.parse(images)
+        if (Array.isArray(parsed) && parsed[0]) {
+          return parsed[0]
+        }
+      } catch {}
+      return images.startsWith("http") ? images : "/placeholder.svg"
+    }
+    return "/placeholder.svg"
   }
 
   // Fetch user data and stats
@@ -480,7 +500,7 @@ export default function TenantDashboard() {
               {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '搜索' : t('search')}
             </TabsTrigger>
             <TabsTrigger value="rentals">
-              {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '我的租赁' : t('myRentals')}
+              {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '我的租赁' : tFooter('myRentals')}
             </TabsTrigger>
             <TabsTrigger value="saved">
               {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '收藏的房源' : t('savedProperties')}
@@ -504,7 +524,7 @@ export default function TenantDashboard() {
             <Card>
               <CardHeader>
                 <CardTitle>
-                  {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '我的租赁' : t('myRentals')}
+                  {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '我的租赁' : tFooter('myRentals')}
                 </CardTitle>
                 <CardDescription>
                   {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '跟踪您的租金支付和押金状态' : t('trackRentPayments')}
@@ -621,37 +641,48 @@ export default function TenantDashboard() {
                     <Filter className="mr-2 h-4 w-4" />
                     {tCommon('filter') || "Filters"}
                   </Button>
-                  <Button onClick={async () => {
+                  <Button
+                    onClick={async () => {
                     if (!searchQuery.trim()) {
                       alert(tCommon('error') || "Please enter search content")
                       return
                     }
                     const token = localStorage.getItem("auth-token")
+                    setSearchLoading(true)
+                    setHasSearched(true)
                     try {
-                      const response = await fetch(`/api/properties/search?city=${encodeURIComponent(searchQuery)}`, {
+                      const response = await fetch(`/api/properties/search?q=${encodeURIComponent(searchQuery)}`, {
                         headers: token ? { Authorization: `Bearer ${token}` } : {}
                       })
                       const data = await response.json()
-                      if (data.properties) {
+                      if (response.ok && data.properties) {
                         setSearchResults(data.properties.map((p: any) => ({
                           id: p.id,
                           title: p.title,
-                          location: `${p.city}, ${p.state}`,
+                          location: [p.city, p.state].filter(Boolean).join(", "),
                           price: p.price,
                           beds: p.bedrooms,
                           baths: p.bathrooms,
                           sqft: p.sqft || 0,
-                          image: typeof p.images === 'string' ? (JSON.parse(p.images)?.[0] || '/placeholder.svg') : (p.images?.[0] || '/placeholder.svg'),
+                          image: resolveImageUrl(p.images),
                           status: 'available',
                         })))
+                      } else {
+                        setSearchResults([])
+                        alert(data.error || "Search failed, please try again later")
                       }
                     } catch (err) {
+                      setSearchResults([])
                       console.error(err)
                       alert("Search failed, please try again later")
+                    } finally {
+                      setSearchLoading(false)
                     }
-                  }}>
+                  }}
+                  disabled={searchLoading}
+                  >
                     <Search className="mr-2 h-4 w-4" />
-                    {isChina ? "搜索" : "Search"}
+                    {searchLoading ? (tCommon('loading') || "Loading...") : (isChina ? "搜索" : "Search")}
                   </Button>
                 </div>
               </CardContent>
@@ -667,7 +698,11 @@ export default function TenantDashboard() {
             ) : (
               <Card>
                 <CardContent className="p-12 text-center">
-                  <p className="text-muted-foreground">{t('enterSearchCriteria') || "Enter search criteria and click search to find properties"}</p>
+                  <p className="text-muted-foreground">
+                    {hasSearched
+                      ? (t('noPropertiesFound') || "No properties found")
+                      : (t('enterSearchCriteria') || "Enter search criteria and click search to find properties")}
+                  </p>
                 </CardContent>
               </Card>
             )}

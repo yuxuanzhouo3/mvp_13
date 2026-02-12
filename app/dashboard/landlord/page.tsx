@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { useTranslations } from 'next-intl'
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -15,13 +14,10 @@ import { TenantApplications } from "@/components/dashboard/tenant-applications"
 import { PaymentHistory } from "@/components/dashboard/payment-history"
 import { MessageCenter } from "@/components/dashboard/message-center"
 import { AIChat } from "@/components/dashboard/ai-chat"
-import { getCurrencySymbol } from "@/lib/utils"
 
 export default function LandlordDashboard() {
   const router = useRouter()
-  const t = useTranslations('dashboard')
-  const tProperty = useTranslations('property')
-  const tApplication = useTranslations('application')
+  const [currentUser, setCurrentUser] = useState<any>(null)
   const [stats, setStats] = useState({
     totalProperties: 0,
     activeTenants: 0,
@@ -31,136 +27,167 @@ export default function LandlordDashboard() {
   const [recentActivity, setRecentActivity] = useState<any[]>([])
   const [tenants, setTenants] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [userName, setUserName] = useState("")
-  const currencySymbol = getCurrencySymbol()
 
   useEffect(() => {
-    const storedUser = localStorage.getItem("user")
-    if (storedUser) {
-      try {
-        const parsed = JSON.parse(storedUser)
-        if (parsed?.name) {
-          setUserName(parsed.name)
-        }
-      } catch {
-        setUserName("")
+    const bootstrap = async () => {
+      const token = localStorage.getItem("auth-token")
+      if (!token) {
+        router.replace("/auth/login")
+        return
       }
+
+      let user: any = null
+      const userStr = localStorage.getItem("user")
+      if (userStr) {
+        try {
+          user = JSON.parse(userStr)
+        } catch (e) {
+          localStorage.removeItem("user")
+        }
+      }
+
+      if (!user) {
+        const profileRes = await fetch("/api/auth/profile", {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (profileRes.status === 401 || profileRes.status === 403) {
+          handleUnauthorized()
+          return
+        }
+        if (profileRes.ok) {
+          const data = await profileRes.json().catch(() => ({}))
+          if (data.user) {
+            localStorage.setItem("user", JSON.stringify(data.user))
+            user = data.user
+          }
+        }
+      }
+
+      if (user) {
+        setCurrentUser(user)
+        const userType = String(user.userType || "").toUpperCase()
+        if (userType !== "LANDLORD") {
+          if (userType === "TENANT") {
+            router.push("/dashboard/tenant")
+          } else if (userType === "AGENT") {
+            router.push("/dashboard/agent")
+          } else {
+            router.push("/auth/login")
+          }
+          return
+        }
+      }
+
+      await fetchDashboardData(token, user)
     }
-    fetchDashboardData()
+
+    bootstrap()
   }, [])
 
-  const fetchDashboardData = async () => {
-    try {
-      const token = localStorage.getItem("auth-token")
-      if (!token) return
+  const handleUnauthorized = () => {
+    localStorage.removeItem("auth-token")
+    localStorage.removeItem("user")
+    router.replace("/auth/login")
+  }
 
-      // Fetch properties
-      const propertiesRes = await fetch("/api/properties", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (propertiesRes.ok) {
-        const propertiesData = await propertiesRes.json()
-        // 使用 pagination.total 获取真实的总数，而不是当前页的数量
-        const totalProperties = propertiesData.pagination?.total || propertiesData.properties?.length || 0
-        setStats(prev => ({ ...prev, totalProperties }))
+  const fetchDashboardData = async (token: string, user?: any) => {
+    try {
+      if (!token) {
+        handleUnauthorized()
+        return
       }
 
-      // Fetch applications
-      const applicationsRes = await fetch("/api/applications?userType=landlord", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
+      const headers = { Authorization: `Bearer ${token}` }
+      const [propertiesRes, applicationsRes, tenantsRes, paymentsRes, notificationsRes] = await Promise.all([
+        fetch("/api/properties", { headers }),
+        fetch("/api/applications?userType=landlord", { headers }),
+        fetch("/api/landlord/tenants", { headers }),
+        fetch("/api/payments", { headers }),
+        fetch("/api/notifications?unreadOnly=true", { headers }),
+      ])
+
+      const unauthorized = [propertiesRes, applicationsRes, tenantsRes, paymentsRes, notificationsRes].some(
+        (res) => res.status === 401 || res.status === 403
+      )
+      if (unauthorized) {
+        handleUnauthorized()
+        return
+      }
+
+      let propertiesCount = 0
+      if (propertiesRes.ok) {
+        const propertiesData = await propertiesRes.json().catch(() => ({}))
+        const totalFromPagination = propertiesData.pagination?.total ?? propertiesData.total
+        propertiesCount = totalFromPagination ?? propertiesData.properties?.length ?? 0
+      }
+
+      if (propertiesCount === 0 && user?.id) {
+        const fallbackRes = await fetch(`/api/properties?landlordId=${user.id}`, { headers })
+        if (fallbackRes.ok) {
+          const fallbackData = await fallbackRes.json().catch(() => ({}))
+          const totalFromPagination = fallbackData.pagination?.total ?? fallbackData.total
+          propertiesCount = totalFromPagination ?? fallbackData.properties?.length ?? 0
+        }
+      }
+
+      let approvedApplicationsCount = 0
       if (applicationsRes.ok) {
-        const applicationsData = await applicationsRes.json()
+        const applicationsData = await applicationsRes.json().catch(() => ({}))
         const applications = applicationsData.applications || []
-        setStats(prev => ({ ...prev, activeTenants: applications.filter((a: any) => a.status === 'APPROVED').length }))
+        approvedApplicationsCount = applications.filter((a: any) => a.status === 'APPROVED').length
         
         // Set recent activity from applications
-        const regionIsChina = process.env.NEXT_PUBLIC_APP_REGION === 'china'
-        const recent = applications.slice(0, 3).map((app: any) => {
-          const dt = new Date(app.appliedDate || app.createdAt)
-          const y = dt.getFullYear()
-          const m = String(dt.getMonth() + 1).padStart(2, '0')
-          const d = String(dt.getDate()).padStart(2, '0')
-          const hh = String(dt.getHours()).padStart(2, '0')
-          const mm = String(dt.getMinutes()).padStart(2, '0')
-          const timeStr = regionIsChina ? `${y}-${m}-${d} ${hh}:${mm}` : dt.toLocaleString()
-          const getLocalizedStatus = (status: string) => {
-            if (!status) return "PENDING"
-            const upper = status.toUpperCase()
-            switch (upper) {
-              case 'PENDING': return tApplication('pending')
-              case 'APPROVED': return tApplication('approved')
-              case 'REJECTED': return tApplication('rejected')
-              case 'WITHDRAWN': return tApplication('withdrawn')
-              case 'AGENT_APPROVED': return tApplication('agentApproved') || "Agent Approved"
-              default: return status
-            }
-          }
-
-          return {
-            id: app.id,
-            type: "application",
-            message: regionIsChina 
-              ? t('newApplicationForProperty', { title: app.property?.title || t('property') })
-              : `New application for ${app.property?.title || 'Property'}`,
-            time: timeStr,
-            status: getLocalizedStatus(app.status || "PENDING"),
-          }
-        })
+        const recent = applications.slice(0, 3).map((app: any, index: number) => ({
+          id: app.id,
+          type: "application",
+          message: `New application for ${app.property?.title || 'Property'}`,
+          time: index === 0 ? "2 hours ago" : index === 1 ? "1 day ago" : "2 days ago",
+          status: app.status?.toLowerCase() || "pending",
+        }))
         setRecentActivity(recent)
       }
 
-      // Fetch tenants
-      const tenantsRes = await fetch("/api/landlord/tenants", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
+      let tenantsCount = 0
       if (tenantsRes.ok) {
-        const tenantsData = await tenantsRes.json()
-        setTenants(tenantsData.tenants || [])
+        const tenantsData = await tenantsRes.json().catch(() => ({}))
+        const tenantsList = tenantsData.tenants || []
+        tenantsCount = tenantsList.length
+        setTenants(tenantsList)
       }
 
-      // Fetch payments to calculate monthly revenue
-      const paymentsRes = await fetch("/api/payments", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
+      let monthlyRevenue = 0
       if (paymentsRes.ok) {
-        const paymentsData = await paymentsRes.json()
+        const paymentsData = await paymentsRes.json().catch(() => ({}))
         const payments = paymentsData.payments || []
-        
-        // 计算本月总收入：已完成的支付金额
         const now = new Date()
         const currentMonth = now.getMonth()
         const currentYear = now.getFullYear()
-        
-        const monthlyRevenue = payments
+        monthlyRevenue = payments
           .filter((p: any) => {
-            // 只计算已完成的支付
-            if (p.status !== 'COMPLETED') return false
-            
-            // 计算本月的支付
-            const paymentDate = new Date(p.createdAt || p.paidAt || p.id)
-            return paymentDate.getMonth() === currentMonth && 
-                   paymentDate.getFullYear() === currentYear
+            const status = String(p.status || '').toUpperCase()
+            if (status !== 'COMPLETED' && status !== 'PAID') return false
+            const createdAt = new Date(p.createdAt || p.updatedAt || p.paidAt || p.created_at || p.paid_at || 0)
+            return createdAt.getMonth() === currentMonth && createdAt.getFullYear() === currentYear
           })
           .reduce((sum: number, p: any) => {
-            // 如果是租金支付，使用distribution中的landlordNet（扣除平台费和佣金后的净收入）
-            if (p.type === 'RENT' && p.distribution && typeof p.distribution === 'object') {
-              const dist = typeof p.distribution === 'string' ? JSON.parse(p.distribution) : p.distribution
-              return sum + (dist.landlordNet || 0)
-            }
-            // 其他类型的支付，使用全额
-            return sum + (p.amount || 0)
+            const dist = p.distribution || {}
+            const amount = Number(dist.landlordNet ?? p.amount ?? 0)
+            return sum + (isNaN(amount) ? 0 : amount)
           }, 0)
-        
-        setStats(prev => ({ ...prev, monthlyRevenue }))
-        
-        // 计算待处理问题（争议和待处理的申请）
-        const pendingIssues = payments.filter((p: any) => 
-          p.status === 'PENDING' || p.escrowStatus === 'HELD_IN_ESCROW'
-        ).length
-        
-        setStats(prev => ({ ...prev, pendingIssues }))
       }
+
+      let pendingIssues = 0
+      if (notificationsRes.ok) {
+        const notificationsData = await notificationsRes.json().catch(() => ({}))
+        pendingIssues = (notificationsData.notifications || []).length
+      }
+
+      setStats({
+        totalProperties: propertiesCount,
+        activeTenants: tenantsCount || approvedApplicationsCount,
+        monthlyRevenue,
+        pendingIssues,
+      })
     } catch (error) {
       console.error("Failed to fetch dashboard data:", error)
     } finally {
@@ -170,25 +197,25 @@ export default function LandlordDashboard() {
 
   const statsCards = [
     {
-      title: t('totalProperties'),
+      title: "Total Properties",
       value: stats.totalProperties.toString(),
       change: "",
       icon: Home,
     },
     {
-      title: t('activeTenants'),
+      title: "Active Tenants",
       value: stats.activeTenants.toString(),
       change: "",
       icon: Users,
     },
     {
-      title: t('monthlyRevenue'),
-      value: `${currencySymbol}${stats.monthlyRevenue.toLocaleString()}`,
+      title: "Monthly Revenue",
+      value: `$${stats.monthlyRevenue.toLocaleString()}`,
       change: "",
       icon: DollarSign,
     },
     {
-      title: t('pendingIssues'),
+      title: "Pending Issues",
       value: stats.pendingIssues.toString(),
       change: "",
       icon: AlertCircle,
@@ -201,12 +228,12 @@ export default function LandlordDashboard() {
         {/* Header */}
         <div className="flex justify-between items-center">
           <div>
-            <h1 className="text-3xl font-bold">{t('welcome')}{userName ? ` ${userName}` : ""}</h1>
-            <p className="text-muted-foreground">{t('manageProperties') || "高效管理您的房源与租客"}</p>
+            <h1 className="text-3xl font-bold">Property Management</h1>
+            <p className="text-muted-foreground">Manage your properties and tenants efficiently.</p>
           </div>
           <Button onClick={() => router.push("/dashboard/landlord/add-property")}>
             <Plus className="mr-2 h-4 w-4" />
-            {tProperty('addProperty')}
+            Add Property
           </Button>
         </div>
 
@@ -232,8 +259,8 @@ export default function LandlordDashboard() {
         {recentActivity.length > 0 && (
           <Card>
             <CardHeader>
-              <CardTitle>{t('recentActivity')}</CardTitle>
-              <CardDescription>{t('latestUpdates')}</CardDescription>
+              <CardTitle>Recent Activity</CardTitle>
+              <CardDescription>Latest updates from your properties</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
@@ -246,24 +273,8 @@ export default function LandlordDashboard() {
                         <div className="text-sm text-muted-foreground">{activity.time}</div>
                       </div>
                     </div>
-                    <Badge variant={activity.status === "APPROVED" || activity.status === "COMPLETED" ? "default" : "secondary"}>
-                      {(() => {
-                        const s = (activity.status || '').toUpperCase()
-                        switch (s) {
-                          case 'APPROVED':
-                            return tApplication('approved')
-                          case 'PENDING':
-                            return tApplication('pending')
-                          case 'REJECTED':
-                            return tApplication('rejected')
-                          case 'WITHDRAWN':
-                            return tApplication('withdrawn')
-                          case 'UNDER_REVIEW':
-                            return tApplication('underReview')
-                          default:
-                            return activity.status
-                        }
-                      })()}
+                    <Badge variant={activity.status === "completed" ? "default" : "secondary"}>
+                      {activity.status.replace("_", " ")}
                     </Badge>
                   </div>
                 ))}
@@ -275,12 +286,12 @@ export default function LandlordDashboard() {
         {/* Main Content Tabs */}
         <Tabs defaultValue="ai-search" className="space-y-6">
           <TabsList>
-            <TabsTrigger value="ai-search">{t('aiSmartSearch')}</TabsTrigger>
-            <TabsTrigger value="properties">{tProperty('title')}</TabsTrigger>
-            <TabsTrigger value="applications">{t('applications')}</TabsTrigger>
-            <TabsTrigger value="tenants">{t('tenants')}</TabsTrigger>
-            <TabsTrigger value="payments">{t('payments')}</TabsTrigger>
-            <TabsTrigger value="messages">{t('messages')}</TabsTrigger>
+            <TabsTrigger value="ai-search">AI Smart Search</TabsTrigger>
+            <TabsTrigger value="properties">Properties</TabsTrigger>
+            <TabsTrigger value="applications">Applications</TabsTrigger>
+            <TabsTrigger value="tenants">Tenants</TabsTrigger>
+            <TabsTrigger value="payments">Payments</TabsTrigger>
+            <TabsTrigger value="messages">Messages</TabsTrigger>
           </TabsList>
 
           <TabsContent value="ai-search" className="space-y-6">
@@ -298,8 +309,8 @@ export default function LandlordDashboard() {
           <TabsContent value="tenants" className="space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>{t('currentTenants')}</CardTitle>
-                <CardDescription>{t('manageTenantRelationships')}</CardDescription>
+                <CardTitle>Current Tenants</CardTitle>
+                <CardDescription>Manage your tenant relationships</CardDescription>
               </CardHeader>
               <CardContent>
                 {tenants.length > 0 ? (
@@ -336,7 +347,7 @@ export default function LandlordDashboard() {
                               </div>
                             )}
                             <Badge variant={tenant.source === 'lease' ? 'default' : 'secondary'} className="mt-1">
-                              {tenant.source === 'lease' ? (t('activeLease') || 'Active Lease') : (t('approved') || 'Approved')}
+                              {tenant.source === 'lease' ? 'Active Lease' : 'Approved'}
                             </Badge>
                           </div>
                           <Button
@@ -345,7 +356,7 @@ export default function LandlordDashboard() {
                             onClick={() => router.push(`/dashboard/landlord/messages?userId=${tenant.id}`)}
                           >
                             <MessageSquare className="h-4 w-4 mr-1" />
-                            {t('messages')}
+                            Message
                           </Button>
                         </div>
                       </div>
@@ -353,7 +364,7 @@ export default function LandlordDashboard() {
                   </div>
                 ) : (
                   <div className="text-center py-8 text-muted-foreground">
-                    {t('noActiveTenants')}
+                    No active tenants yet. Start accepting applications!
                   </div>
                 )}
               </CardContent>

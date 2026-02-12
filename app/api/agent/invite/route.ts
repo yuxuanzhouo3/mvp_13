@@ -17,23 +17,65 @@ export async function POST(request: NextRequest) {
     }
 
     const db = getDatabaseAdapter()
+    let agentId = user.id
+    if (user.email) {
+      try {
+        const dbUser = await db.findUserByEmail(user.email)
+        if (dbUser?.id) agentId = dbUser.id
+      } catch (e) {
+        agentId = user.id
+      }
+    }
+    const agentIdSet = new Set([String(user.id), String(agentId)])
     
     // Check if user exists
     // Note: findUserByEmail returns UnifiedUser. For checking existence it is fine.
     const existingUser = await db.findUserByEmail(email)
 
+    // Generate signature for invite link
+    const crypto = require('crypto')
+    const secret = process.env.NEXTAUTH_SECRET || 'secret'
+    const signature = crypto
+      .createHmac('sha256', secret)
+      .update(`${agentId}:${email}:${targetType.toLowerCase()}`)
+      .digest('hex')
+
     if (!existingUser) {
-      // User does not exist - Send Invitation Email (Mocked)
-      const inviteLink = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/auth/signup?ref=${user.id}&email=${encodeURIComponent(email)}&userType=${targetType.toLowerCase()}`
-      
-      // In a real application, you would send an email here using a service like Resend or SendGrid
-      console.log(`[Invite] Sending invitation to ${email} from agent ${user.id}. Link: ${inviteLink}`)
-      
-      return NextResponse.json({ 
-        message: region === 'china' ? '邀请已发送' : 'Invitation sent successfully', 
-        status: 'invited',
-        inviteLink 
-      })
+      // User does not exist - Create a placeholder user so they appear in the agent's list
+      // This allows the agent to see "Pending" users
+      try {
+        console.log(`[Invite] Creating placeholder user for ${email}`)
+        const newUser = await db.createUser({
+          email,
+          password: `INVITE_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`, // Placeholder password
+          name: email.split('@')[0], // Default name from email
+          userType: targetType,
+          representedById: agentId
+        })
+        
+        console.log(`[Invite] Placeholder user created: ${newUser.id}`)
+
+        // Send Invitation Email (Mocked)
+        // We still send the link for them to "Claim" the account (Signup)
+        const inviteLink = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/auth/signup?ref=${agentId}&email=${encodeURIComponent(email)}&userType=${targetType.toLowerCase()}&sig=${signature}`
+        
+        console.log(`[Invite] Sending invitation to ${email} from agent ${agentId}. Link: ${inviteLink}`)
+        
+        return NextResponse.json({ 
+          message: region === 'china' ? '邀请已发送' : 'Invitation sent successfully', 
+          status: 'invited_and_created',
+          inviteLink 
+        })
+      } catch (createError) {
+        console.error('[Invite] Failed to create placeholder user:', createError)
+        // Fallback to just sending email if creation fails (shouldn't happen)
+        const inviteLink = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/auth/signup?ref=${agentId}&email=${encodeURIComponent(email)}&userType=${targetType.toLowerCase()}&sig=${signature}`
+        return NextResponse.json({ 
+          message: region === 'china' ? '邀请已发送' : 'Invitation sent successfully', 
+          status: 'invited',
+          inviteLink 
+        })
+      }
     }
 
     // User exists
@@ -47,7 +89,7 @@ export async function POST(request: NextRequest) {
     // Check if already has agent
     // existingUser.representedById is populated now in db-adapter
     if (existingUser.representedById) {
-      if (existingUser.representedById === user.id) {
+      if (agentIdSet.has(String(existingUser.representedById))) {
         const message = targetType === 'LANDLORD'
           ? (region === 'china' ? '该房东已是您的合作对象' : 'Landlord is already connected to you')
           : (region === 'china' ? '该用户已是您的客户' : 'User is already your client')
@@ -61,7 +103,7 @@ export async function POST(request: NextRequest) {
     }
 
     // User exists and has no agent -> Bind them
-    await db.updateUser(existingUser.id, { representedById: user.id })
+    await db.updateUser(existingUser.id, { representedById: agentId })
 
     // Send notification to the tenant/landlord
     try {
@@ -94,7 +136,7 @@ export async function POST(request: NextRequest) {
 
       // 2. Create Message (More visible in Message Center)
       await db.create('messages', {
-          senderId: user.id,
+          senderId: agentId,
           receiverId: existingUser.id,
           content: welcomeMessage,
           isRead: false,

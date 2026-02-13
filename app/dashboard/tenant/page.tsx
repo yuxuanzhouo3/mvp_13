@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useTranslations } from 'next-intl'
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
@@ -48,6 +48,25 @@ export default function TenantDashboard() {
   const [activeTab, setActiveTab] = useState("ai-search")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  const uniqueLeases = useMemo(() => {
+    return leases.reduce((acc: any[], current) => {
+      const existingIndex = acc.findIndex(item => item.propertyId === current.propertyId);
+      if (existingIndex === -1) {
+        return [...acc, current];
+      }
+      
+      const existing = acc[existingIndex];
+      // If current is ACTIVE and existing is not, replace existing
+      if ((current.status === 'ACTIVE' || current.isActive) && !(existing.status === 'ACTIVE' || existing.isActive)) {
+        const newAcc = [...acc];
+        newAcc[existingIndex] = current;
+        return newAcc;
+      }
+      return acc;
+    }, []);
+  }, [leases]);
+
 
   const renderAppStatus = (status?: string) => {
     const s = (status || '').toUpperCase()
@@ -533,7 +552,7 @@ export default function TenantDashboard() {
               <CardContent>
                 {leases.length > 0 ? (
                   <div className="space-y-4">
-                    {leases.map((lease) => {
+                    {uniqueLeases.map((lease) => {
                        // Check for escrow payment - 通过多种方式匹配
                        const escrowPayment = payments.find(p => {
                          // 方法1: 通过metadata中的leaseId匹配
@@ -749,9 +768,7 @@ export default function TenantDashboard() {
                           </div>
                         </div>
                         <div className="text-right">
-                          <Badge variant={application.status === "APPROVED" || application.status === "AGENT_APPROVED" ? "default" : "secondary"}>
-                            {renderAppStatus(application.status)}
-                          </Badge>
+                          {renderAppStatus(application.status)}
                           <div className="mt-2">
                             <Button 
                               size="sm" 

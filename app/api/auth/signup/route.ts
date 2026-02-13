@@ -5,9 +5,20 @@ import { getDatabaseAdapter } from '@/lib/db-adapter'
 import { validateEmail } from '@/lib/validation'
 
 export async function POST(request: NextRequest) {
-  try {
+  const requestId = Math.random().toString(36).substring(7)
+  console.log(`[${requestId}] Signup Request Started`)
+  
+  const run = async (): Promise<NextResponse> => {
     const body = await request.json()
-    const { email, password, name, phone, userType, agentId, ref, sig } = body
+    let { email, password, name, phone, userType, agentId, ref, sig } = body
+    
+    // 去除首尾空格，防止因空格导致邮箱格式校验失败
+    if (email && typeof email === 'string') {
+      email = email.trim()
+    }
+    
+    console.log(`[${requestId}] Signup Params:`, { email, userType, ref, agentId, appRegion: process.env.NEXT_PUBLIC_APP_REGION })
+    
     // 优先使用 agentId，其次使用 ref 参数
     let representedById = agentId || ref
 
@@ -54,12 +65,17 @@ export async function POST(request: NextRequest) {
     }
 
     // 使用统一的注册接口（自动根据环境变量选择 Supabase 或 JWT）
+    const start = Date.now()
+    console.log(`[${requestId}] Calling signUp adapter...`)
+    
     const result = await signUp(email, password, {
       name,
       phone,
       userType,
       representedById
     })
+    
+    console.log(`[${requestId}] SignUp Adapter Success in ${Date.now() - start}ms`)
 
     // Create notification and message if representedById is present
     if (representedById) {
@@ -98,62 +114,33 @@ export async function POST(request: NextRequest) {
       metadata: {
         userType,
         email,
-      },
+        region,
+        representedById
+      }
     })
 
     return NextResponse.json({
       user: result.user,
       token: result.token
     })
+  } // End of run()
+
+  try {
+    // 设置整体超时，稍微小于前端的 60s（这里设 55s），以便后端先报错而不是前端中断
+    const res = await Promise.race([
+      run(),
+      new Promise<NextResponse>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '注册超时，请稍后重试' : 'Signup timed out, please try again'))
+        }, 55000)
+      })
+    ])
+    return res
   } catch (error: any) {
-    console.error('Signup error:', error)
-    const { getAppRegion } = await import('@/lib/db-adapter')
-    const region = getAppRegion()
-    const isChina = region === 'china'
-    
-    // 提供更详细的错误信息
-    const errorMessage = error.message || (isChina ? '注册失败' : 'Registration failed')
-    const lower = errorMessage.toLowerCase()
-    
-    // 检查是否是数据库连接问题
-    if (
-      lower.includes("can't reach database server") ||
-      lower.includes('can\\u2019t reach database server') ||
-      lower.includes('maxclients') ||
-      lower.includes('max clients reached') ||
-      lower.includes('pool_size') ||
-      lower.includes("can't reach") ||
-      lower.includes('connection') ||
-      lower.includes('timeout') ||
-      lower.includes('pooler')
-    ) {
-      return NextResponse.json(
-        { 
-          error: isChina ? '数据库连接失败，请稍后重试' : 'Database connection failed, please try again later',
-          details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-        },
-        { status: 503 }
-      )
-    }
-    
-    console.error('Signup error details:', {
-      message: errorMessage,
-      stack: error.stack,
-      name: error.name,
-    })
-    
-    // 如果错误信息已经包含了 "Registration failed" 或 "注册失败"，直接使用
-    // 否则添加前缀
-    let finalErrorMessage = errorMessage
-    if (!lower.includes('registration failed') && !lower.includes('注册失败') && !lower.includes('signup failed')) {
-      finalErrorMessage = isChina ? `注册失败：${errorMessage}` : `Registration failed: ${errorMessage}`
-    }
-    
+    console.error(`[${requestId}] Signup Error:`, error)
+    const isChina = process.env.NEXT_PUBLIC_APP_REGION === 'china'
     return NextResponse.json(
-      { 
-        error: finalErrorMessage,
-        details: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      },
+      { error: error.message || (isChina ? '注册失败' : 'Signup failed') },
       { status: 400 }
     )
   }

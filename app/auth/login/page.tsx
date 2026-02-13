@@ -89,8 +89,9 @@ export default function LoginPage() {
       const normalizedPassword = password
       const backendLogin = async (options?: { useJwtOnly?: boolean }) => {
         const controller = new AbortController()
-        // 后端整次登录最长约 62s；前端 68s 超时
-        const timeoutMs = process.env.NEXT_PUBLIC_APP_REGION === 'china' ? 20000 : 68000
+        // 后端整次登录最长约 80s；前端设置 90s 超时以覆盖极端情况
+        const timeoutMs = process.env.NEXT_PUBLIC_APP_REGION === 'china' ? 30000 : 90000
+        console.log('[Login Frontend] Timeout setting:', { region: process.env.NEXT_PUBLIC_APP_REGION, timeoutMs })
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
         // 8s 后提示“正在验证”，避免用户以为卡死
         const hintId = setTimeout(() => {
@@ -184,12 +185,16 @@ export default function LoginPage() {
       // 优化错误日志打印
       console.error('[Login Frontend] Login Error Object:', error)
       let errorMessage = error.message || String(error) || t('invalidCredentials')
+      
+      // 暂时移除对中文错误的强制替换，以便排查真实原因
+      /*
       if (isGlobal) {
         const hasChinese = /[\u4e00-\u9fa5]/.test(errorMessage)
         if (hasChinese) {
           errorMessage = 'Login failed, please try again'
         }
       }
+      */
       
       console.error('[Login Frontend] Error Message:', errorMessage)
       

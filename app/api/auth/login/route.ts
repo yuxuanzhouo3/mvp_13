@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { loginWithJWT } from '@/lib/auth-adapter'
+import { loginWithJWT, loginWithSupabase } from '@/lib/auth-adapter'
 import { prisma } from '@/lib/db'
 
 const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> => {
@@ -11,17 +11,23 @@ const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, timeoutMe
   ])
 }
 
-const TOTAL_LOGIN_MS = 62000   // 整次登录硬性上限 62s，给海外 DB 留足时间
-const JWT_TIMEOUT_MS_CHINA = 15000
-const JWT_TIMEOUT_MS_GLOBAL = 55000  // 国际版只走 JWT，55s 覆盖 Prisma 3 次重试
+const TOTAL_LOGIN_MS = 80000   // 整次登录硬性上限 80s，覆盖 DB 5s 直连 + 60s Pooler 重试 + 冗余
+const JWT_TIMEOUT_MS_CHINA = 25000
+const JWT_TIMEOUT_MS_GLOBAL = 75000  // 国际版只走 JWT，75s 覆盖 Prisma 所有重试逻辑
 
 export async function POST(request: NextRequest) {
+  const requestId = Math.random().toString(36).substring(7)
+  console.log(`[${requestId}] Login Request Started`)
+  
   const run = async (): Promise<NextResponse> => {
     const body = await request.json()
     const { email, password, region, useJwtOnly } = body
+    console.log(`[${requestId}] Login Params:`, { email, region, useJwtOnly, appRegion: process.env.NEXT_PUBLIC_APP_REGION })
 
     const appRegion = region || request.headers.get('X-App-Region') || process.env.NEXT_PUBLIC_APP_REGION || 'global'
     const isChina = appRegion === 'china'
+    console.log(`[${requestId}] Determined Region: ${isChina ? 'China' : 'Global'}`)
+    
     const timeoutMessage = isChina ? '登录超时，请稍后重试' : 'Login timed out, please try again'
     const missingMessage = isChina ? '邮箱和密码不能为空' : 'Email and password are required'
 
@@ -32,29 +38,26 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // 国际版：先预热 DB 连接，减少后续 findUserByEmail 的等待
-    if (!isChina) {
-      try {
-        await Promise.race([
-          prisma.$connect(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('connect_timeout')), 8000))
-        ])
-      } catch (_) {
-        // 忽略预热失败，继续走登录
-      }
-    }
-
     const jwtTimeoutMs = isChina ? JWT_TIMEOUT_MS_CHINA : JWT_TIMEOUT_MS_GLOBAL
-    const result = await withTimeout(
-      loginWithJWT(email, password),
-      jwtTimeoutMs,
-      timeoutMessage
-    )
-
-    return NextResponse.json({
-      user: result.user,
-      token: result.token
-    })
+    console.log(`[${requestId}] Timeout Limit: ${jwtTimeoutMs}ms`)
+    
+    const start = Date.now()
+    try {
+      const result = await withTimeout(
+        isChina ? loginWithJWT(email, password) : loginWithSupabase(email, password),
+        jwtTimeoutMs,
+        timeoutMessage
+      )
+      console.log(`[${requestId}] Login Success in ${Date.now() - start}ms`)
+      
+      return NextResponse.json({
+        user: result.user,
+        token: result.token
+      })
+    } catch (err: any) {
+      console.error(`[${requestId}] Login Failed in ${Date.now() - start}ms:`, err)
+      throw err
+    }
   }
 
   try {

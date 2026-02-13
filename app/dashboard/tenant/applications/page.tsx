@@ -36,6 +36,25 @@ export default function ApplicationsPage() {
     }
   }
 
+  const getStatusColor = (status?: string) => {
+    const s = (status || '').toUpperCase()
+    switch (s) {
+      case 'APPROVED': 
+        return "bg-green-500 hover:bg-green-600 border-transparent text-white"
+      case 'AGENT_APPROVED':
+        return "bg-yellow-500 hover:bg-yellow-600 border-transparent text-white"
+      case 'REJECTED': 
+        return "bg-red-500 hover:bg-red-600 border-transparent text-white"
+      case 'PENDING': 
+      case 'UNDER_REVIEW':
+        return "bg-secondary hover:bg-secondary/80 border-transparent text-secondary-foreground"
+      case 'WITHDRAWN':
+        return "text-foreground border-input bg-background hover:bg-accent hover:text-accent-foreground" // outline style
+      default: 
+        return "bg-secondary hover:bg-secondary/80 border-transparent text-secondary-foreground"
+    }
+  }
+
   useEffect(() => {
     fetchApplications()
   }, [])
@@ -90,7 +109,7 @@ export default function ApplicationsPage() {
                       </div>
                     </div>
                     <div className="text-right">
-                      <Badge variant={application.status === "APPROVED" ? "default" : "secondary"}>
+                      <Badge className={getStatusColor(application.status)}>
                         {renderStatus(application.status)}
                       </Badge>
                       <div className="mt-2">

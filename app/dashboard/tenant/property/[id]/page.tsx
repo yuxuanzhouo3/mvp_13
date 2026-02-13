@@ -246,7 +246,13 @@ export default function TenantPropertyDetailPage() {
                 </div>
                 {property.status && (
                   <Badge className="absolute top-4 left-4" variant={property.status === "AVAILABLE" ? "default" : "secondary"}>
-                    {property.status}
+                    {process.env.NEXT_PUBLIC_APP_REGION === 'china' 
+                      ? (property.status === 'AVAILABLE' ? '可租' 
+                          : property.status === 'OCCUPIED' ? '已租'
+                          : property.status === 'MAINTENANCE' ? '维护中'
+                          : property.status === 'PENDING' ? '待审核'
+                          : property.status)
+                      : property.status}
                   </Badge>
                 )}
                 {images.length > 1 && (

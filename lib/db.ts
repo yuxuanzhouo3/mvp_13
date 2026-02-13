@@ -31,6 +31,15 @@ export const prisma = globalForPrisma.prisma ?? new PrismaClient({
 function getDirectUrl(): string | null {
   const env = process.env.DIRECT_URL
   if (env) return env
+
+  // 强制禁用自动推导直连 URL，避免无效连接尝试和超时等待
+  // 目前即使是国际版，在部分网络环境下 5432 也可能不可达，且会导致长达 10s+ 的等待
+  // 因此暂时全量禁用自动推导直连，除非显式配置 DIRECT_URL
+  const disableAutoDirect = true
+  if (process.env.NEXT_PUBLIC_APP_REGION === 'china' || disableAutoDirect) {
+    return null
+  }
+
   const u = process.env.DATABASE_URL
   if (!u) return null
   try {

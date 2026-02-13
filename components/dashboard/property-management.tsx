@@ -102,7 +102,7 @@ export function PropertyManagement() {
                   <PropertyCard property={property} showSaveButton={false} showManagementActions={true} />
                   <div className="space-y-2 p-3 bg-muted/30 rounded-lg">
                     <div className="flex justify-between items-center">
-                      <span className="text-sm font-medium">Status:</span>
+                      <span className="text-sm font-medium">{t('status')}:</span>
                       <Badge
                         variant={
                           property.status === "occupied"
@@ -112,7 +112,7 @@ export function PropertyManagement() {
                               : "destructive"
                         }
                       >
-                        {property.status}
+                        {t(property.status?.toLowerCase()) || property.status}
                       </Badge>
                     </div>
                   </div>

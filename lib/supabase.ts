@@ -29,7 +29,12 @@ if (supabaseUrl && supabaseAnonKey) {
     })
 
     // Server-side Supabase client (uses service role key for admin operations)
+    // 如果没有 Service Role Key，降级使用 Anon Key (虽然不能绕过 RLS，但至少可以用于基础 Auth 操作)
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || supabaseAnonKey
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.warn('⚠️ [Supabase] 未找到 SUPABASE_SERVICE_ROLE_KEY，降级使用 ANON_KEY 初始化 Admin 客户端。部分管理功能可能受限。')
+    }
+    
     supabaseAdmin = createClient(
       supabaseUrl,
       serviceRoleKey,

@@ -264,7 +264,7 @@ export default function LandlordPropertyDetailPage() {
               <form onSubmit={(e) => { e.preventDefault(); handleSave(); }} className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="title">Property Title *</Label>
+                    <Label htmlFor="title">{t('propertyTitle')} *</Label>
                     <Input
                       id="title"
                       value={formData.title}
@@ -273,7 +273,7 @@ export default function LandlordPropertyDetailPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="propertyType">Property Type *</Label>
+                    <Label htmlFor="propertyType">{t('propertyType')} *</Label>
                     <Select
                       value={formData.propertyType}
                       onValueChange={(value) => setFormData({ ...formData, propertyType: value })}
@@ -282,18 +282,18 @@ export default function LandlordPropertyDetailPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="APARTMENT">Apartment</SelectItem>
-                        <SelectItem value="HOUSE">House</SelectItem>
-                        <SelectItem value="CONDO">Condo</SelectItem>
-                        <SelectItem value="STUDIO">Studio</SelectItem>
-                        <SelectItem value="TOWNHOUSE">Townhouse</SelectItem>
+                        <SelectItem value="APARTMENT">{t('apartment')}</SelectItem>
+                        <SelectItem value="HOUSE">{t('house')}</SelectItem>
+                        <SelectItem value="CONDO">{t('condo')}</SelectItem>
+                        <SelectItem value="STUDIO">{t('studio')}</SelectItem>
+                        <SelectItem value="TOWNHOUSE">{t('townhouse')}</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="description">Description *</Label>
+                  <Label htmlFor="description">{t('description')} *</Label>
                   <Textarea
                     id="description"
                     value={formData.description}
@@ -304,7 +304,7 @@ export default function LandlordPropertyDetailPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="address">Address *</Label>
+                  <Label htmlFor="address">{t('address')} *</Label>
                   <Input
                     id="address"
                     value={formData.address}
@@ -315,7 +315,7 @@ export default function LandlordPropertyDetailPage() {
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="city">City *</Label>
+                    <Label htmlFor="city">{t('city')} *</Label>
                     <Input
                       id="city"
                       value={formData.city}
@@ -324,7 +324,7 @@ export default function LandlordPropertyDetailPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="state">State *</Label>
+                    <Label htmlFor="state">{t('state')} *</Label>
                     <Input
                       id="state"
                       value={formData.state}
@@ -333,7 +333,7 @@ export default function LandlordPropertyDetailPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="zipCode">Zip Code</Label>
+                    <Label htmlFor="zipCode">{t('zipCode')}</Label>
                     <Input
                       id="zipCode"
                       value={formData.zipCode}
@@ -344,7 +344,7 @@ export default function LandlordPropertyDetailPage() {
 
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="price">Monthly Rent ({currencySymbol}) *</Label>
+                    <Label htmlFor="price">{t('monthlyRent')} ({currencySymbol}) *</Label>
                     <Input
                       id="price"
                       type="number"
@@ -354,7 +354,7 @@ export default function LandlordPropertyDetailPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="deposit">Deposit ({currencySymbol}) *</Label>
+                    <Label htmlFor="deposit">{t('deposit')} ({currencySymbol}) *</Label>
                     <Input
                       id="deposit"
                       type="number"
@@ -364,7 +364,7 @@ export default function LandlordPropertyDetailPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="bedrooms">Bedrooms *</Label>
+                    <Label htmlFor="bedrooms">{t('bedrooms')} *</Label>
                     <Input
                       id="bedrooms"
                       type="number"
@@ -374,7 +374,7 @@ export default function LandlordPropertyDetailPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="bathrooms">Bathrooms *</Label>
+                    <Label htmlFor="bathrooms">{t('bathrooms')} *</Label>
                     <Input
                       id="bathrooms"
                       type="number"
@@ -387,7 +387,7 @@ export default function LandlordPropertyDetailPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="sqft">Square Feet</Label>
+                  <Label htmlFor="sqft">{t('sqft')}</Label>
                   <Input
                     id="sqft"
                     type="number"
@@ -397,7 +397,7 @@ export default function LandlordPropertyDetailPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label>Status *</Label>
+                  <Label>{t('status')} *</Label>
                   <Select
                     value={formData.status}
                     onValueChange={(value) => setFormData({ ...formData, status: value })}
@@ -406,16 +406,16 @@ export default function LandlordPropertyDetailPage() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="AVAILABLE">Available</SelectItem>
-                      <SelectItem value="OCCUPIED">Occupied</SelectItem>
-                      <SelectItem value="MAINTENANCE">Maintenance</SelectItem>
-                      <SelectItem value="PENDING">Pending</SelectItem>
+                      <SelectItem value="AVAILABLE">{t('available')}</SelectItem>
+                      <SelectItem value="OCCUPIED">{t('occupied')}</SelectItem>
+                      <SelectItem value="MAINTENANCE">{t('maintenance')}</SelectItem>
+                      <SelectItem value="PENDING">{t('pending')}</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
 
                 <div className="space-y-2">
-                  <Label>Property Images (1-5 images)</Label>
+                  <Label>{t('propertyImages')} (1-5 {t('images')})</Label>
                   <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                     {images.map((img, index) => (
                       <div key={index} className="relative">
@@ -439,7 +439,7 @@ export default function LandlordPropertyDetailPage() {
                       <label className="flex items-center justify-center w-full h-32 border-2 border-dashed rounded-lg cursor-pointer hover:bg-muted/50">
                         <div className="text-center">
                           <Upload className="h-6 w-6 mx-auto mb-2 text-muted-foreground" />
-                          <span className="text-sm text-muted-foreground">Upload</span>
+                          <span className="text-sm text-muted-foreground">{t('upload')}</span>
                         </div>
                         <input
                           type="file"
@@ -453,7 +453,7 @@ export default function LandlordPropertyDetailPage() {
                     )}
                   </div>
                   <p className="text-sm text-muted-foreground">
-                    {images.length}/5 images uploaded
+                    {images.length}/5 {t('imagesUploaded')}
                   </p>
                 </div>
 
@@ -465,18 +465,18 @@ export default function LandlordPropertyDetailPage() {
                     onChange={(e) => setFormData({ ...formData, petFriendly: e.target.checked })}
                     className="h-4 w-4"
                   />
-                  <Label htmlFor="petFriendly">Pet Friendly</Label>
+                  <Label htmlFor="petFriendly">{t('petFriendly')}</Label>
                 </div>
 
                 <div className="flex space-x-4">
                   <Button type="submit" disabled={saving || uploading}>
-                    {saving ? "Saving..." : uploading ? "Uploading..." : "Save Changes"}
+                    {saving ? t('saving') : uploading ? t('uploading') : tCommon('saveChanges')}
                   </Button>
                   <Button type="button" variant="outline" onClick={() => {
                     setEditing(false)
                     fetchProperty()
                   }}>
-                    Cancel
+                    {tCommon('cancel')}
                   </Button>
                 </div>
               </form>
@@ -495,8 +495,8 @@ export default function LandlordPropertyDetailPage() {
                   />
                   {property.status && (
                     <Badge className="absolute top-4 left-4" variant={property.status === "AVAILABLE" ? "default" : "secondary"}>
-                      {property.status}
-                    </Badge>
+                    {t(property.status?.toLowerCase()) || property.status}
+                  </Badge>
                   )}
                   {/* Image navigation buttons */}
                   {images.length > 1 && (
@@ -564,25 +564,25 @@ export default function LandlordPropertyDetailPage() {
                 <CardContent>
                   <div className="space-y-6">
                     <div>
-                      <h3 className="text-xl font-semibold mb-4">Description</h3>
-                      <p className="text-muted-foreground">{property.description || "No description available."}</p>
+                      <h3 className="text-xl font-semibold mb-4">{t('description')}</h3>
+                      <p className="text-muted-foreground">{property.description || t('noDescription') || "No description available."}</p>
                     </div>
 
                     <div>
-                      <h3 className="text-xl font-semibold mb-4">Property Details</h3>
+                      <h3 className="text-xl font-semibold mb-4">{t('propertyDetails')}</h3>
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                         <div className="flex items-center space-x-2">
                           <Bed className="h-5 w-5 text-muted-foreground" />
                           <div>
                             <div className="font-semibold">{property.bedrooms}</div>
-                            <div className="text-sm text-muted-foreground">Bedrooms</div>
+                            <div className="text-sm text-muted-foreground">{t('bedrooms')}</div>
                           </div>
                         </div>
                         <div className="flex items-center space-x-2">
                           <Bath className="h-5 w-5 text-muted-foreground" />
                           <div>
                             <div className="font-semibold">{property.bathrooms}</div>
-                            <div className="text-sm text-muted-foreground">Bathrooms</div>
+                            <div className="text-sm text-muted-foreground">{t('bathrooms')}</div>
                           </div>
                         </div>
                         {property.sqft && (
@@ -590,20 +590,20 @@ export default function LandlordPropertyDetailPage() {
                             <Square className="h-5 w-5 text-muted-foreground" />
                             <div>
                               <div className="font-semibold">{property.sqft}</div>
-                              <div className="text-sm text-muted-foreground">Sqft</div>
+                              <div className="text-sm text-muted-foreground">{t('sqft')}</div>
                             </div>
                           </div>
                         )}
                         <div>
-                          <div className="font-semibold">{property.propertyType}</div>
-                          <div className="text-sm text-muted-foreground">Type</div>
+                          <div className="font-semibold">{t(property.propertyType?.toLowerCase()) || property.propertyType}</div>
+                          <div className="text-sm text-muted-foreground">{t('propertyType')}</div>
                         </div>
                       </div>
                     </div>
 
                     {property.petFriendly && (
                       <div>
-                        <Badge variant="default">Pet Friendly</Badge>
+                        <Badge variant="default">{t('petFriendly')}</Badge>
                       </div>
                     )}
                   </div>
@@ -616,18 +616,18 @@ export default function LandlordPropertyDetailPage() {
                 <CardHeader>
                   <CardTitle className="text-2xl">
                     {currencySymbol}{property.price.toLocaleString()}
-                    <span className="text-lg font-normal text-muted-foreground">/month</span>
+                    <span className="text-lg font-normal text-muted-foreground">/{t('month')}</span>
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Deposit:</span>
+                      <span className="text-muted-foreground">{t('deposit')}:</span>
                       <span className="font-semibold">{currencySymbol}{property.deposit.toLocaleString()}</span>
                     </div>
                     {property.availableFrom && (
                       <div className="flex justify-between">
-                        <span className="text-muted-foreground">Available From:</span>
+                        <span className="text-muted-foreground">{t('availableFrom')}:</span>
                         <span className="font-semibold">
                           {new Date(property.availableFrom).toLocaleDateString()}
                         </span>
@@ -635,8 +635,8 @@ export default function LandlordPropertyDetailPage() {
                     )}
                     {property.leaseDuration && (
                       <div className="flex justify-between">
-                        <span className="text-muted-foreground">Lease Duration:</span>
-                        <span className="font-semibold">{property.leaseDuration} months</span>
+                        <span className="text-muted-foreground">{t('leaseDuration')}:</span>
+                        <span className="font-semibold">{property.leaseDuration} {t('months')}</span>
                       </div>
                     )}
                   </div>

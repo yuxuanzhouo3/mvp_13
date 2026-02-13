@@ -93,7 +93,7 @@ export class SupabaseAdapter implements DatabaseAdapter {
                 landlordProfile: true,
               },
             }),
-            18000
+            5000 // 缩短直连超时时间到 5s (原 18s)，快速失败
           )
           if (user) return this.mapPrismaUserToUnified(user)
           return null
@@ -107,14 +107,16 @@ export class SupabaseAdapter implements DatabaseAdapter {
             msg.includes('enotfound')
           if (directUnreachable) {
             console.warn('[SupabaseAdapter] Direct DB unreachable, falling back to pooler:', directErr?.message)
-            const user = await withPrismaRetry(query, 3, 20000)
+            // 延长 Pooler 重试超时到 60s (原 20s)，适应国内网络
+            const user = await withPrismaRetry(query, 3, 60000)
             if (!user) return null
             return this.mapPrismaUserToUnified(user)
           }
           throw directErr
         }
       }
-      const user = await withPrismaRetry(query, 3, 20000)
+      // 延长默认重试超时到 60s
+      const user = await withPrismaRetry(query, 3, 60000)
       if (!user) return null
       return this.mapPrismaUserToUnified(user)
     } catch (error: any) {
@@ -166,7 +168,7 @@ export class SupabaseAdapter implements DatabaseAdapter {
                 landlordProfile: true,
               },
             }),
-            18000
+            5000 // 缩短直连超时时间到 5s
           )
           if (user) return this.mapPrismaUserToUnified(user)
           return null
@@ -180,14 +182,16 @@ export class SupabaseAdapter implements DatabaseAdapter {
             msg.includes('enotfound')
           if (directUnreachable) {
             console.warn('[SupabaseAdapter] Direct DB unreachable, falling back to pooler:', directErr?.message)
-            const user = await withPrismaRetry(query, 3, 20000)
+            // 延长 Pooler 重试超时到 60s
+            const user = await withPrismaRetry(query, 3, 60000)
             if (!user) return null
             return this.mapPrismaUserToUnified(user)
           }
           throw directErr
         }
       }
-      const user = await withPrismaRetry(query, 3, 20000)
+      // 延长默认重试超时到 60s
+      const user = await withPrismaRetry(query, 3, 60000)
       if (!user) return null
       return this.mapPrismaUserToUnified(user)
     } catch (error: any) {
@@ -254,20 +258,28 @@ export class SupabaseAdapter implements DatabaseAdapter {
       userData.phone = data.phone.trim()
     }
     
-    const user = await prisma.user.create({
+    // 使用 withPrismaRetry 增加重试机制，提高稳定性
+    const query = () => prisma.user.create({
       data: userData,
       include: {
         tenantProfile: true,
         landlordProfile: true,
       },
     })
-    
-    // 如果有 representedById，单独更新（因为 Prisma Client 可能未包含该字段）
-    if (data.representedById) {
-      return this.updateUser(user.id, { representedById: data.representedById })
+
+    try {
+      const user = await withPrismaRetry(query, 3, 20000) // 20s 超时，重试 3 次
+      
+      // 如果有 representedById，单独更新（因为 Prisma Client 可能未包含该字段）
+      if (data.representedById) {
+        return this.updateUser(user.id, { representedById: data.representedById })
+      }
+      
+      return this.mapPrismaUserToUnified(user)
+    } catch (error: any) {
+      console.error('[SupabaseAdapter] 创建用户失败:', error)
+      throw error
     }
-    
-    return this.mapPrismaUserToUnified(user)
   }
 
   async updateUser(id: string, data: Partial<UnifiedUser>): Promise<UnifiedUser> {

@@ -87,13 +87,13 @@ export function DashboardLayout({ children, userType }: DashboardLayoutProps) {
         title: t('properties'),
         items: [
           { title: t('title'), url: "/dashboard/landlord", icon: Home },
-          { title: t('properties'), url: "/dashboard/landlord/add-property", icon: Plus },
+          { title: t('addProperty'), url: "/dashboard/landlord/add-property", icon: Plus },
           { title: t('applications'), url: "/dashboard/landlord/applications", icon: FileText },
           { title: t('tenants'), url: "/dashboard/landlord/tenants", icon: Users },
         ],
       },
       {
-        title: t('payments'),
+        title: tCommon('user'),
         items: [
           { title: t('payments'), url: "/dashboard/landlord/payments", icon: CreditCard },
           { title: t('analytics'), url: "/dashboard/landlord/analytics", icon: BarChart3 },

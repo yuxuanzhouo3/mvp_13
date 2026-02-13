@@ -213,9 +213,7 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
         )}
         {property.status && (
           <Badge className="absolute top-2 left-2" variant={property.status === "available" ? "default" : "secondary"}>
-            {process.env.NEXT_PUBLIC_APP_REGION === 'china' 
-              ? (property.status === "available" ? "可租" : "已租/不可用")
-              : property.status}
+            {tProperty(property.status?.toLowerCase()) || property.status}
           </Badge>
         )}
       </div>

@@ -72,7 +72,7 @@ export async function parseTenantQuery(query: string): Promise<ParsedTenantSearc
   }
 
   // 城市提取 - 支持英文和中文
-  const cityMatch = query.match(/(?:in|at|located in|city of|城市|位于|在)\s+([A-Za-z][A-Za-z\s]+?)(?:\s|$|,|\.)/i) ||
+  const cityMatch = query.match(/(?:in|at|located in|city of|城市|位于|在)\s*([\u4e00-\u9fa5]{2,}|[A-Za-z][A-Za-z\s]+?)(?:\s|$|,|\.)/i) ||
                     query.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:apartment|house|condo|studio|property)/i)
   if (cityMatch) {
     criteria.city = cityMatch[1].trim()

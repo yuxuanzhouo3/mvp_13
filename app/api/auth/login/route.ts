@@ -11,9 +11,9 @@ const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, timeoutMe
   ])
 }
 
-const TOTAL_LOGIN_MS = 80000   // 整次登录硬性上限 80s，覆盖 DB 5s 直连 + 60s Pooler 重试 + 冗余
+const TOTAL_LOGIN_MS = 40000
 const JWT_TIMEOUT_MS_CHINA = 25000
-const JWT_TIMEOUT_MS_GLOBAL = 75000  // 国际版只走 JWT，75s 覆盖 Prisma 所有重试逻辑
+const JWT_TIMEOUT_MS_GLOBAL = 35000
 
 export async function POST(request: NextRequest) {
   const requestId = Math.random().toString(36).substring(7)
@@ -39,15 +39,29 @@ export async function POST(request: NextRequest) {
     }
 
     const jwtTimeoutMs = isChina ? JWT_TIMEOUT_MS_CHINA : JWT_TIMEOUT_MS_GLOBAL
+    const jwtFallbackTimeoutMs = 15000
     console.log(`[${requestId}] Timeout Limit: ${jwtTimeoutMs}ms`)
     
     const start = Date.now()
     try {
-      const result = await withTimeout(
-        isChina ? loginWithJWT(email, password) : loginWithSupabase(email, password),
-        jwtTimeoutMs,
-        timeoutMessage
-      )
+      // Determine which login method to use
+      // If useJwtOnly is explicitly requested (e.g. frontend retry), force JWT login
+      const shouldUseJwt = isChina || useJwtOnly
+      
+      let result
+      if (shouldUseJwt) {
+        result = await withTimeout(
+          loginWithJWT(email, password),
+          jwtTimeoutMs,
+          timeoutMessage
+        )
+      } else {
+        result = await withTimeout(
+          loginWithSupabase(email, password),
+          25000,
+          timeoutMessage
+        )
+      }
       console.log(`[${requestId}] Login Success in ${Date.now() - start}ms`)
       
       return NextResponse.json({

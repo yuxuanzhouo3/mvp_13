@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-adapter'
-import { createDatabaseAdapter, getDatabaseAdapter } from '@/lib/db-adapter'
-import { supabaseAdmin } from '@/lib/supabase'
+import { getDatabaseAdapter } from '@/lib/db-adapter'
+import { createSupabaseServerClient, supabaseAdmin } from '@/lib/supabase'
 
 /**
  * Get notifications for current user
@@ -30,14 +30,48 @@ export async function GET(request: NextRequest) {
     }
     let tokenUserId: string | null = null
     const authHeader = request.headers.get('authorization')
-    if (authHeader && authHeader.startsWith('Bearer ') && supabaseAdmin) {
-      const token = authHeader.substring(7)
+    const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : undefined
+    const supabaseClient = createSupabaseServerClient(accessToken)
+    const supabaseReaders = [supabaseClient, supabaseAdmin].filter(Boolean) as any[]
+    if (accessToken && supabaseClient) {
       try {
-        const { data } = await supabaseAdmin.auth.getUser(token)
+        const { data } = await supabaseClient.auth.getUser(accessToken)
         if (data?.user?.id) {
           tokenUserId = String(data.user.id)
         }
       } catch {}
+    }
+    if (!tokenUserId && accessToken && supabaseAdmin) {
+      try {
+        const { data } = await supabaseAdmin.auth.getUser(accessToken)
+        if (data?.user?.id) {
+          tokenUserId = String(data.user.id)
+        }
+      } catch {}
+    }
+    const userIdsForQuery: string[] = [String(user.id)]
+    if (tokenUserId && !userIdsForQuery.includes(tokenUserId)) {
+      userIdsForQuery.push(tokenUserId)
+    }
+    if (user.email && supabaseReaders.length > 0) {
+      const userTables = ['User', 'user', 'users']
+      for (const client of supabaseReaders) {
+        for (const tableName of userTables) {
+          const { data, error } = await client
+            .from(tableName)
+            .select('id,email')
+            .ilike('email', user.email)
+            .limit(1)
+          if (!error && data && data.length > 0) {
+            const foundId = String(data[0].id)
+            if (foundId && !userIdsForQuery.includes(foundId)) {
+              userIdsForQuery.push(foundId)
+            }
+            break
+          }
+        }
+        if (userIdsForQuery.length > 1) break
+      }
     }
     
     const query: any = {
@@ -49,31 +83,9 @@ export async function GET(request: NextRequest) {
     }
 
     let notifications: any[] = []
-    try {
-      notifications = await db.query('notifications', query)
-    } catch (error: any) {
-      if (isConnectionError(error)) {
-        const fallbackDb = createDatabaseAdapter('china')
-        const userIds = new Set<string>([String(user.id)])
-        if (tokenUserId) userIds.add(String(tokenUserId))
-        if (user.email) {
-          try {
-            const fallbackUser = await fallbackDb.findUserByEmail(user.email)
-            if (fallbackUser?.id) {
-              userIds.add(String(fallbackUser.id))
-            }
-          } catch {}
-        }
-        const allNotifications = await fallbackDb.query('notifications', {}, { orderBy: { createdAt: 'desc' } })
-        notifications = allNotifications.filter((n: any) => userIds.has(String(n.userId || n.user_id || '')))
-        if (unreadOnly) {
-          notifications = notifications.filter((n: any) => n.isRead === false || n.is_read === false)
-        }
-        notifications.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-        return NextResponse.json({ notifications: notifications.slice(0, 50) })
-      }
-      if (!supabaseAdmin) {
-        return NextResponse.json({ notifications: [] })
+    const fetchFromSupabase = async () => {
+      if (supabaseReaders.length === 0) {
+        return null
       }
       const normalizeNotification = (n: any) => ({
         ...n,
@@ -86,40 +98,69 @@ export async function GET(request: NextRequest) {
       const readFields = ['isRead', 'is_read']
       const orderFields = ['createdAt', 'created_at']
       let lastError: any = null
-      for (const tableName of tableNames) {
-        for (const userField of userFields) {
-          for (const readField of readFields) {
-            for (const orderField of orderFields) {
-              let supabaseQuery = supabaseAdmin
-                .from(tableName)
-                .select('*')
-                .eq(userField, user.id)
-                .order(orderField, { ascending: false })
-                .limit(50)
-              if (unreadOnly) {
-                supabaseQuery = supabaseQuery.eq(readField, false)
+      for (const client of supabaseReaders) {
+        for (const tableName of tableNames) {
+          for (const userField of userFields) {
+            for (const readField of readFields) {
+              for (const orderField of orderFields) {
+                let supabaseQuery = client
+                  .from(tableName)
+                  .select('*')
+                  .order(orderField, { ascending: false })
+                  .limit(50)
+                if (userIdsForQuery.length > 1) {
+                  supabaseQuery = supabaseQuery.in(userField, userIdsForQuery)
+                } else {
+                  supabaseQuery = supabaseQuery.eq(userField, userIdsForQuery[0])
+                }
+                if (unreadOnly) {
+                  supabaseQuery = supabaseQuery.eq(readField, false)
+                }
+                const { data, error: sbError } = await supabaseQuery
+                if (!sbError) {
+                  return (data || []).map(normalizeNotification)
+                }
+                lastError = sbError
               }
-              const { data, error: sbError } = await supabaseQuery
-              if (!sbError) {
-                return NextResponse.json({ notifications: (data || []).map(normalizeNotification) })
-              }
-              lastError = sbError
             }
+          }
+        }
+        if (!lastError) break
+      }
+      if (lastError) {
+        for (const client of supabaseReaders) {
+          for (const tableName of tableNames) {
+            let supabaseQuery = client
+              .from(tableName)
+              .select('*')
+              .limit(50)
+            const { data, error: sbError } = await supabaseQuery
+            if (!sbError) {
+              return (data || []).map(normalizeNotification)
+            }
+            lastError = sbError
           }
         }
       }
       if (lastError) {
-        for (const tableName of tableNames) {
-          let supabaseQuery = supabaseAdmin
-            .from(tableName)
-            .select('*')
-            .limit(50)
-          const { data, error: sbError } = await supabaseQuery
-          if (!sbError) {
-            return NextResponse.json({ notifications: (data || []).map(normalizeNotification) })
-          }
-          lastError = sbError
+        console.warn('Supabase notifications fallback failed:', lastError)
+      }
+      return null
+    }
+    try {
+      notifications = await db.query('notifications', query)
+    } catch (error: any) {
+      if (isConnectionError(error)) {
+        const supabaseNotifications = await fetchFromSupabase()
+        if (supabaseNotifications) {
+          supabaseNotifications.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+          return NextResponse.json({ notifications: supabaseNotifications.slice(0, 50) })
         }
+        return NextResponse.json({ notifications: [] })
+      }
+      const supabaseNotifications = await fetchFromSupabase()
+      if (supabaseNotifications) {
+        return NextResponse.json({ notifications: supabaseNotifications.slice(0, 50) })
       }
       return NextResponse.json({ notifications: [] })
     }
@@ -154,6 +195,10 @@ export async function PATCH(request: NextRequest) {
     const body = await request.json()
     const { notificationId, markAllAsRead } = body
     const db = getDatabaseAdapter()
+    const authHeader = request.headers.get('authorization')
+    const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : undefined
+    const supabaseClient = createSupabaseServerClient(accessToken)
+    const supabaseReaders = [supabaseClient, supabaseAdmin].filter(Boolean) as any[]
 
     if (markAllAsRead) {
       // Get all unread notifications for user
@@ -173,34 +218,37 @@ export async function PATCH(request: NextRequest) {
           msg.includes('p1017') ||
           msg.includes('p1000')
         ) {
-          if (!supabaseAdmin) {
+          if (supabaseReaders.length === 0) {
             return NextResponse.json({ success: true })
           }
           const tableNames = ['Notification', 'notification', 'notifications']
           let ids: any[] = []
           let lastError: any = null
-          for (const tableName of tableNames) {
-            const { data, error: sbError } = await supabaseAdmin
-              .from(tableName)
-              .select('id')
-              .eq('userId', user.id)
-              .eq('isRead', false)
-            if (!sbError) {
-              ids = (data || []).map((n: any) => n.id).filter(Boolean)
-              if (ids.length > 0) {
-                const { error: updateError } = await supabaseAdmin
-                  .from(tableName)
-                  .update({ isRead: true })
-                  .in('id', ids)
-                if (updateError) {
-                  lastError = updateError
-                } else {
-                  lastError = null
+          for (const client of supabaseReaders) {
+            for (const tableName of tableNames) {
+              const { data, error: sbError } = await client
+                .from(tableName)
+                .select('id')
+                .eq('userId', user.id)
+                .eq('isRead', false)
+              if (!sbError) {
+                ids = (data || []).map((n: any) => n.id).filter(Boolean)
+                if (ids.length > 0) {
+                  const { error: updateError } = await client
+                    .from(tableName)
+                    .update({ isRead: true })
+                    .in('id', ids)
+                  if (updateError) {
+                    lastError = updateError
+                  } else {
+                    lastError = null
+                  }
                 }
+                break
               }
-              break
+              lastError = sbError
             }
-            lastError = sbError
+            if (!lastError) break
           }
           if (lastError) {
             throw lastError
@@ -230,19 +278,22 @@ export async function PATCH(request: NextRequest) {
           msg.includes('p1017') ||
           msg.includes('p1000')
         ) {
-          if (supabaseAdmin) {
+          if (supabaseReaders.length > 0) {
             const tableNames = ['Notification', 'notification', 'notifications']
             let lastError: any = null
-            for (const tableName of tableNames) {
-              const { error: updateError } = await supabaseAdmin
-                .from(tableName)
-                .update({ isRead: true })
-                .eq('id', notificationId)
-              if (!updateError) {
-                lastError = null
-                break
+            for (const client of supabaseReaders) {
+              for (const tableName of tableNames) {
+                const { error: updateError } = await client
+                  .from(tableName)
+                  .update({ isRead: true })
+                  .eq('id', notificationId)
+                if (!updateError) {
+                  lastError = null
+                  break
+                }
+                lastError = updateError
               }
-              lastError = updateError
+              if (!lastError) break
             }
             if (lastError) {
               throw lastError

@@ -10,23 +10,24 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
 
 // 只有在国际版且配置了 Supabase 环境变量时才初始化
 // 国内版不需要 Supabase，所以允许缺少这些环境变量
-let supabase: ReturnType<typeof createClient> | null = null
+type SupabaseClient = ReturnType<typeof createClient>
+let supabase: (SupabaseClient & (() => SupabaseClient)) | null = null
 let supabaseAdmin: ReturnType<typeof createClient> | null = null
 
 if (supabaseUrl && supabaseAnonKey) {
   try {
     // Client-side Supabase client (uses anon key)
-    supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    const client = createClient(supabaseUrl, supabaseAnonKey, {
       global: {
         headers: {
           apikey: supabaseAnonKey,
-          Authorization: `Bearer ${supabaseAnonKey}`,
         },
       },
       auth: {
         persistSession: false, // We're using JWT for auth
       },
     })
+    supabase = Object.assign((() => client) as any, client) as SupabaseClient & (() => SupabaseClient)
 
     // Server-side Supabase client (uses service role key for admin operations)
     // 如果没有 Service Role Key，降级使用 Anon Key (虽然不能绕过 RLS，但至少可以用于基础 Auth 操作)
@@ -35,21 +36,16 @@ if (supabaseUrl && supabaseAnonKey) {
       console.warn('⚠️ [Supabase] 未找到 SUPABASE_SERVICE_ROLE_KEY，降级使用 ANON_KEY 初始化 Admin 客户端。部分管理功能可能受限。')
     }
     
-    supabaseAdmin = createClient(
-      supabaseUrl,
-      serviceRoleKey,
-      {
-        global: {
-          headers: {
-            apikey: serviceRoleKey,
-            Authorization: `Bearer ${serviceRoleKey}`,
-          },
+    supabaseAdmin = createClient(supabaseUrl, serviceRoleKey, {
+      global: {
+        headers: {
+          apikey: serviceRoleKey,
         },
-        auth: {
-          persistSession: false,
-        },
-      }
-    )
+      },
+      auth: {
+        persistSession: false,
+      },
+    })
     console.log('Supabase clients initialized successfully:', {
       url: supabaseUrl,
       hasServiceRoleKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
@@ -73,5 +69,19 @@ if (supabaseUrl && supabaseAnonKey) {
   }
 }
 
+const createSupabaseServerClient = (accessToken?: string) => {
+  if (!supabaseUrl || !supabaseAnonKey) return null
+  const headers: Record<string, string> = {
+    apikey: supabaseAnonKey,
+  }
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`
+  }
+  return createClient(supabaseUrl, supabaseAnonKey, {
+    global: { headers },
+    auth: { persistSession: false },
+  })
+}
+
 // 导出 Supabase 客户端，如果未初始化则返回 null
-export { supabase, supabaseAdmin }
+export { supabase, supabaseAdmin, supabaseUrl, supabaseAnonKey, createSupabaseServerClient }

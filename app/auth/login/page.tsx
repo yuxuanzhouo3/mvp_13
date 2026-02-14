@@ -11,7 +11,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Shield } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
-import { supabase } from "@/lib/supabase"
 
 export default function LoginPage() {
   const router = useRouter()
@@ -22,6 +21,20 @@ export default function LoginPage() {
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
   const searchParams = useSearchParams()
+  const navigateByRole = (rawType?: string) => {
+    const userType = (rawType || "").toUpperCase()
+    let target = "/dashboard/tenant"
+    if (userType === "LANDLORD") target = "/dashboard/landlord"
+    if (userType === "AGENT") target = "/dashboard/agent"
+    router.replace(target)
+    if (typeof window !== "undefined") {
+      setTimeout(() => {
+        if (window.location.pathname === "/auth/login") {
+          window.location.href = target
+        }
+      }, 120)
+    }
+  }
 
   useEffect(() => {
     const token = searchParams.get("token")
@@ -54,16 +67,7 @@ export default function LoginPage() {
           localStorage.setItem("user", JSON.stringify(data.user))
         }
 
-        const userType = (data.user?.userType || "").toUpperCase()
-        if (userType === "TENANT") {
-          router.push("/dashboard/tenant")
-        } else if (userType === "LANDLORD") {
-          router.push("/dashboard/landlord")
-        } else if (userType === "AGENT") {
-          router.push("/dashboard/agent")
-        } else {
-          router.push("/dashboard/tenant")
-        }
+        navigateByRole(data.user?.userType)
       } catch (error: any) {
         const errorMessage = error.message || t('invalidCredentials')
         toast({
@@ -87,10 +91,35 @@ export default function LoginPage() {
     try {
       const normalizedEmail = email.trim()
       const normalizedPassword = password
+      const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> => {
+        return await Promise.race([
+          promise,
+          new Promise<T>((_, reject) => {
+            setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs)
+          })
+        ])
+      }
+      const fetchProfile = async (token: string) => {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 8000)
+        try {
+          const response = await fetch("/api/auth/profile", {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: controller.signal,
+          })
+          const data = await response.json().catch(() => ({}))
+          if (!response.ok) {
+            throw new Error(data.error || t('invalidCredentials'))
+          }
+          return data.user || null
+        } finally {
+          clearTimeout(timeoutId)
+        }
+      }
       const backendLogin = async (options?: { useJwtOnly?: boolean }) => {
         const controller = new AbortController()
         // 后端整次登录最长约 80s；前端设置 90s 超时以覆盖极端情况
-        const timeoutMs = process.env.NEXT_PUBLIC_APP_REGION === 'china' ? 30000 : 90000
+        const timeoutMs = process.env.NEXT_PUBLIC_APP_REGION === 'china' ? 30000 : 20000
         console.log('[Login Frontend] Timeout setting:', { region: process.env.NEXT_PUBLIC_APP_REGION, timeoutMs })
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
         // 8s 后提示“正在验证”，避免用户以为卡死
@@ -119,7 +148,9 @@ export default function LoginPage() {
           const data = text ? JSON.parse(text) : {}
           if (!response.ok) {
             const errorMsg = data?.error || data?.message || t('invalidCredentials') || (process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '登录失败' : 'Login failed')
-            throw new Error(errorMsg)
+            const error = new Error(errorMsg)
+            ;(error as any).status = response.status
+            throw error
           }
           if (!data?.token) {
             throw new Error(process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '登录响应数据无效' : 'Invalid login response data')
@@ -132,16 +163,7 @@ export default function LoginPage() {
             title: tCommon('success'),
             description: t('loginSuccessful'),
           })
-          const userType = (data.user?.userType || "").toUpperCase()
-          if (userType === "TENANT") {
-            router.replace("/dashboard/tenant")
-          } else if (userType === "LANDLORD") {
-            router.replace("/dashboard/landlord")
-          } else if (userType === "AGENT") {
-            router.replace("/dashboard/agent")
-          } else {
-            router.replace("/dashboard/tenant")
-          }
+          navigateByRole(data.user?.userType)
           setLoading(false)
           return true
         } catch (fetchError: any) {
@@ -157,14 +179,35 @@ export default function LoginPage() {
         try {
           await backendLogin()
           return
-        } catch (globalError: any) {
-          const message = String(globalError?.message || '')
+        } catch (backendError: any) {
+          const backendStatus = (backendError as any)?.status
+          const message = String(backendError?.message || '')
           const lower = message.toLowerCase()
-          if (lower.includes('timeout') || lower.includes('rate limit') || lower.includes('too many')) {
-            await backendLogin({ useJwtOnly: true })
+          if (
+            lower.includes('supabase') ||
+            lower.includes('管理权限') ||
+            lower.includes('service role')
+          ) {
+            toast({
+              title: tCommon('error'),
+              description: message || t('invalidCredentials'),
+              variant: "destructive",
+            })
             return
           }
-          throw globalError
+          if (
+            lower.includes('invalid login credentials') ||
+            lower.includes('邮箱或密码错误') ||
+            backendStatus === 401
+          ) {
+            toast({
+              title: tCommon('error'),
+              description: t('invalidCredentials'),
+              variant: "destructive",
+            })
+            return
+          }
+          throw backendError
         }
       }
 

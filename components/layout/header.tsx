@@ -40,6 +40,10 @@ export function Header() {
     }
     if (isOpen) setIsOpen(false)
   }
+  const handleLoginClick = () => {
+    if (isOpen) setIsOpen(false)
+    router.push("/auth/login")
+  }
 
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
@@ -66,8 +70,8 @@ export function Header() {
         <div className="flex items-center space-x-4">
           <ModeToggle />
           <div className="hidden md:flex items-center space-x-2">
-            <Button variant="ghost" asChild>
-              <Link href="/auth/login">{t('login')}</Link>
+            <Button variant="ghost" onClick={handleLoginClick}>
+              {t('login')}
             </Button>
             <Button asChild>
               <Link href="/auth/signup">{t('signup')}</Link>
@@ -94,8 +98,8 @@ export function Header() {
                   </Link>
                 ))}
                 <div className="flex flex-col space-y-2 pt-4">
-                  <Button variant="ghost" asChild>
-                    <Link href="/auth/login">{t('login')}</Link>
+                  <Button variant="ghost" onClick={handleLoginClick}>
+                    {t('login')}
                   </Button>
                   <Button asChild>
                     <Link href="/auth/signup">{t('signup')}</Link>

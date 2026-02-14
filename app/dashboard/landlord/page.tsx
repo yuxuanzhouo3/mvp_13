@@ -49,22 +49,34 @@ export default function LandlordDashboard() {
         }
       }
 
-      if (!user) {
-        const profileRes = await fetch("/api/auth/profile", {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        if (profileRes.status === 401 || profileRes.status === 403) {
-          handleUnauthorized()
-          return
-        }
-        if (profileRes.ok) {
-          const data = await profileRes.json().catch(() => ({}))
-          if (data.user) {
-            localStorage.setItem("user", JSON.stringify(data.user))
-            user = data.user
+      const refreshProfile = async (fallbackUser?: any) => {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 6000)
+        try {
+          const profileRes = await fetch("/api/auth/profile", {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: controller.signal,
+          })
+          if (profileRes.status === 401 || profileRes.status === 403) {
+            handleUnauthorized()
+            return null
           }
+          if (profileRes.ok) {
+            const data = await profileRes.json().catch(() => ({}))
+            if (data.user) {
+              localStorage.setItem("user", JSON.stringify(data.user))
+              return data.user
+            }
+          }
+          return fallbackUser || null
+        } catch {
+          return fallbackUser || null
+        } finally {
+          clearTimeout(timeoutId)
         }
       }
+      const refreshedUser = await refreshProfile(user)
+      user = refreshedUser || user
 
       if (user) {
         setCurrentUser(user)
@@ -101,20 +113,38 @@ export default function LandlordDashboard() {
       }
 
       const headers = { Authorization: `Bearer ${token}` }
-      const [propertiesRes, applicationsRes, tenantsRes, paymentsRes, notificationsRes] = await Promise.all([
-        fetch("/api/properties", { headers }),
-        fetch("/api/applications?userType=landlord", { headers }),
-        fetch("/api/landlord/tenants", { headers }),
-        fetch("/api/payments", { headers }),
-        fetch("/api/notifications?unreadOnly=true", { headers }),
+      const fetchWithTimeout = async (url: string, timeoutMs: number) => {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+        try {
+          return await fetch(url, { headers, signal: controller.signal })
+        } finally {
+          clearTimeout(timeoutId)
+        }
+      }
+      const [statsRes, propertiesRes, applicationsRes, tenantsRes, paymentsRes, notificationsRes] = await Promise.all([
+        fetchWithTimeout("/api/landlord/dashboard-stats", 8000),
+        fetchWithTimeout("/api/properties", 8000),
+        fetchWithTimeout("/api/applications?userType=landlord", 8000),
+        fetchWithTimeout("/api/landlord/tenants", 8000),
+        fetchWithTimeout("/api/payments", 8000),
+        fetchWithTimeout("/api/notifications?unreadOnly=true", 8000),
       ])
 
-      const unauthorized = [propertiesRes, applicationsRes, tenantsRes, paymentsRes, notificationsRes].some(
+      const unauthorized = [statsRes, propertiesRes, applicationsRes, tenantsRes, paymentsRes, notificationsRes].some(
         (res) => res.status === 401 || res.status === 403
       )
       if (unauthorized) {
         handleUnauthorized()
         return
+      }
+
+      let serverStats: any = null
+      if (statsRes.ok) {
+        const statsData = await statsRes.json().catch(() => ({}))
+        if (statsData?.stats) {
+          serverStats = statsData.stats
+        }
       }
 
       let propertiesCount = 0
@@ -194,12 +224,31 @@ export default function LandlordDashboard() {
         pendingIssues = (notificationsData.notifications || []).length
       }
 
-      setStats({
+      const computedStats = {
         totalProperties: propertiesCount,
         activeTenants: tenantsCount || approvedApplicationsCount,
         monthlyRevenue,
         pendingIssues,
-      })
+      }
+
+      if (serverStats) {
+        const resolvedStats = {
+          totalProperties: Number(serverStats.totalProperties || 0),
+          activeTenants: Number(serverStats.activeTenants || 0),
+          monthlyRevenue: Number(serverStats.monthlyRevenue || 0),
+          pendingIssues: Number(serverStats.pendingIssues || 0),
+        }
+        const serverHasAny = Object.values(resolvedStats).some((value) => Number(value) > 0)
+        const computedHasAny = Object.values(computedStats).some((value) => Number(value) > 0)
+        setStats(serverHasAny || !computedHasAny ? resolvedStats : computedStats)
+      } else {
+        setStats({
+          totalProperties: computedStats.totalProperties,
+          activeTenants: computedStats.activeTenants,
+          monthlyRevenue: computedStats.monthlyRevenue,
+          pendingIssues: computedStats.pendingIssues,
+        })
+      }
     } catch (error) {
       console.error("Failed to fetch dashboard data:", error)
     } finally {
@@ -212,25 +261,21 @@ export default function LandlordDashboard() {
       title: t('totalProperties'),
       value: stats.totalProperties.toString(),
       icon: Home,
-      trend: "+1", // TODO: Real trend
     },
     {
       title: t('activeTenants'),
       value: stats.activeTenants.toString(),
       icon: Users,
-      trend: "+2",
     },
     {
       title: t('monthlyRevenue'),
       value: `${getCurrencySymbol()}${stats.monthlyRevenue.toLocaleString()}`,
       icon: DollarSign,
-      trend: "+12%",
     },
     {
       title: t('pendingIssues'),
       value: stats.pendingIssues.toString(),
       icon: AlertCircle,
-      trend: "-2",
     },
   ]
 

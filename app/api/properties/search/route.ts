@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDatabaseAdapter } from '@/lib/db-adapter'
 import { prisma } from '@/lib/db'
+import { supabaseAdmin } from '@/lib/supabase'
 
 /**
  * 房源搜索接口 - 使用数据库适配器，自动根据环境变量选择数据源
@@ -22,6 +23,28 @@ export async function GET(request: NextRequest) {
 
     const db = getDatabaseAdapter()
     const region = process.env.NEXT_PUBLIC_APP_REGION || 'global'
+    const fetchPropertiesFromSupabase = async () => {
+      if (!supabaseAdmin) return []
+      const tables = ['Property', 'property', 'properties']
+      for (const tableName of tables) {
+        const { data, error } = await supabaseAdmin.from(tableName).select('*')
+        if (!error && data) return data
+      }
+      return []
+    }
+    const fetchUserFromSupabase = async (userId: string) => {
+      if (!supabaseAdmin || !userId) return null
+      const tables = ['User', 'user', 'users']
+      for (const tableName of tables) {
+        const { data, error } = await supabaseAdmin
+          .from(tableName)
+          .select('id,name,email')
+          .eq('id', userId)
+          .limit(1)
+        if (!error && data && data.length > 0) return data[0]
+      }
+      return null
+    }
     
     const filters: any = {}
     const statusAllowList = ['AVAILABLE', 'ACTIVE', 'PUBLISHED']
@@ -132,6 +155,7 @@ export async function GET(request: NextRequest) {
     }
 
     let allProperties: any[] = []
+    let usedSupabaseFallback = false
     try {
       console.log('Search executing with filters:', JSON.stringify(filters))
       if (region === 'china') {
@@ -169,6 +193,10 @@ export async function GET(request: NextRequest) {
         allProperties = []
       }
     }
+    if (region !== 'china' && supabaseAdmin && allProperties.length === 0) {
+      allProperties = await fetchPropertiesFromSupabase()
+      usedSupabaseFallback = allProperties.length > 0
+    }
     console.log(`Search query returned ${allProperties.length} properties`)
     
     const shouldFilterInMemory = Boolean(
@@ -183,6 +211,13 @@ export async function GET(request: NextRequest) {
     )
     if (region === 'china' || shouldFilterInMemory) {
       allProperties = applyMemoryFilters(allProperties)
+    }
+    if (usedSupabaseFallback) {
+      allProperties.sort((a: any, b: any) => {
+        const dateA = new Date(a.createdAt || a.created_at || 0).getTime()
+        const dateB = new Date(b.createdAt || b.created_at || 0).getTime()
+        return dateB - dateA
+      })
     }
     console.log(`After memory filtering: ${allProperties.length} properties`)
     
@@ -218,8 +253,14 @@ export async function GET(request: NextRequest) {
         if (!property?.landlordId) {
           return { ...normalizedProperty, landlord: null }
         }
-        
-        const landlord = await db.findUserById(property.landlordId)
+
+        let landlord = null
+        try {
+          landlord = await db.findUserById(property.landlordId)
+        } catch {}
+        if (!landlord && region !== 'china') {
+          landlord = await fetchUserFromSupabase(String(property.landlordId))
+        }
         return {
           ...normalizedProperty,
           landlord: landlord ? {

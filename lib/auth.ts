@@ -70,6 +70,43 @@ export async function getAuthUser(request: NextRequest): Promise<AuthUser | null
           }
         }
       } catch {}
+      if (supabaseAdmin) {
+        const userTables = ['User', 'user', 'users']
+        for (const tableName of userTables) {
+          if (user.id) {
+            const { data, error } = await supabaseAdmin
+              .from(tableName)
+              .select('id,email,userType')
+              .eq('id', user.id)
+              .limit(1)
+            if (!error && data && data.length > 0) {
+              const row = data[0]
+              return {
+                userId: String(row.id),
+                id: String(row.id),
+                email: row.email || resolvedEmail,
+                userType: row.userType || userType
+              }
+            }
+          }
+          if (user.email) {
+            const { data, error } = await supabaseAdmin
+              .from(tableName)
+              .select('id,email,userType')
+              .ilike('email', user.email)
+              .limit(1)
+            if (!error && data && data.length > 0) {
+              const row = data[0]
+              return {
+                userId: String(row.id),
+                id: String(row.id),
+                email: row.email || resolvedEmail,
+                userType: row.userType || userType
+              }
+            }
+          }
+        }
+      }
       return {
         userId: resolvedUserId,
         id: resolvedUserId,

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-adapter'
-import { createDatabaseAdapter, getDatabaseAdapter } from '@/lib/db-adapter'
+import { getDatabaseAdapter } from '@/lib/db-adapter'
 import { prisma } from '@/lib/db'
-import { supabaseAdmin } from '@/lib/supabase'
+import { createSupabaseServerClient, supabaseAdmin } from '@/lib/supabase'
 import { trackEvent } from '@/lib/analytics'
 
 /**
@@ -208,6 +208,16 @@ export async function GET(request: NextRequest) {
         getField(obj?.landlordProfile, ['representedById', 'represented_by_id'])
       )
     }
+    const normalizeApplication = (app: any) => ({
+      ...app,
+      id: getField(app, ['id', '_id']),
+      tenantId: getField(app, ['tenantId', 'tenant_id']),
+      propertyId: getField(app, ['propertyId', 'property_id']),
+      appliedDate: getField(app, ['appliedDate', 'applied_date', 'createdAt', 'created_at']),
+      createdAt: getField(app, ['createdAt', 'created_at']),
+      updatedAt: getField(app, ['updatedAt', 'updated_at']),
+      status: app.status
+    })
 
     const isConnectionError = (error: any) => {
       const msg = String(error?.message || '').toLowerCase()
@@ -235,7 +245,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    let useFallback = false
+    let useSupabaseRest = false
     let effectiveDb = db
     if (region === 'global') {
       try {
@@ -244,11 +254,15 @@ export async function GET(request: NextRequest) {
         if (!isConnectionError(error)) {
           throw error
         }
-        useFallback = true
-        effectiveDb = createDatabaseAdapter('china')
+        useSupabaseRest = true
       }
     }
-    const isPrisma = region === 'global' && !useFallback
+    const isPrisma = region === 'global' && !useSupabaseRest
+
+    const authHeader = request.headers.get('authorization')
+    const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : undefined
+    const supabaseClient = createSupabaseServerClient(accessToken)
+    const supabaseReaders = [supabaseClient, supabaseAdmin].filter(Boolean) as any[]
 
     let dbUser = null
     try {
@@ -264,14 +278,50 @@ export async function GET(request: NextRequest) {
         dbUser = await effectiveDb.findUserByEmail(user.email)
       } catch {}
     }
+    if (!dbUser && supabaseReaders.length > 0) {
+      const userTables = ['User', 'user', 'users', 'Profile', 'profile', 'profiles']
+      for (const client of supabaseReaders) {
+        for (const tableName of userTables) {
+          if (user.id) {
+            const { data, error } = await client
+              .from(tableName)
+              .select('id,userType,email,name,phone')
+              .eq('id', user.id)
+              .limit(1)
+            if (!error && data && data.length > 0) {
+              dbUser = data[0]
+              break
+            }
+          }
+          if (user.email) {
+            const { data, error } = await client
+              .from(tableName)
+              .select('id,userType,email,name,phone')
+              .ilike('email', user.email)
+              .limit(1)
+            if (!error && data && data.length > 0) {
+              dbUser = data[0]
+              break
+            }
+          }
+        }
+        if (dbUser) break
+      }
+    }
     const resolvedUserId = dbUser?.id || user.id
     const agentIdSet = new Set([String(user.id), String(resolvedUserId)])
     let tokenUserId: string | null = null
-    const authHeader = request.headers.get('authorization')
-    if (authHeader && authHeader.startsWith('Bearer ') && supabaseAdmin) {
-      const token = authHeader.substring(7)
+    if (accessToken && supabaseClient) {
       try {
-        const { data } = await supabaseAdmin.auth.getUser(token)
+        const { data } = await supabaseClient.auth.getUser(accessToken)
+        if (data?.user?.id) {
+          tokenUserId = String(data.user.id)
+        }
+      } catch {}
+    }
+    if (!tokenUserId && accessToken && supabaseAdmin) {
+      try {
+        const { data } = await supabaseAdmin.auth.getUser(accessToken)
         if (data?.user?.id) {
           tokenUserId = String(data.user.id)
         }
@@ -279,15 +329,18 @@ export async function GET(request: NextRequest) {
     }
     const landlordIdSet = new Set<string>([String(resolvedUserId), String(user.id)])
     if (tokenUserId) landlordIdSet.add(String(tokenUserId))
+    const requestedUserType = String(userType || '').toUpperCase()
+    const dbUserType = String(dbUser?.userType || '').toUpperCase()
+    const effectiveUserType = requestedUserType || dbUserType || String(user.userType || '').toUpperCase()
 
     // 构建查询条件
     let applications: any[] = []
     if (isPrisma) {
       const baseWhere: any = {}
       let forceEmpty = false
-      if (userType === 'tenant' || dbUser?.userType === 'TENANT') {
+      if (effectiveUserType === 'TENANT') {
         baseWhere.tenantId = resolvedUserId
-      } else if (userType === 'landlord' || dbUser?.userType === 'LANDLORD') {
+      } else if (effectiveUserType === 'LANDLORD') {
         const landlordIds = Array.from(landlordIdSet)
         const landlordProperties = await runWithRetry(() => prisma.property.findMany({
           where: { landlordId: landlordIds.length === 1 ? landlordIds[0] : { in: landlordIds } },
@@ -299,7 +352,7 @@ export async function GET(request: NextRequest) {
         } else {
           baseWhere.propertyId = { in: propertyIds }
         }
-      } else if (userType === 'agent' || dbUser?.userType === 'AGENT') {
+      } else if (effectiveUserType === 'AGENT') {
         const agentIds = Array.from(agentIdSet)
         const representedProfiles = await runWithRetry(() => prisma.landlordProfile.findMany({
           where: { representedById: { in: agentIds } },
@@ -341,15 +394,247 @@ export async function GET(request: NextRequest) {
           }
         }))
       }
+    } else if (region === 'global') {
+      if (supabaseReaders.length === 0) {
+        return NextResponse.json({ applications: [] })
+      }
+      const applicationTables = ['Application', 'application', 'applications']
+      const propertyTables = ['Property', 'property', 'properties', 'Listing', 'listing', 'listings']
+      const landlordProfileTables = ['LandlordProfile', 'landlordProfile', 'landlord_profiles', 'landlordprofiles']
+      const landlordFields = ['landlordId', 'landlord_id', 'ownerId', 'owner_id', 'userId', 'user_id']
+      const agentFields = ['agentId', 'agent_id', 'brokerId', 'broker_id', 'listingAgentId', 'listing_agent_id']
+      const tenantFields = ['tenantId', 'tenant_id']
+      const propertyIdFields = ['propertyId', 'property_id']
+      const emailFields = ['landlordEmail', 'landlord_email', 'ownerEmail', 'owner_email', 'userEmail', 'user_email']
+      const landlordIds = Array.from(landlordIdSet)
+      const agentIds = Array.from(agentIdSet)
+
+      const fetchPropertyIdsByField = async (field: string, values: string[]) => {
+        if (values.length === 0) return []
+        for (const client of supabaseReaders) {
+          for (const tableName of propertyTables) {
+            const { data, error } = await client
+              .from(tableName)
+              .select('id')
+              .in(field, values)
+            if (!error && data) {
+              return data.map((row: any) => row.id).filter(Boolean)
+            }
+          }
+        }
+        return []
+      }
+      const fetchPropertyIdsByEmail = async (email: string) => {
+        for (const client of supabaseReaders) {
+          for (const tableName of propertyTables) {
+            for (const landlordField of landlordFields) {
+              const { data, error } = await client
+                .from(tableName)
+                .select('id')
+                .ilike(landlordField, email)
+              if (!error && data) {
+                const ids = data.map((row: any) => row.id).filter(Boolean)
+                if (ids.length > 0) return ids
+              }
+            }
+          }
+        }
+        for (const client of supabaseReaders) {
+          for (const tableName of propertyTables) {
+            for (const emailField of emailFields) {
+              const { data, error } = await client
+                .from(tableName)
+                .select('id')
+                .ilike(emailField, email)
+              if (!error && data) {
+                const ids = data.map((row: any) => row.id).filter(Boolean)
+                if (ids.length > 0) return ids
+              }
+            }
+          }
+        }
+        return []
+      }
+
+      let propertyIds: string[] = []
+      if (effectiveUserType === 'LANDLORD') {
+        for (const landlordField of landlordFields) {
+          propertyIds = await fetchPropertyIdsByField(landlordField, landlordIds)
+          if (propertyIds.length > 0) break
+        }
+        if (propertyIds.length === 0 && user.email) {
+          propertyIds = await fetchPropertyIdsByEmail(user.email)
+        }
+      } else if (effectiveUserType === 'AGENT') {
+        for (const agentField of agentFields) {
+          propertyIds = await fetchPropertyIdsByField(agentField, agentIds)
+          if (propertyIds.length > 0) break
+        }
+        if (propertyIds.length === 0) {
+          let representedLandlordIds: string[] = []
+          for (const client of supabaseReaders) {
+            for (const tableName of landlordProfileTables) {
+              for (const repField of ['representedById', 'represented_by_id']) {
+                const { data, error } = await client
+                  .from(tableName)
+                  .select('userId,user_id')
+                  .in(repField, agentIds)
+                if (!error && data) {
+                  representedLandlordIds = data
+                    .map((row: any) => row.userId ?? row.user_id)
+                    .filter(Boolean)
+                  break
+                }
+              }
+              if (representedLandlordIds.length > 0) break
+            }
+            if (representedLandlordIds.length > 0) break
+          }
+          if (representedLandlordIds.length > 0) {
+            for (const landlordField of landlordFields) {
+              propertyIds = await fetchPropertyIdsByField(landlordField, representedLandlordIds)
+              if (propertyIds.length > 0) break
+            }
+          }
+        }
+        if (propertyIds.length === 0 && user.email) {
+          propertyIds = await fetchPropertyIdsByEmail(user.email)
+        }
+      }
+
+      if (effectiveUserType === 'LANDLORD' || effectiveUserType === 'AGENT') {
+        if (propertyIds.length === 0) {
+          const directFields = effectiveUserType === 'LANDLORD' ? landlordFields : agentFields
+          for (const client of supabaseReaders) {
+            for (const tableName of applicationTables) {
+              for (const directField of directFields) {
+                let query = client
+                  .from(tableName)
+                  .select('*')
+                  .in(directField, effectiveUserType === 'LANDLORD' ? landlordIds : agentIds)
+                const { data, error } = await query
+                if (!error && data) {
+                  applications = data.map(normalizeApplication)
+                  break
+                }
+              }
+              if (applications.length > 0) break
+            }
+            if (applications.length > 0) break
+          }
+          if (applications.length === 0) {
+            return NextResponse.json({ applications: [] })
+          }
+        }
+        for (const client of supabaseReaders) {
+          for (const tableName of applicationTables) {
+            for (const propertyField of propertyIdFields) {
+              let query = client
+                .from(tableName)
+                .select('*')
+                .in(propertyField, propertyIds)
+              const { data, error } = await query
+              if (!error && data) {
+                applications = data.map(normalizeApplication)
+                break
+              }
+            }
+            if (applications.length > 0) break
+          }
+          if (applications.length > 0) break
+        }
+      } else {
+        for (const client of supabaseReaders) {
+          for (const tableName of applicationTables) {
+            for (const tenantField of tenantFields) {
+              let query = client
+                .from(tableName)
+                .select('*')
+                .eq(tenantField, resolvedUserId)
+              const { data, error } = await query
+              if (!error && data) {
+                applications = data.map(normalizeApplication)
+                break
+              }
+            }
+            if (applications.length > 0) break
+          }
+          if (applications.length > 0) break
+        }
+      }
+
+      if (status) {
+        applications = applications.filter((app: any) => String(app.status || '').toUpperCase() === status.toUpperCase())
+      }
+
+      if (applications.length === 0) {
+        return NextResponse.json({ applications: [] })
+      }
+
+      const propertyIdSet = new Set(applications.map((app: any) => String(app.propertyId || '')).filter(Boolean))
+      const tenantIdSet = new Set(applications.map((app: any) => String(app.tenantId || '')).filter(Boolean))
+      const propertyMap = new Map<string, any>()
+      const tenantMap = new Map<string, any>()
+
+      if (propertyIdSet.size > 0) {
+        for (const client of supabaseReaders) {
+          for (const tableName of propertyTables) {
+            const { data, error } = await client
+              .from(tableName)
+              .select('id,title,address')
+              .in('id', Array.from(propertyIdSet))
+            if (!error && data) {
+              data.forEach((row: any) => propertyMap.set(String(row.id), row))
+              break
+            }
+          }
+          if (propertyMap.size > 0) break
+        }
+      }
+
+      if (tenantIdSet.size > 0) {
+        const userTables = ['User', 'user', 'users', 'Profile', 'profile', 'profiles']
+        for (const client of supabaseReaders) {
+          for (const tableName of userTables) {
+            const { data, error } = await client
+              .from(tableName)
+              .select('id,name,email,phone')
+              .in('id', Array.from(tenantIdSet))
+            if (!error && data) {
+              data.forEach((row: any) => tenantMap.set(String(row.id), row))
+              break
+            }
+          }
+          if (tenantMap.size > 0) break
+        }
+      }
+
+      const applicationsWithRelations = applications.map((app: any) => {
+        const property = app.propertyId ? propertyMap.get(String(app.propertyId)) : null
+        const tenant = app.tenantId ? tenantMap.get(String(app.tenantId)) : null
+        return {
+          ...app,
+          property: property ? { id: property.id, title: property.title, address: property.address } : null,
+          tenant: tenant ? { id: tenant.id, name: tenant.name, email: tenant.email, phone: tenant.phone } : null
+        }
+      })
+
+      applicationsWithRelations.sort((a: any, b: any) => {
+        const dateA = new Date(a.appliedDate || a.createdAt || 0).getTime()
+        const dateB = new Date(b.appliedDate || b.createdAt || 0).getTime()
+        return dateB - dateA
+      })
+
+      return NextResponse.json({ applications: applicationsWithRelations })
     } else {
       applications = await effectiveDb.query('applications', {})
     }
     
     // 应用过滤
     if (!isPrisma) {
-      if (userType === 'tenant' || dbUser?.userType === 'TENANT') {
+      if (effectiveUserType === 'TENANT') {
         applications = applications.filter((app: any) => String(getField(app, ['tenantId', 'tenant_id']) || '') === String(resolvedUserId))
-      } else if (userType === 'landlord' || dbUser?.userType === 'LANDLORD') {
+      } else if (effectiveUserType === 'LANDLORD') {
         const properties = await effectiveDb.query('properties', {})
         const propertyIds = new Set(
           properties
@@ -361,7 +646,7 @@ export async function GET(request: NextRequest) {
           const pid = String(getField(app, ['propertyId', 'property_id']) || '')
           return pid && propertyIds.has(pid)
         })
-      } else if (userType === 'agent' || dbUser?.userType === 'AGENT') {
+      } else if (effectiveUserType === 'AGENT') {
         const allUsers = await effectiveDb.query('users', {}, { orderBy: { createdAt: 'desc' } })
         const representedLandlordIds = new Set(
           allUsers

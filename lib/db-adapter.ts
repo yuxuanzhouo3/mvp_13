@@ -73,9 +73,13 @@ export interface DatabaseAdapter {
 // Supabase (Prisma) 适配器实现
 export class SupabaseAdapter implements DatabaseAdapter {
   async findUserByEmail(email: string): Promise<UnifiedUser | null> {
+    const normalizedEmail = email?.trim()
+    const whereEmail = normalizedEmail
+      ? { email: { equals: normalizedEmail, mode: 'insensitive' as const } }
+      : { email: normalizedEmail }
     const query = () =>
-      prisma.user.findUnique({
-        where: { email },
+      prisma.user.findFirst({
+        where: whereEmail,
         include: {
           tenantProfile: true,
           landlordProfile: true,
@@ -86,8 +90,8 @@ export class SupabaseAdapter implements DatabaseAdapter {
       if (prismaDirect) {
         try {
           const user = await withTimeoutMs(
-            prismaDirect.user.findUnique({
-              where: { email },
+            prismaDirect.user.findFirst({
+              where: whereEmail,
               include: {
                 tenantProfile: true,
                 landlordProfile: true,
@@ -286,6 +290,7 @@ export class SupabaseAdapter implements DatabaseAdapter {
     const updateData: any = {}
     
     if (data.email !== undefined) updateData.email = data.email
+    if (data.password !== undefined) updateData.password = data.password
     if (data.name !== undefined) updateData.name = data.name
     if (data.phone !== undefined) updateData.phone = data.phone
     if (data.avatar !== undefined) updateData.avatar = data.avatar
@@ -958,6 +963,7 @@ export class CloudBaseAdapter implements DatabaseAdapter {
     }
     
     if (data.email !== undefined) updateData.email = data.email
+    if (data.password !== undefined) updateData.password = data.password
     if (data.name !== undefined) updateData.name = data.name
     if (data.phone !== undefined) updateData.phone = data.phone
     if (data.avatar !== undefined) updateData.avatar = data.avatar

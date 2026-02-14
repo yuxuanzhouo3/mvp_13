@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-adapter'
 import { getAuthUser } from '@/lib/auth'
-import { createDatabaseAdapter, getDatabaseAdapter } from '@/lib/db-adapter'
+import { getDatabaseAdapter } from '@/lib/db-adapter'
 import { prisma } from '@/lib/db'
 import { randomUUID } from 'crypto'
-import { supabaseAdmin } from '@/lib/supabase'
+import { createSupabaseServerClient, supabaseAdmin } from '@/lib/supabase'
 
 /**
  * 创建房源
@@ -500,10 +500,20 @@ export async function GET(request: NextRequest) {
     let resolvedUserId: string | null = null
     let tokenUserId: string | null = null
     const authHeader = request.headers.get('authorization')
-    if (authHeader && authHeader.startsWith('Bearer ') && supabaseAdmin) {
-      const token = authHeader.substring(7)
+    const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : undefined
+    const supabaseClient = createSupabaseServerClient(accessToken)
+    const supabaseReaders = [supabaseClient, supabaseAdmin].filter(Boolean) as any[]
+    if (accessToken && supabaseClient) {
       try {
-        const { data } = await supabaseAdmin.auth.getUser(token)
+        const { data } = await supabaseClient.auth.getUser(accessToken)
+        if (data?.user?.id) {
+          tokenUserId = String(data.user.id)
+        }
+      } catch {}
+    }
+    if (!tokenUserId && accessToken && supabaseAdmin) {
+      try {
+        const { data } = await supabaseAdmin.auth.getUser(accessToken)
         if (data?.user?.id) {
           tokenUserId = String(data.user.id)
         }
@@ -527,23 +537,26 @@ export async function GET(request: NextRequest) {
           if (dbUser.userType === 'LANDLORD' || dbUser.userType === 'AGENT') {
             landlordIdSet.add(String(resolvedUserId))
           }
-        } else if (user.email && supabaseAdmin) {
-          const userTables = ['User', 'user', 'users']
-          for (const tableName of userTables) {
-            const { data, error } = await supabaseAdmin
-              .from(tableName)
-              .select('id,userType,email')
-              .eq('email', user.email)
-              .limit(1)
-            if (!error && data && data.length > 0) {
-              const row = data[0]
-              resolvedUserId = String(row.id)
-              const type = String(row.userType || '').toUpperCase()
-              if (type === 'LANDLORD' || type === 'AGENT') {
-                landlordIdSet.add(String(resolvedUserId))
+        } else if (user.email && supabaseReaders.length > 0) {
+          const userTables = ['User', 'user', 'users', 'Profile', 'profile', 'profiles']
+          for (const client of supabaseReaders) {
+            for (const tableName of userTables) {
+              const { data, error } = await client
+                .from(tableName)
+                .select('id,userType,user_type,email')
+                .ilike('email', user.email)
+                .limit(1)
+              if (!error && data && data.length > 0) {
+                const row = data[0]
+                resolvedUserId = String(row.id)
+                const type = String(row.userType || row.user_type || '').toUpperCase()
+                if (type === 'LANDLORD' || type === 'AGENT') {
+                  landlordIdSet.add(String(resolvedUserId))
+                }
+                break
               }
-              break
             }
+            if (landlordIdSet.size > 0) break
           }
         } else {
           landlordIdSet.add(String(user.id))
@@ -574,8 +587,10 @@ export async function GET(request: NextRequest) {
           }
         })
       }
+    } else if (tokenUserId) {
+      filters.landlordId = tokenUserId
+      resolvedUserId = tokenUserId
     } else {
-      // 如果没有用户认证，返回空结果
       return NextResponse.json({
         properties: [],
         pagination: {
@@ -616,6 +631,121 @@ export async function GET(request: NextRequest) {
       createdAt: true,
       updatedAt: true,
     }
+    const normalizeProperty = (p: any) => ({
+      id: p.id ?? p._id,
+      landlordId: p.landlordId ?? p.landlord_id,
+      title: p.title,
+      description: p.description,
+      address: p.address,
+      city: p.city,
+      state: p.state,
+      zipCode: p.zipCode ?? p.zip_code,
+      country: p.country,
+      latitude: p.latitude,
+      longitude: p.longitude,
+      price: p.price,
+      deposit: p.deposit,
+      bedrooms: p.bedrooms,
+      bathrooms: p.bathrooms,
+      sqft: p.sqft,
+      propertyType: p.propertyType ?? p.property_type,
+      status: p.status,
+      images: p.images ?? p.image ?? p.image_urls,
+      amenities: p.amenities,
+      petFriendly: p.petFriendly ?? p.pet_friendly,
+      availableFrom: p.availableFrom ?? p.available_from,
+      leaseDuration: p.leaseDuration ?? p.lease_duration,
+      createdAt: p.createdAt ?? p.created_at,
+      updatedAt: p.updatedAt ?? p.updated_at,
+    })
+    const fetchPropertiesFromSupabase = async () => {
+      if (supabaseReaders.length === 0) {
+        return null
+      }
+      const tableNames = ['Property', 'property', 'properties', 'Listing', 'listing', 'listings']
+      const landlordFields = ['landlordId', 'landlord_id', 'ownerId', 'owner_id', 'userId', 'user_id']
+      const emailFields = ['landlordEmail', 'landlord_email', 'ownerEmail', 'owner_email', 'userEmail', 'user_email']
+      const orderFields: (string | null)[] = ['createdAt', 'created_at', null]
+      const rangeFrom = (page - 1) * limit
+      const rangeTo = rangeFrom + limit - 1
+      let lastError: any = null
+      for (const client of supabaseReaders) {
+        for (const tableName of tableNames) {
+          for (const landlordField of landlordFields) {
+            for (const orderField of orderFields) {
+              let query = client
+                .from(tableName)
+                .select('*', { count: 'exact' })
+                .range(rangeFrom, rangeTo)
+              if (orderField) {
+                query = query.order(orderField, { ascending: false })
+              }
+              if (typeof filters.landlordId === 'object' && filters.landlordId?.in) {
+                query = query.in(landlordField, filters.landlordId.in)
+              } else if (filters.landlordId) {
+                query = query.eq(landlordField, filters.landlordId)
+              }
+              const { data, error, count } = await query
+              if (!error) {
+                return {
+                  rows: (data || []).map(normalizeProperty),
+                  total: typeof count === 'number' ? count : (data || []).length
+                }
+              }
+              lastError = error
+            }
+          }
+          if (user?.email) {
+            for (const landlordField of landlordFields) {
+              for (const orderField of orderFields) {
+                let query = client
+                  .from(tableName)
+                  .select('*', { count: 'exact' })
+                  .range(rangeFrom, rangeTo)
+                if (orderField) {
+                  query = query.order(orderField, { ascending: false })
+                }
+                query = query.ilike(landlordField, user.email)
+                const { data, error, count } = await query
+                if (!error) {
+                  return {
+                    rows: (data || []).map(normalizeProperty),
+                    total: typeof count === 'number' ? count : (data || []).length
+                  }
+                }
+                lastError = error
+              }
+            }
+          }
+          if (user?.email) {
+            for (const emailField of emailFields) {
+              for (const orderField of orderFields) {
+                let query = client
+                  .from(tableName)
+                  .select('*', { count: 'exact' })
+                  .range(rangeFrom, rangeTo)
+                if (orderField) {
+                  query = query.order(orderField, { ascending: false })
+                }
+                query = query.ilike(emailField, user.email)
+                const { data, error, count } = await query
+                if (!error) {
+                  return {
+                    rows: (data || []).map(normalizeProperty),
+                    total: typeof count === 'number' ? count : (data || []).length
+                  }
+                }
+                lastError = error
+              }
+            }
+          }
+        }
+      }
+      if (lastError) {
+        console.warn('Supabase properties fallback failed:', lastError)
+      }
+      return null
+    }
 
     let total = 0
     let properties: any[] = []
@@ -633,17 +763,12 @@ export async function GET(request: NextRequest) {
         if (!isConnectionError(error)) {
           throw error
         }
-        const fallbackDb = createDatabaseAdapter('china')
-        const safeFilters = typeof filters.landlordId === 'object' ? {} : filters
-        let allProperties = await fallbackDb.query('properties', safeFilters, {
-          orderBy: { createdAt: 'desc' }
-        })
-        if (typeof filters.landlordId === 'object' && filters.landlordId?.in) {
-          const landlordIdSet = new Set(filters.landlordId.in.map((id: any) => String(id)))
-          allProperties = allProperties.filter((p: any) => landlordIdSet.has(String(p.landlordId || p.landlord_id || '')))
+        const supabaseResult = await fetchPropertiesFromSupabase()
+        if (!supabaseResult) {
+          throw error
         }
-        total = allProperties.length
-        properties = allProperties.slice((page - 1) * limit, (page - 1) * limit + limit)
+        total = supabaseResult.total
+        properties = supabaseResult.rows
       }
     } else {
       const safeFilters = typeof filters.landlordId === 'object' ? {} : filters
@@ -687,7 +812,11 @@ export async function GET(request: NextRequest) {
     })
   } catch (error: any) {
     console.error('Get properties error:', error)
-    if (!supabaseAdmin) {
+    const authHeader = request.headers.get('authorization')
+    const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : undefined
+    const supabaseClient = createSupabaseServerClient(accessToken)
+    const supabaseReaders = [supabaseClient, supabaseAdmin].filter(Boolean) as any[]
+    if (supabaseReaders.length === 0) {
       const { searchParams } = new URL(request.url)
       const page = parseInt(searchParams.get('page') || '1')
       const limit = parseInt(searchParams.get('limit') || '20')
@@ -733,7 +862,6 @@ export async function GET(request: NextRequest) {
     if (landlordId) {
       landlordIds = [landlordId]
     } else {
-      const authHeader = request.headers.get('authorization')
       let tokenEmail = ''
       if (authHeader && authHeader.startsWith('Bearer ')) {
         try {
@@ -750,7 +878,7 @@ export async function GET(request: NextRequest) {
       }
       if (landlordIds.length === 0 && tokenEmail) {
         const { data: userRows } = await selectFrom(userTables, (tableName) =>
-          supabaseAdmin
+          supabaseReaders[0]
             .from(tableName)
             .select('id,userType,email')
             .eq('email', tokenEmail)
@@ -762,55 +890,51 @@ export async function GET(request: NextRequest) {
         }
       }
     }
-    const buildQuery = (tableName: string, landlordField?: string, orderField?: string) => {
-      let query = supabaseAdmin
-        .from(tableName)
-        .select('*', { count: 'exact' })
-        .range(from, to)
-      if (orderField) {
-        query = query.order(orderField, { ascending: false })
-      }
-      if (landlordField) {
-        if (landlordIds.length === 1) {
-          query = query.eq(landlordField, landlordIds[0])
-        } else if (landlordIds.length > 1) {
-          query = query.in(landlordField, landlordIds)
-        }
-      }
-      return query
-    }
     let properties: any[] = []
     let count: number | null = null
-    for (const tableName of propertyTables) {
-      const attempts = [
-        { landlordField: 'landlordId', orderField: 'createdAt' },
-        { landlordField: 'landlord_id', orderField: 'created_at' },
-        { landlordField: 'landlordId', orderField: 'created_at' },
-        { landlordField: 'landlord_id', orderField: 'createdAt' },
-        { landlordField: 'landlordId', orderField: undefined },
-        { landlordField: 'landlord_id', orderField: undefined },
-        { landlordField: undefined, orderField: 'createdAt' },
-        { landlordField: undefined, orderField: 'created_at' },
-        { landlordField: undefined, orderField: undefined },
-      ]
-      let lastError: any = null
-      for (const attempt of attempts) {
-        const { data, error, count: countValue } = await buildQuery(
-          tableName,
-          attempt.landlordField,
-          attempt.orderField
-        )
-        if (!error) {
-          properties = (data || []).map(normalizeProperty)
-          count = typeof countValue === 'number' ? countValue : null
-          lastError = null
+    for (const client of supabaseReaders) {
+      for (const tableName of propertyTables) {
+        const attempts = [
+          { landlordField: 'landlordId', orderField: 'createdAt' },
+          { landlordField: 'landlord_id', orderField: 'created_at' },
+          { landlordField: 'landlordId', orderField: 'created_at' },
+          { landlordField: 'landlord_id', orderField: 'createdAt' },
+          { landlordField: 'landlordId', orderField: undefined },
+          { landlordField: 'landlord_id', orderField: undefined },
+          { landlordField: undefined, orderField: 'createdAt' },
+          { landlordField: undefined, orderField: 'created_at' },
+          { landlordField: undefined, orderField: undefined },
+        ]
+        let lastError: any = null
+        for (const attempt of attempts) {
+          let query = client
+            .from(tableName)
+            .select('*', { count: 'exact' })
+            .range(from, to)
+          if (attempt.orderField) {
+            query = query.order(attempt.orderField, { ascending: false })
+          }
+          if (attempt.landlordField) {
+            if (landlordIds.length === 1) {
+              query = query.eq(attempt.landlordField, landlordIds[0])
+            } else if (landlordIds.length > 1) {
+              query = query.in(attempt.landlordField, landlordIds)
+            }
+          }
+          const { data, error, count: countValue } = await query
+          if (!error) {
+            properties = (data || []).map(normalizeProperty)
+            count = typeof countValue === 'number' ? countValue : null
+            lastError = null
+            break
+          }
+          lastError = error
+        }
+        if (!lastError) {
           break
         }
-        lastError = error
       }
-      if (!lastError) {
-        break
-      }
+      if (properties.length > 0 || count !== null) break
     }
     if (!properties) {
       properties = []
@@ -819,7 +943,7 @@ export async function GET(request: NextRequest) {
     let landlordMap = new Map<string, any>()
     if (landlordIdSet.size > 0) {
       const { data: landlords } = await selectFrom(userTables, (tableName) =>
-        supabaseAdmin
+        supabaseReaders[0]
           .from(tableName)
           .select('id,name,email')
           .in('id', Array.from(landlordIdSet))

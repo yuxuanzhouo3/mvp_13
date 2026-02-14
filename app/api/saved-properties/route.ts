@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-adapter'
 import { getDatabaseAdapter } from '@/lib/db-adapter'
 import { prisma, withPrismaRetry } from '@/lib/db'
+import { createSupabaseServerClient, supabaseAdmin } from '@/lib/supabase'
 
 const findPropertyByAlternateId = async (searchId: string) => {
   try {
@@ -60,7 +61,85 @@ export async function GET(request: NextRequest) {
     const db = getDatabaseAdapter()
     const region = process.env.NEXT_PUBLIC_APP_REGION || 'global'
     const resolvedUserId = await resolveUserId(db, user)
-    const savedProperties = await db.query('savedProperties', { userId: resolvedUserId })
+    const authHeader = request.headers.get('authorization')
+    const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : undefined
+    const supabaseClient = createSupabaseServerClient(accessToken)
+    const supabaseReaders = [supabaseClient, supabaseAdmin].filter(Boolean) as any[]
+    const fetchSavedFromSupabase = async () => {
+      if (supabaseReaders.length === 0) return []
+      const tables = ['SavedProperty', 'savedProperty', 'saved_properties', 'savedProperties']
+      const userIdFields = ['userId', 'user_id']
+      for (const client of supabaseReaders) {
+        for (const tableName of tables) {
+          for (const field of userIdFields) {
+            const { data, error } = await client
+              .from(tableName)
+              .select('*')
+              .eq(field, resolvedUserId)
+            if (!error && data?.length) return data
+          }
+        }
+      }
+      for (const client of supabaseReaders) {
+        for (const tableName of tables) {
+          const { data, error } = await client.from(tableName).select('*')
+          if (!error && data) {
+            const filtered = data.filter((row: any) => {
+              const uid = row.userId ?? row.user_id ?? row.user?.id
+              const email = row.userEmail ?? row.user_email ?? row.user?.email
+              if (uid && String(uid) === String(resolvedUserId)) return true
+              if (user.email && email && String(email).toLowerCase() === String(user.email).toLowerCase()) return true
+              return false
+            })
+            if (filtered.length > 0) return filtered
+          }
+        }
+      }
+      return []
+    }
+    const fetchPropertyFromSupabase = async (propertyId: string) => {
+      if (!propertyId || supabaseReaders.length === 0) return null
+      const tables = ['Property', 'property', 'properties']
+      const idFields = ['id', 'propertyId', 'property_id', '_id']
+      for (const client of supabaseReaders) {
+        for (const tableName of tables) {
+          for (const field of idFields) {
+            const { data, error } = await client
+              .from(tableName)
+              .select('*')
+              .eq(field, propertyId)
+              .limit(1)
+            if (!error && data && data.length > 0) return data[0]
+          }
+        }
+      }
+      return null
+    }
+    const fetchUserFromSupabase = async (userId: string) => {
+      if (!userId || supabaseReaders.length === 0) return null
+      const tables = ['User', 'user', 'users']
+      for (const client of supabaseReaders) {
+        for (const tableName of tables) {
+          const { data, error } = await client
+            .from(tableName)
+            .select('id,name,email,phone,avatar')
+            .eq('id', userId)
+            .limit(1)
+          if (!error && data && data.length > 0) return data[0]
+        }
+      }
+      return null
+    }
+    let savedProperties: any[] = []
+    try {
+      savedProperties = await db.query('savedProperties', { userId: resolvedUserId })
+    } catch (error: any) {
+      if (region !== 'china' && supabaseAdmin) {
+        savedProperties = await fetchSavedFromSupabase()
+      } else {
+        throw error
+      }
+    }
     const savedPropertyIds = savedProperties
       .map((sp: any) => {
         // 获取propertyId，支持多种字段名
@@ -82,7 +161,10 @@ export async function GET(request: NextRequest) {
         const normalizedPropertyId = String(sp.propertyId || sp.property_id || sp.property?.id || sp.property?._id || '').trim()
         if (!normalizedPropertyId) return null
         
-        let property = await db.findById('properties', normalizedPropertyId)
+        let property = null
+        try {
+          property = await db.findById('properties', normalizedPropertyId)
+        } catch {}
         if (!property && region !== 'china') {
           // 尝试通过Prisma直接查找
           try {
@@ -101,9 +183,18 @@ export async function GET(request: NextRequest) {
         if (!property && region !== 'china' && normalizedPropertyId) {
           property = await findPropertyByAlternateId(normalizedPropertyId)
         }
+        if (!property && region !== 'china') {
+          property = await fetchPropertyFromSupabase(normalizedPropertyId)
+        }
         if (!property) return null
 
-        const landlord = await db.findUserById(property.landlordId)
+        let landlord = null
+        try {
+          landlord = await db.findUserById(property.landlordId)
+        } catch {}
+        if (!landlord && region !== 'china') {
+          landlord = await fetchUserFromSupabase(String(property.landlordId))
+        }
         const images = Array.isArray(property.images) 
           ? property.images 
           : (typeof property.images === 'string' ? JSON.parse(property.images) : [])

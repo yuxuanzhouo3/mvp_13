@@ -770,6 +770,13 @@ export async function GET(request: NextRequest) {
         total = supabaseResult.total
         properties = supabaseResult.rows
       }
+      if (properties.length === 0) {
+        const supabaseResult = await fetchPropertiesFromSupabase()
+        if (supabaseResult && supabaseResult.rows.length > 0) {
+          total = supabaseResult.total
+          properties = supabaseResult.rows
+        }
+      }
     } else {
       const safeFilters = typeof filters.landlordId === 'object' ? {} : filters
       const allProperties = await db.query('properties', safeFilters, {

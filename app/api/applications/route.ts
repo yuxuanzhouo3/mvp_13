@@ -333,68 +333,7 @@ export async function GET(request: NextRequest) {
     const dbUserType = String(dbUser?.userType || '').toUpperCase()
     const effectiveUserType = requestedUserType || dbUserType || String(user.userType || '').toUpperCase()
 
-    // 构建查询条件
-    let applications: any[] = []
-    if (isPrisma) {
-      const baseWhere: any = {}
-      let forceEmpty = false
-      if (effectiveUserType === 'TENANT') {
-        baseWhere.tenantId = resolvedUserId
-      } else if (effectiveUserType === 'LANDLORD') {
-        const landlordIds = Array.from(landlordIdSet)
-        const landlordProperties = await runWithRetry(() => prisma.property.findMany({
-          where: { landlordId: landlordIds.length === 1 ? landlordIds[0] : { in: landlordIds } },
-          select: { id: true }
-        }))
-        const propertyIds = landlordProperties.map((p) => p.id)
-        if (propertyIds.length === 0) {
-          forceEmpty = true
-        } else {
-          baseWhere.propertyId = { in: propertyIds }
-        }
-      } else if (effectiveUserType === 'AGENT') {
-        const agentIds = Array.from(agentIdSet)
-        const representedProfiles = await runWithRetry(() => prisma.landlordProfile.findMany({
-          where: { representedById: { in: agentIds } },
-          select: { userId: true }
-        }))
-        const representedLandlordIds = representedProfiles.map((p) => p.userId)
-        const orConditions: any[] = [{ agentId: { in: agentIds } }]
-        if (representedLandlordIds.length > 0) {
-          orConditions.push({ landlordId: { in: representedLandlordIds } })
-        }
-        const relatedProperties = await runWithRetry(() => prisma.property.findMany({
-          where: { OR: orConditions },
-          select: { id: true }
-        }))
-        const propertyIds = relatedProperties.map((p) => p.id)
-        if (propertyIds.length === 0) {
-          forceEmpty = true
-        } else {
-          baseWhere.propertyId = { in: propertyIds }
-        }
-      }
-      if (status) {
-        baseWhere.status = status.toUpperCase()
-      }
-
-      if (!forceEmpty && applications.length === 0 && Object.keys(baseWhere).length > 0) {
-        applications = await runWithRetry(() => prisma.application.findMany({
-          where: baseWhere,
-          include: {
-            tenant: { select: { id: true, name: true, email: true, phone: true } },
-            property: { select: { id: true, title: true, address: true } }
-          }
-        }))
-      } else if (!forceEmpty && applications.length === 0 && Object.keys(baseWhere).length === 0) {
-        applications = await runWithRetry(() => prisma.application.findMany({
-          include: {
-            tenant: { select: { id: true, name: true, email: true, phone: true } },
-            property: { select: { id: true, title: true, address: true } }
-          }
-        }))
-      }
-    } else if (region === 'global') {
+    const respondWithSupabaseApplications = async () => {
       if (supabaseReaders.length === 0) {
         return NextResponse.json({ applications: [] })
       }
@@ -456,6 +395,7 @@ export async function GET(request: NextRequest) {
         return []
       }
 
+      let applications: any[] = []
       let propertyIds: string[] = []
       if (effectiveUserType === 'LANDLORD') {
         for (const landlordField of landlordFields) {
@@ -626,6 +566,74 @@ export async function GET(request: NextRequest) {
       })
 
       return NextResponse.json({ applications: applicationsWithRelations })
+    }
+
+    // 构建查询条件
+    let applications: any[] = []
+    if (isPrisma) {
+      const baseWhere: any = {}
+      let forceEmpty = false
+      if (effectiveUserType === 'TENANT') {
+        baseWhere.tenantId = resolvedUserId
+      } else if (effectiveUserType === 'LANDLORD') {
+        const landlordIds = Array.from(landlordIdSet)
+        const landlordProperties = await runWithRetry(() => prisma.property.findMany({
+          where: { landlordId: landlordIds.length === 1 ? landlordIds[0] : { in: landlordIds } },
+          select: { id: true }
+        }))
+        const propertyIds = landlordProperties.map((p) => p.id)
+        if (propertyIds.length === 0) {
+          forceEmpty = true
+        } else {
+          baseWhere.propertyId = { in: propertyIds }
+        }
+      } else if (effectiveUserType === 'AGENT') {
+        const agentIds = Array.from(agentIdSet)
+        const representedProfiles = await runWithRetry(() => prisma.landlordProfile.findMany({
+          where: { representedById: { in: agentIds } },
+          select: { userId: true }
+        }))
+        const representedLandlordIds = representedProfiles.map((p) => p.userId)
+        const orConditions: any[] = [{ agentId: { in: agentIds } }]
+        if (representedLandlordIds.length > 0) {
+          orConditions.push({ landlordId: { in: representedLandlordIds } })
+        }
+        const relatedProperties = await runWithRetry(() => prisma.property.findMany({
+          where: { OR: orConditions },
+          select: { id: true }
+        }))
+        const propertyIds = relatedProperties.map((p) => p.id)
+        if (propertyIds.length === 0) {
+          forceEmpty = true
+        } else {
+          baseWhere.propertyId = { in: propertyIds }
+        }
+      }
+      if (status) {
+        baseWhere.status = status.toUpperCase()
+      }
+
+      if (!forceEmpty && applications.length === 0 && Object.keys(baseWhere).length > 0) {
+        applications = await runWithRetry(() => prisma.application.findMany({
+          where: baseWhere,
+          include: {
+            tenant: { select: { id: true, name: true, email: true, phone: true } },
+            property: { select: { id: true, title: true, address: true } }
+          }
+        }))
+      } else if (!forceEmpty && applications.length === 0 && Object.keys(baseWhere).length === 0) {
+        applications = await runWithRetry(() => prisma.application.findMany({
+          include: {
+            tenant: { select: { id: true, name: true, email: true, phone: true } },
+            property: { select: { id: true, title: true, address: true } }
+          }
+        }))
+      }
+      if (applications.length === 0 && supabaseReaders.length > 0) {
+        return await respondWithSupabaseApplications()
+      }
+    } else if (region === 'global') {
+      return await respondWithSupabaseApplications()
     } else {
       applications = await effectiveDb.query('applications', {})
     }

@@ -143,8 +143,9 @@ export async function GET(request: NextRequest) {
         },
         orderBy: { createdAt: 'desc' }
       })
-
-      return NextResponse.json({ payments })
+      if (payments.length > 0 || supabaseReaders.length === 0) {
+        return NextResponse.json({ payments })
+      }
     }
 
     if (region === 'global') {

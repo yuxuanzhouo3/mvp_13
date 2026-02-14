@@ -30,6 +30,7 @@ export default function LandlordDashboard() {
   const [recentActivity, setRecentActivity] = useState<any[]>([])
   const [tenants, setTenants] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState("ai-search")
 
   useEffect(() => {
     const bootstrap = async () => {
@@ -122,19 +123,8 @@ export default function LandlordDashboard() {
           clearTimeout(timeoutId)
         }
       }
-      const [statsRes, propertiesRes, applicationsRes, tenantsRes, paymentsRes, notificationsRes] = await Promise.all([
-        fetchWithTimeout("/api/landlord/dashboard-stats", 8000),
-        fetchWithTimeout("/api/properties", 8000),
-        fetchWithTimeout("/api/applications?userType=landlord", 8000),
-        fetchWithTimeout("/api/landlord/tenants", 8000),
-        fetchWithTimeout("/api/payments", 8000),
-        fetchWithTimeout("/api/notifications?unreadOnly=true", 8000),
-      ])
-
-      const unauthorized = [statsRes, propertiesRes, applicationsRes, tenantsRes, paymentsRes, notificationsRes].some(
-        (res) => res.status === 401 || res.status === 403
-      )
-      if (unauthorized) {
+      const statsRes = await fetchWithTimeout("/api/landlord/dashboard-stats", 8000)
+      if (statsRes.status === 401 || statsRes.status === 403) {
         handleUnauthorized()
         return
       }
@@ -147,29 +137,17 @@ export default function LandlordDashboard() {
         }
       }
 
-      let propertiesCount = 0
-      if (propertiesRes.ok) {
-        const propertiesData = await propertiesRes.json().catch(() => ({}))
-        const totalFromPagination = propertiesData.pagination?.total ?? propertiesData.total
-        propertiesCount = totalFromPagination ?? propertiesData.properties?.length ?? 0
-      }
-
-      if (propertiesCount === 0 && user?.id) {
-        const fallbackRes = await fetch(`/api/properties?landlordId=${user.id}`, { headers })
-        if (fallbackRes.ok) {
-          const fallbackData = await fallbackRes.json().catch(() => ({}))
-          const totalFromPagination = fallbackData.pagination?.total ?? fallbackData.total
-          propertiesCount = totalFromPagination ?? fallbackData.properties?.length ?? 0
-        }
-      }
+      const [applicationsResult, tenantsResult] = await Promise.allSettled([
+        fetchWithTimeout("/api/applications?userType=landlord", 8000),
+        fetchWithTimeout("/api/landlord/tenants", 8000),
+      ])
 
       let approvedApplicationsCount = 0
-      if (applicationsRes.ok) {
-        const applicationsData = await applicationsRes.json().catch(() => ({}))
+      if (applicationsResult.status === "fulfilled" && applicationsResult.value.ok) {
+        const applicationsData = await applicationsResult.value.json().catch(() => ({}))
         const applications = applicationsData.applications || []
         approvedApplicationsCount = applications.filter((a: any) => a.status === 'APPROVED').length
-        
-        // Set recent activity from applications
+
         const isChina = process.env.NEXT_PUBLIC_APP_REGION === 'china'
         const recent = applications.slice(0, 3).map((app: any, index: number) => {
           const rawStatus = app.status?.toLowerCase() || "pending"
@@ -177,10 +155,10 @@ export default function LandlordDashboard() {
             id: app.id,
             type: "application",
             message: t('newApplicationForProperty', { title: app.property?.title || t('property') }),
-            time: index === 0 
-              ? (isChina ? "2小时前" : "2 hours ago") 
-              : index === 1 
-                ? (isChina ? "1天前" : "1 day ago") 
+            time: index === 0
+              ? (isChina ? "2小时前" : "2 hours ago")
+              : index === 1
+                ? (isChina ? "1天前" : "1 day ago")
                 : (isChina ? "2天前" : "2 days ago"),
             status: rawStatus,
             displayStatus: t(rawStatus) || rawStatus,
@@ -190,65 +168,21 @@ export default function LandlordDashboard() {
       }
 
       let tenantsCount = 0
-      if (tenantsRes.ok) {
-        const tenantsData = await tenantsRes.json().catch(() => ({}))
+      if (tenantsResult.status === "fulfilled" && tenantsResult.value.ok) {
+        const tenantsData = await tenantsResult.value.json().catch(() => ({}))
         const tenantsList = tenantsData.tenants || []
         tenantsCount = tenantsList.length
         setTenants(tenantsList)
       }
 
-      let monthlyRevenue = 0
-      if (paymentsRes.ok) {
-        const paymentsData = await paymentsRes.json().catch(() => ({}))
-        const payments = paymentsData.payments || []
-        const now = new Date()
-        const currentMonth = now.getMonth()
-        const currentYear = now.getFullYear()
-        monthlyRevenue = payments
-          .filter((p: any) => {
-            const status = String(p.status || '').toUpperCase()
-            if (status !== 'COMPLETED' && status !== 'PAID') return false
-            const createdAt = new Date(p.createdAt || p.updatedAt || p.paidAt || p.created_at || p.paid_at || 0)
-            return createdAt.getMonth() === currentMonth && createdAt.getFullYear() === currentYear
-          })
-          .reduce((sum: number, p: any) => {
-            const dist = p.distribution || {}
-            const amount = Number(dist.landlordNet ?? p.amount ?? 0)
-            return sum + (isNaN(amount) ? 0 : amount)
-          }, 0)
-      }
-
-      let pendingIssues = 0
-      if (notificationsRes.ok) {
-        const notificationsData = await notificationsRes.json().catch(() => ({}))
-        pendingIssues = (notificationsData.notifications || []).length
-      }
-
       const computedStats = {
-        totalProperties: propertiesCount,
-        activeTenants: tenantsCount || approvedApplicationsCount,
-        monthlyRevenue,
-        pendingIssues,
+        totalProperties: Number(serverStats?.totalProperties || 0),
+        activeTenants: Number(serverStats?.activeTenants || tenantsCount || approvedApplicationsCount),
+        monthlyRevenue: Number(serverStats?.monthlyRevenue || 0),
+        pendingIssues: Number(serverStats?.pendingIssues || 0),
       }
 
-      if (serverStats) {
-        const resolvedStats = {
-          totalProperties: Number(serverStats.totalProperties || 0),
-          activeTenants: Number(serverStats.activeTenants || 0),
-          monthlyRevenue: Number(serverStats.monthlyRevenue || 0),
-          pendingIssues: Number(serverStats.pendingIssues || 0),
-        }
-        const serverHasAny = Object.values(resolvedStats).some((value) => Number(value) > 0)
-        const computedHasAny = Object.values(computedStats).some((value) => Number(value) > 0)
-        setStats(serverHasAny || !computedHasAny ? resolvedStats : computedStats)
-      } else {
-        setStats({
-          totalProperties: computedStats.totalProperties,
-          activeTenants: computedStats.activeTenants,
-          monthlyRevenue: computedStats.monthlyRevenue,
-          pendingIssues: computedStats.pendingIssues,
-        })
-      }
+      setStats(computedStats)
     } catch (error) {
       console.error("Failed to fetch dashboard data:", error)
     } finally {
@@ -341,7 +275,7 @@ export default function LandlordDashboard() {
         )}
 
         {/* Main Content Tabs */}
-        <Tabs defaultValue="ai-search" className="space-y-6">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList>
             <TabsTrigger value="ai-search">{t('aiSmartSearch')}</TabsTrigger>
             <TabsTrigger value="properties">{t('properties')}</TabsTrigger>
@@ -352,88 +286,90 @@ export default function LandlordDashboard() {
           </TabsList>
 
           <TabsContent value="ai-search" className="space-y-6">
-            <AIChat userType="landlord" />
+            {activeTab === "ai-search" && <AIChat userType="landlord" />}
           </TabsContent>
 
           <TabsContent value="properties">
-            <PropertyManagement />
+            {activeTab === "properties" && <PropertyManagement />}
           </TabsContent>
 
           <TabsContent value="applications">
-            <TenantApplications />
+            {activeTab === "applications" && <TenantApplications />}
           </TabsContent>
 
           <TabsContent value="tenants" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>{t('currentTenants')}</CardTitle>
-                <CardDescription>{t('manageTenantRelationships')}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                {tenants.length > 0 ? (
-                  <div className="space-y-4">
-                    {tenants.map((tenant) => (
-                      <div key={tenant.id} className="flex items-center justify-between p-4 border rounded-lg">
-                        <div className="flex items-center space-x-4">
-                          <Avatar className="h-12 w-12">
-                            <AvatarImage src={`https://api.dicebear.com/7.x/initials/svg?seed=${tenant.name}`} />
-                            <AvatarFallback>
-                              {tenant.name?.split(' ').map((n: string) => n[0]).join('') || 'TN'}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div>
-                            <div className="font-semibold">{tenant.name}</div>
-                            <div className="flex items-center text-sm text-muted-foreground">
-                              <Mail className="h-3 w-3 mr-1" />
-                              {tenant.email}
-                            </div>
-                            {tenant.phone && (
+            {activeTab === "tenants" && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>{t('currentTenants')}</CardTitle>
+                  <CardDescription>{t('manageTenantRelationships')}</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {tenants.length > 0 ? (
+                    <div className="space-y-4">
+                      {tenants.map((tenant) => (
+                        <div key={tenant.id} className="flex items-center justify-between p-4 border rounded-lg">
+                          <div className="flex items-center space-x-4">
+                            <Avatar className="h-12 w-12">
+                              <AvatarImage src={`https://api.dicebear.com/7.x/initials/svg?seed=${tenant.name}`} />
+                              <AvatarFallback>
+                                {tenant.name?.split(' ').map((n: string) => n[0]).join('') || 'TN'}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div>
+                              <div className="font-semibold">{tenant.name}</div>
                               <div className="flex items-center text-sm text-muted-foreground">
-                                <Phone className="h-3 w-3 mr-1" />
-                                {tenant.phone}
+                                <Mail className="h-3 w-3 mr-1" />
+                                {tenant.email}
                               </div>
-                            )}
+                              {tenant.phone && (
+                                <div className="flex items-center text-sm text-muted-foreground">
+                                  <Phone className="h-3 w-3 mr-1" />
+                                  {tenant.phone}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center space-x-4">
+                            <div className="text-right">
+                              {tenant.propertyName && (
+                                <div className="flex items-center text-sm">
+                                  <Home className="h-4 w-4 mr-1" />
+                                  {tenant.propertyName}
+                                </div>
+                              )}
+                              <Badge variant={tenant.source === 'lease' ? 'default' : 'secondary'} className="mt-1">
+                                {tenant.source === 'lease' ? t('activeLease') : t('approved')}
+                              </Badge>
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => router.push(`/dashboard/landlord/messages?userId=${tenant.id}`)}
+                            >
+                              <MessageSquare className="h-4 w-4 mr-1" />
+                              {t('sendMessage')}
+                            </Button>
                           </div>
                         </div>
-                        <div className="flex items-center space-x-4">
-                          <div className="text-right">
-                            {tenant.propertyName && (
-                              <div className="flex items-center text-sm">
-                                <Home className="h-4 w-4 mr-1" />
-                                {tenant.propertyName}
-                              </div>
-                            )}
-                            <Badge variant={tenant.source === 'lease' ? 'default' : 'secondary'} className="mt-1">
-                              {tenant.source === 'lease' ? t('activeLease') : t('approved')}
-                            </Badge>
-                          </div>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => router.push(`/dashboard/landlord/messages?userId=${tenant.id}`)}
-                          >
-                            <MessageSquare className="h-4 w-4 mr-1" />
-                            {t('sendMessage')}
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="text-center py-8 text-muted-foreground">
-                    {t('noTenantsYet') || "No active tenants yet. Start accepting applications!"}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-muted-foreground">
+                      {t('noTenantsYet') || "No active tenants yet. Start accepting applications!"}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
           </TabsContent>
 
           <TabsContent value="payments">
-            <PaymentHistory userType="landlord" />
+            {activeTab === "payments" && <PaymentHistory userType="landlord" />}
           </TabsContent>
 
           <TabsContent value="messages">
-            <MessageCenter />
+            {activeTab === "messages" && <MessageCenter />}
           </TabsContent>
         </Tabs>
       </div>

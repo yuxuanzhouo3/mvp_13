@@ -45,8 +45,27 @@ export function PropertyManagement() {
 
       const data = await response.json()
       console.log("Properties data received:", data)
-      
-      const formattedProperties = (data.properties || []).map((p: any) => ({
+      let propertiesSource = data.properties || []
+      if (propertiesSource.length === 0) {
+        const userStr = localStorage.getItem("user")
+        if (userStr) {
+          try {
+            const parsedUser = JSON.parse(userStr)
+            const fallbackLandlordId = parsedUser?.id || parsedUser?.userId
+            if (fallbackLandlordId) {
+              const fallbackRes = await fetch(`/api/properties?landlordId=${fallbackLandlordId}`, {
+                headers: { Authorization: `Bearer ${token}` },
+              })
+              if (fallbackRes.ok) {
+                const fallbackData = await fallbackRes.json().catch(() => ({}))
+                propertiesSource = fallbackData.properties || []
+              }
+            }
+          } catch {}
+        }
+      }
+
+      const formattedProperties = (propertiesSource || []).map((p: any) => ({
         id: p.id,
         title: p.title || 'Untitled Property',
         location: p.city && p.state ? `${p.city}, ${p.state}` : (p.address || 'Location not specified'),

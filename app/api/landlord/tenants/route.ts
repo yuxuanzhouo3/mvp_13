@@ -158,7 +158,11 @@ export async function GET(request: NextRequest) {
         where: { landlordId: landlordIdsForQuery.length === 1 ? landlordIdsForQuery[0] : { in: landlordIdsForQuery } },
         select: { id: true, title: true }
       }))
-    } else if (region === 'global') {
+      if (properties.length === 0 && supabaseReaders.length > 0) {
+        useSupabaseRest = true
+      }
+    }
+    if (region === 'global' && useSupabaseRest) {
       if (supabaseReaders.length === 0) {
         return NextResponse.json({ tenants: [] })
       }
@@ -232,7 +236,7 @@ export async function GET(request: NextRequest) {
           if (properties.length > 0) break
         }
       }
-    } else {
+    } else if (region !== 'global') {
       const allProps = await effectiveDb.query('properties', {})
       properties = allProps.filter((p: any) => landlordIdsForQuery.includes(String(p.landlordId)))
     }

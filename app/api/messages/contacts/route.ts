@@ -326,7 +326,8 @@ export async function GET(request: NextRequest) {
     }
 
     // Add role-specific contacts that don't have messages yet
-    if (currentUser.userType === 'LANDLORD') {
+    const normalizedUserType = String(currentUser.userType || '').toUpperCase()
+    if (normalizedUserType === 'LANDLORD') {
       const allProperties = await db.query('properties', {})
       const properties = allProperties.filter((p: any) => p.landlordId === user.id)
       const propertyIds = properties.map((p: any) => p.id)
@@ -356,7 +357,7 @@ export async function GET(request: NextRequest) {
         }
       }
 
-    } else if (currentUser.userType === 'TENANT') {
+    } else if (normalizedUserType === 'TENANT') {
       // Get applications by tenant
       const allApplications = await db.query('applications', {})
       const applications = allApplications.filter((app: any) => app.tenantId === user.id)
@@ -405,7 +406,7 @@ export async function GET(request: NextRequest) {
         }
       }
 
-    } else if (currentUser.userType === 'AGENT') {
+    } else if (normalizedUserType === 'AGENT') {
       // For agents, show all landlords and tenants
       console.log('Fetching contacts for AGENT user:', user.id)
       const allUsers = await db.query('users', {})
@@ -413,7 +414,7 @@ export async function GET(request: NextRequest) {
       
       const relevantUsers = allUsers.filter((u: any) => {
         const userId = u.id || u._id
-        const userType = u.userType || u.user_type
+        const userType = String(u.userType || u.user_type || '').toUpperCase()
         const isRelevant = (userType === 'LANDLORD' || userType === 'TENANT') && userId !== user.id
         return isRelevant
       })

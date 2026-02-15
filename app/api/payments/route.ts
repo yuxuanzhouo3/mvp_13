@@ -79,7 +79,7 @@ export async function GET(request: NextRequest) {
       }
     }
     const resolvedUserId = dbUser?.id || user.id
-    const resolvedUserType = dbUser?.userType || user.userType
+    const resolvedUserType = String(dbUser?.userType || user.userType || '').toUpperCase()
     let tokenUserId: string | null = null
     if (accessToken && supabaseClient) {
       try {

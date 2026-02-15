@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useSearchParams, useRouter } from "next/navigation"
 import { useTranslations } from 'next-intl'
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
 import { getCurrencySymbol } from "@/lib/utils"
 
-export default function ApplyPage() {
+function ApplyPageContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const { toast } = useToast()
@@ -212,5 +212,13 @@ export default function ApplyPage() {
         </Card>
       </div>
     </DashboardLayout>
+  )
+}
+
+export default function ApplyPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-muted/30"><div className="text-center">Loading...</div></div>}>
+      <ApplyPageContent />
+    </Suspense>
   )
 }

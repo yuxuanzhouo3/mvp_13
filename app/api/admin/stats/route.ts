@@ -15,6 +15,9 @@ import { getCurrentUser } from '@/lib/auth-adapter'
 import { getDatabaseAdapter, getAppRegion, createDatabaseAdapter } from '@/lib/db-adapter'
 import jwt from 'jsonwebtoken'
 
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
 // 检查是否为管理员
 async function isAdmin(user: any): Promise<boolean> {
   // 方式1：检查是否是管理员 token（role === 'admin'）

@@ -2,6 +2,8 @@
 # 基于 Node.js 18 LTS
 
 FROM node:18-alpine AS base
+RUN apk add --no-cache openssl libc6-compat
+RUN npm install -g pnpm --registry=https://registry.npmmirror.com
 
 # 1. 安装依赖阶段
 FROM base AS deps
@@ -12,9 +14,6 @@ WORKDIR /app
 
 # 复制依赖文件
 COPY package.json package-lock.json* pnpm-lock.yaml* ./
-
-# 安装 pnpm（如果使用 pnpm）
-RUN npm install -g pnpm --registry=https://registry.npmmirror.com
 
 # 安装依赖
 RUN if [ -f pnpm-lock.yaml ]; then \
@@ -49,7 +48,11 @@ RUN if [ -f prisma/schema.prisma ]; then \
     fi
 
 # 构建 Next.js 应用
-RUN npm run build || pnpm build
+RUN if [ -f pnpm-lock.yaml ]; then \
+      pnpm build; \
+    else \
+      npm run build; \
+    fi
 
 # 3. 生产运行阶段
 FROM base AS runner

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, useMemo } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useRouter } from "next/navigation"
 import { useTranslations } from 'next-intl'
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -19,7 +19,6 @@ import { getCurrencySymbol } from "@/lib/utils"
 
 export default function TenantDashboard() {
   const router = useRouter()
-  const searchParams = useSearchParams()
   const t = useTranslations('dashboard')
   const tHero = useTranslations('hero')
   const tCommon = useTranslations('common')

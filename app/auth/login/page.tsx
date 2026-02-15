@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { useTranslations } from 'next-intl'
@@ -12,7 +12,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Shield } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
-export default function LoginPage() {
+function LoginContent() {
   const router = useRouter()
   const { toast } = useToast()
   const t = useTranslations('auth')
@@ -301,5 +301,13 @@ export default function LoginPage() {
         </CardContent>
       </Card>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-muted/30"><div className="text-center">Loading...</div></div>}>
+      <LoginContent />
+    </Suspense>
   )
 }

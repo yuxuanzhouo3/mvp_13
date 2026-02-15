@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef, useCallback } from "react"
+import { useState, useEffect, useRef, useCallback, Suspense } from "react"
 import { useSearchParams } from "next/navigation"
 import { useTranslations } from 'next-intl'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -40,7 +40,7 @@ interface CurrentUser {
   userType: string
 }
 
-export function MessageCenter() {
+function MessageCenterContent() {
   const searchParams = useSearchParams()
   const { toast } = useToast()
   const t = useTranslations('dashboard')
@@ -776,5 +776,13 @@ export function MessageCenter() {
         )}
       </Card>
     </div>
+  )
+}
+
+export function MessageCenter() {
+  return (
+    <Suspense fallback={<div />}>
+      <MessageCenterContent />
+    </Suspense>
   )
 }

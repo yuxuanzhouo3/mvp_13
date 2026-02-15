@@ -534,7 +534,8 @@ export async function GET(request: NextRequest) {
           (user.email ? await db.findUserByEmail(user.email) : null)
         if (dbUser) {
           resolvedUserId = dbUser.id
-          if (dbUser.userType === 'LANDLORD' || dbUser.userType === 'AGENT') {
+          const dbUserType = String(dbUser.userType || '').toUpperCase()
+          if (dbUserType === 'LANDLORD' || dbUserType === 'AGENT') {
             landlordIdSet.add(String(resolvedUserId))
           }
         } else if (user.email && supabaseReaders.length > 0) {

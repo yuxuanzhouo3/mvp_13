@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-adapter'
 import { getAppRegion, getDatabaseAdapter } from '@/lib/db-adapter'
 import { prisma } from '@/lib/db'
+import { createSupabaseServerClient, supabaseAdmin } from '@/lib/supabase'
 
 // 定义 Next.js 15 的 params 类型
 type Props = {
@@ -196,31 +197,62 @@ export async function GET(
       )
     }
     
-    const landlordId = property.landlordId || property.landlord?._id || property.landlord?.id
+    const authHeader = request.headers.get('authorization')
+    const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : undefined
+    const supabaseClient = createSupabaseServerClient(accessToken)
+    const supabaseReaders = [supabaseAdmin, supabaseClient].filter(Boolean) as any[]
+    const fetchUserByIdFromSupabase = async (userId: string) => {
+      if (!userId || supabaseReaders.length === 0) return null
+      const userTables = ['User', 'user', 'users', 'Profile', 'profile', 'profiles']
+      const userFields = ['id', 'userId', 'user_id']
+      for (const client of supabaseReaders) {
+        for (const tableName of userTables) {
+          for (const field of userFields) {
+            const { data, error } = await client
+              .from(tableName)
+              .select('id,email,name,phone,userType,user_type,avatar')
+              .eq(field, userId)
+              .limit(1)
+            if (!error && data && data.length > 0) {
+              return data[0]
+            }
+          }
+        }
+      }
+      return null
+    }
+    const landlordId = property.landlordId || property.landlord_id || property.ownerId || property.owner_id || property.userId || property.user_id || property.landlord?._id || property.landlord?.id
     let landlord = null
     if (landlordId) {
       try {
         landlord = await db.findUserById(landlordId)
       } catch {}
     }
+    if (!landlord && landlordId) {
+      landlord = await fetchUserByIdFromSupabase(String(landlordId))
+    }
     
     let agent = null
-    if (property.agentId) {
+    const agentId = property.agentId || property.agent_id
+    if (agentId) {
       try {
-        agent = await db.findUserById(property.agentId)
+        agent = await db.findUserById(agentId)
       } catch {}
+    }
+    if (!agent && agentId) {
+      agent = await fetchUserByIdFromSupabase(String(agentId))
     }
 
     const propertyWithLandlord = {
       ...property,
       landlord: landlord ? {
-        id: landlord.id,
+        id: landlord.id || landlord.userId || landlord.user_id,
         name: landlord.name,
         email: landlord.email,
         phone: landlord.phone,
       } : null,
       agent: agent ? {
-        id: agent.id,
+        id: agent.id || agent.userId || agent.user_id,
         name: agent.name,
         email: agent.email,
         phone: agent.phone,

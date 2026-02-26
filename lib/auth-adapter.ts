@@ -197,7 +197,7 @@ async function getCurrentUserFromJWT(request: NextRequest): Promise<AuthUser | n
     const decoded = jwt.verify(
       token,
       process.env.JWT_SECRET || 'your-secret-key'
-    ) as { userId: string; email: string }
+    ) as { userId: string; email: string; userType?: string; role?: string; name?: string }
 
     const db = getDatabaseAdapter()
     let dbUser = await db.findUserById(decoded.userId)
@@ -205,17 +205,74 @@ async function getCurrentUserFromJWT(request: NextRequest): Promise<AuthUser | n
       dbUser = await db.findUserByEmail(decoded.email)
     }
     
-    if (!dbUser) {
-      return null
+    if (dbUser) {
+      return {
+        id: dbUser.id,
+        email: dbUser.email,
+        name: dbUser.name,
+        userType: dbUser.userType,
+        isPremium: dbUser.isPremium,
+        vipLevel: dbUser.vipLevel || (dbUser.isPremium ? 'PREMIUM' : 'FREE'),
+      }
+    }
+
+    const getField = (obj: any, keys: string[]) => {
+      for (const key of keys) {
+        const value = obj?.[key]
+        if (value !== undefined && value !== null && value !== '') return value
+      }
+      return undefined
+    }
+
+    if (supabaseAdmin) {
+      const userTables = ['User', 'user', 'users', 'profiles', 'profile', 'user_profiles', 'userProfiles']
+      for (const tableName of userTables) {
+        if (decoded.userId) {
+          const { data, error } = await supabaseAdmin
+            .from(tableName)
+            .select('id,email,name,userType,user_type,type,role,isPremium,is_premium,vipLevel,vip_level')
+            .eq('id', decoded.userId)
+            .limit(1)
+          if (!error && data && data.length > 0) {
+            const row = data[0]
+            return {
+              id: String(row.id),
+              email: row.email || decoded.email || '',
+              name: row.name || (row.email ? row.email.split('@')[0] : decoded.name || ''),
+              userType: String(getField(row, ['userType', 'user_type', 'type', 'role']) || decoded.userType || decoded.role || 'TENANT'),
+              isPremium: Boolean(getField(row, ['isPremium', 'is_premium'])),
+              vipLevel: String(getField(row, ['vipLevel', 'vip_level']) || (getField(row, ['isPremium', 'is_premium']) ? 'PREMIUM' : 'FREE')),
+            }
+          }
+        }
+        if (decoded.email) {
+          const { data, error } = await supabaseAdmin
+            .from(tableName)
+            .select('id,email,name,userType,user_type,type,role,isPremium,is_premium,vipLevel,vip_level')
+            .ilike('email', decoded.email)
+            .limit(1)
+          if (!error && data && data.length > 0) {
+            const row = data[0]
+            return {
+              id: String(row.id),
+              email: row.email || decoded.email || '',
+              name: row.name || (row.email ? row.email.split('@')[0] : decoded.name || ''),
+              userType: String(getField(row, ['userType', 'user_type', 'type', 'role']) || decoded.userType || decoded.role || 'TENANT'),
+              isPremium: Boolean(getField(row, ['isPremium', 'is_premium'])),
+              vipLevel: String(getField(row, ['vipLevel', 'vip_level']) || (getField(row, ['isPremium', 'is_premium']) ? 'PREMIUM' : 'FREE')),
+            }
+          }
+        }
+      }
     }
 
     return {
-      id: dbUser.id,
-      email: dbUser.email,
-      name: dbUser.name,
-      userType: dbUser.userType,
-      isPremium: dbUser.isPremium,
-      vipLevel: dbUser.vipLevel || (dbUser.isPremium ? 'PREMIUM' : 'FREE'),
+      id: decoded.userId,
+      email: decoded.email || '',
+      name: decoded.name || (decoded.email ? decoded.email.split('@')[0] : ''),
+      userType: decoded.userType || decoded.role || 'TENANT',
+      isPremium: false,
+      vipLevel: 'FREE',
     }
   } catch (error) {
     console.error('JWT auth error:', error)

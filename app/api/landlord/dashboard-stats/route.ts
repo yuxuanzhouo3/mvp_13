@@ -69,6 +69,27 @@ export async function GET(request: NextRequest) {
         }
       } catch {}
     }
+    if (userEmail && supabaseAdmin) {
+      try {
+        const adminApi = (supabaseAdmin as any)?.auth?.admin || (supabaseAdmin as any)?.auth?.api
+        if (adminApi?.getUserByEmail) {
+          const result = await adminApi.getUserByEmail(userEmail)
+          const adminUser = result?.data?.user
+          if (adminUser?.id) {
+            userIds.add(String(adminUser.id))
+          }
+        } else if (adminApi?.listUsers) {
+          const listResult = await adminApi.listUsers()
+          const users = listResult?.data?.users || listResult?.data || []
+          const found = Array.isArray(users)
+            ? users.find((u: any) => String(u?.email || '').toLowerCase() === userEmail.toLowerCase())
+            : null
+          if (found?.id) {
+            userIds.add(String(found.id))
+          }
+        }
+      } catch {}
+    }
     if (userEmail && supabaseReaders.length > 0) {
       const userTables = ['User', 'user', 'users', 'Profile', 'profile', 'profiles']
       for (const client of supabaseReaders) {
@@ -118,16 +139,57 @@ export async function GET(request: NextRequest) {
         return { totalProperties, activeTenants, monthlyRevenue, pendingIssues }
       }
       const propertyTables = ['Property', 'property', 'properties', 'Listing', 'listing', 'listings']
-      const landlordFields = ['landlordId', 'landlord_id', 'ownerId', 'owner_id', 'userId', 'user_id']
+      const landlordFields = ['landlordId', 'landlord_id', 'landlord', 'ownerId', 'owner_id', 'owner', 'userId', 'user_id', 'user', 'createdBy', 'created_by']
       const emailFields = ['landlordEmail', 'landlord_email', 'ownerEmail', 'owner_email', 'userEmail', 'user_email']
       const landlordIds = Array.from(userIds)
+      const normalizedEmail = userEmail?.toLowerCase()
+      const matchesLandlord = (row: any) => {
+        const rawCandidates = [
+          row?.landlordId,
+          row?.landlord_id,
+          row?.landlord,
+          row?.ownerId,
+          row?.owner_id,
+          row?.owner,
+          row?.userId,
+          row?.user_id,
+          row?.user,
+          row?.createdBy,
+          row?.created_by,
+        ]
+        const candidateIds = rawCandidates
+          .filter((v) => v !== undefined && v !== null && v !== '')
+          .map((v) => String(v))
+        const candidateEmails = [
+          row?.landlordEmail,
+          row?.landlord_email,
+          row?.ownerEmail,
+          row?.owner_email,
+          row?.userEmail,
+          row?.user_email,
+          row?.email,
+        ]
+          .filter((v) => v !== undefined && v !== null && v !== '')
+          .map((v) => String(v).toLowerCase())
+        const nested = [row?.landlord, row?.owner, row?.user]
+          .filter((v) => v && typeof v === 'object')
+        nested.forEach((obj: any) => {
+          const id = obj?.id || obj?.userId || obj?.ownerId || obj?.landlordId
+          if (id) candidateIds.push(String(id))
+          const email = obj?.email
+          if (email) candidateEmails.push(String(email).toLowerCase())
+        })
+        if (candidateIds.some((id) => landlordIds.includes(id))) return true
+        if (normalizedEmail && candidateEmails.includes(normalizedEmail)) return true
+        return false
+      }
       let properties: any[] = []
       for (const client of supabaseReaders) {
         for (const tableName of propertyTables) {
           for (const landlordField of landlordFields) {
             const { data, error } = await client
               .from(tableName)
-              .select('id,landlordId,landlord_id')
+              .select('*')
               .in(landlordField, landlordIds)
             if (!error && data && data.length > 0) {
               properties = data
@@ -144,7 +206,7 @@ export async function GET(request: NextRequest) {
             for (const landlordField of landlordFields) {
               const { data, error } = await client
                 .from(tableName)
-                .select('id,landlordId,landlord_id')
+                .select('*')
                 .ilike(landlordField, userEmail)
               if (!error && data && data.length > 0) {
                 properties = data
@@ -162,7 +224,7 @@ export async function GET(request: NextRequest) {
             for (const emailField of emailFields) {
               const { data, error } = await client
                 .from(tableName)
-                .select('id,landlordId,landlord_id')
+                .select('*')
                 .ilike(emailField, userEmail)
               if (!error && data && data.length > 0) {
                 properties = data
@@ -173,6 +235,60 @@ export async function GET(request: NextRequest) {
           }
           if (properties.length > 0) break
         }
+      }
+      if (properties.length === 0) {
+        const scanLimit = 200
+        for (const client of supabaseReaders) {
+          for (const tableName of propertyTables) {
+            const { data, error } = await client
+              .from(tableName)
+              .select('*')
+              .range(0, scanLimit - 1)
+            if (!error && data && data.length > 0) {
+              const matched = data.filter(matchesLandlord)
+              if (matched.length > 0) {
+                properties = matched
+                break
+              }
+            }
+          }
+          if (properties.length > 0) break
+        }
+      }
+      if (properties.length === 0) {
+        try {
+          const candidates = await prisma.$queryRawUnsafe(
+            `SELECT table_name
+             FROM information_schema.columns
+             WHERE table_schema = 'public' AND column_name IN ('title','address','price')
+             GROUP BY table_name
+             HAVING COUNT(*) >= 2`
+          ) as { table_name: string }[]
+          const tableNames = (candidates || [])
+            .map((row) => row.table_name)
+            .filter((name) => /^[a-zA-Z0-9_]+$/.test(name))
+          for (const tableName of tableNames) {
+            const columns = await prisma.$queryRawUnsafe(
+              `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1`,
+              tableName
+            ) as { column_name: string }[]
+            const columnSet = new Set((columns || []).map((col) => String(col.column_name)))
+            const orderKey = columnSet.has('createdAt')
+              ? 'createdAt'
+              : columnSet.has('created_at')
+                ? 'created_at'
+                : null
+            const orderClause = orderKey ? `ORDER BY "${orderKey}" DESC` : ''
+            const sql = `SELECT * FROM "${tableName}" ${orderClause} LIMIT $1`
+            const rows = await prisma.$queryRawUnsafe(sql, 200) as any[]
+            if (!rows || rows.length === 0) continue
+            const matched = rows.filter(matchesLandlord)
+            if (matched.length > 0) {
+              properties = matched
+              break
+            }
+          }
+        } catch {}
       }
       totalProperties = properties.length
       const propertyIds = Array.from(new Set(properties.map((p: any) => String(p.id)).filter(Boolean)))

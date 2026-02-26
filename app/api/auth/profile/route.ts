@@ -174,9 +174,73 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const normalizeType = (value: any) => String(value || '').toUpperCase()
+    let finalUserType = normalizeType(profile?.userType || user.userType || 'TENANT')
+    const detectLandlord = async () => {
+      if (finalUserType === 'LANDLORD') return
+      if (profile?.landlordProfile) {
+        finalUserType = 'LANDLORD'
+        return
+      }
+      const candidateIds = Array.from(new Set([profile?.id, user.userId, user.id].filter(Boolean).map((id) => String(id))))
+      try {
+        if (candidateIds.length > 0) {
+          const propertyCount = await prisma.property.count({
+            where: { landlordId: { in: candidateIds } }
+          })
+          if (propertyCount > 0) {
+            finalUserType = 'LANDLORD'
+            return
+          }
+        }
+      } catch {}
+      if (supabaseAdmin) {
+        const propertyTables = ['Property', 'property', 'properties', 'Listing', 'listing', 'listings']
+        const landlordFields = ['landlordId', 'landlord_id', 'ownerId', 'owner_id', 'userId', 'user_id']
+        for (const tableName of propertyTables) {
+          if (candidateIds.length > 0) {
+            for (const landlordField of landlordFields) {
+              const { data, error } = await supabaseAdmin
+                .from(tableName)
+                .select('id')
+                .in(landlordField, candidateIds)
+                .limit(1)
+              if (!error && data && data.length > 0) {
+                finalUserType = 'LANDLORD'
+                return
+              }
+            }
+          }
+          if (user.email) {
+            for (const emailField of ['landlordEmail', 'landlord_email', 'ownerEmail', 'owner_email', 'userEmail', 'user_email']) {
+              const { data, error } = await supabaseAdmin
+                .from(tableName)
+                .select('id')
+                .ilike(emailField, user.email)
+                .limit(1)
+              if (!error && data && data.length > 0) {
+                finalUserType = 'LANDLORD'
+                return
+              }
+            }
+          }
+        }
+      }
+    }
+    await detectLandlord()
+    if (finalUserType && normalizeType(profile.userType) !== finalUserType) {
+      try {
+        await prisma.user.update({
+          where: { id: profile.id },
+          data: { userType: finalUserType }
+        })
+      } catch {}
+    }
+
     return NextResponse.json({
       user: {
         ...profile,
+        userType: finalUserType,
         // representedById: profile.tenantProfile?.representedById || null
       }
     })

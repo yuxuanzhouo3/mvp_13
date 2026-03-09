@@ -82,8 +82,7 @@ function LoginContent() {
     completeOAuthLogin()
   }, [searchParams, router, toast, t])
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
+  const submitLogin = async () => {
     setLoading(true)
     const isChina = process.env.NEXT_PUBLIC_APP_REGION === 'china'
     const isGlobal = !isChina
@@ -119,7 +118,7 @@ function LoginContent() {
       const backendLogin = async (options?: { useJwtOnly?: boolean }) => {
         const controller = new AbortController()
         // 后端整次登录最长约 80s；前端设置 90s 超时以覆盖极端情况
-        const timeoutMs = process.env.NEXT_PUBLIC_APP_REGION === 'china' ? 30000 : 20000
+        const timeoutMs = process.env.NEXT_PUBLIC_APP_REGION === 'china' ? 30000 : 35000
         console.log('[Login Frontend] Timeout setting:', { region: process.env.NEXT_PUBLIC_APP_REGION, timeoutMs })
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
         // 8s 后提示“正在验证”，避免用户以为卡死
@@ -251,6 +250,11 @@ function LoginContent() {
       setLoading(false)
     }
   }
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (loading) return
+    void submitLogin()
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-muted/30 p-4">
@@ -264,7 +268,7 @@ function LoginContent() {
         </CardHeader>
 
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4" action="#" method="post">
             <div className="space-y-2">
               <Label htmlFor="email">{t('email')}</Label>
               <Input
@@ -287,7 +291,7 @@ function LoginContent() {
                 required
               />
             </div>
-            <Button type="submit" className="w-full" size="lg" disabled={loading}>
+            <Button type="button" className="w-full" size="lg" disabled={loading} onClick={() => void submitLogin()}>
               {loading ? t('signingIn') : t('signIn')}
             </Button>
           </form>

@@ -26,6 +26,51 @@ export function TenantApplications({ userType = 'landlord' }: TenantApplications
   const [applications, setApplications] = useState<any[]>([])
   const [payments, setPayments] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 9000) => {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  }
+  const parseTokenHints = (token: string) => {
+    try {
+      const payloadBase64 = token.split(".")[1]
+      if (!payloadBase64) return { userId: "", email: "" }
+      const normalized = payloadBase64.replace(/-/g, "+").replace(/_/g, "/")
+      const decoded = JSON.parse(atob(normalized))
+      const userId = decoded?.userId || decoded?.sub || decoded?.id || ""
+      const email = decoded?.email || decoded?.userEmail || ""
+      return { userId: String(userId || ""), email: String(email || "") }
+    } catch {
+      return { userId: "", email: "" }
+    }
+  }
+  const getAuthHeaders = (token: string) => {
+    const headers: Record<string, string> = { Authorization: `Bearer ${token}` }
+    const userStr = localStorage.getItem("user")
+    let parsedUser: any = null
+    if (userStr) {
+      try {
+        parsedUser = JSON.parse(userStr)
+      } catch {
+        localStorage.removeItem("user")
+      }
+    }
+    const tokenHints = parseTokenHints(token)
+    const hintedId = parsedUser?.id || parsedUser?.userId || parsedUser?._id
+    const hintedEmail = parsedUser?.email
+    if (hintedId) headers["x-user-id"] = String(hintedId)
+    if (hintedEmail) headers["x-user-email"] = String(hintedEmail)
+    if (!headers["x-user-id"] && tokenHints.userId) headers["x-user-id"] = tokenHints.userId
+    if (!headers["x-user-email"] && tokenHints.email) headers["x-user-email"] = tokenHints.email
+    return headers
+  }
 
   const renderStatus = (status?: string) => {
     const s = (status || '').toUpperCase()
@@ -73,10 +118,15 @@ export function TenantApplications({ userType = 'landlord' }: TenantApplications
   const fetchApplications = async () => {
     try {
       const token = localStorage.getItem("auth-token")
-      if (!token) return
+      if (!token) {
+        setLoading(false)
+        return
+      }
 
-      const response = await fetch(`/api/applications?userType=${userType}`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const response = await fetchWithTimeout(`/api/applications?userType=${userType}`, {
+        headers: getAuthHeaders(token),
+        credentials: "include",
+        cache: "no-store",
       })
 
       if (response.ok) {
@@ -111,8 +161,9 @@ export function TenantApplications({ userType = 'landlord' }: TenantApplications
       const token = localStorage.getItem("auth-token")
       if (!token) return
 
-      const response = await fetch("/api/payments", {
-        headers: { Authorization: `Bearer ${token}` },
+      const response = await fetchWithTimeout("/api/payments", {
+        headers: getAuthHeaders(token),
+        credentials: "include",
         cache: 'no-store'
       })
 

@@ -27,6 +27,19 @@ export default function ReviewsPage() {
     content: "",
     rating: 5,
   })
+  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 9000) => {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        cache: "no-store",
+      })
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  }
 
   useEffect(() => {
     const userStr = localStorage.getItem("user")
@@ -43,7 +56,7 @@ export default function ReviewsPage() {
 
   const fetchReviews = async () => {
     try {
-      const response = await fetch("/api/testimonials")
+      const response = await fetchWithTimeout("/api/testimonials")
       if (response.ok) {
         const data = await response.json()
         setReviews(data.testimonials || [])

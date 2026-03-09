@@ -117,7 +117,7 @@ export default function TenantDashboard() {
         break
       default:
         variant = "outline"
-        label = status || (process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '状态' : 'Status')
+        label = status ? status.replace(/^dashboard\./, '') : (process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '状态' : 'Status')
     }
     
     // Using a custom Badge wrapper or styling since "success" variant might not exist in standard shadcn Badge
@@ -155,6 +155,45 @@ export default function TenantDashboard() {
     return "/placeholder.svg"
   }
 
+  const fetchWithTimeout = async (url: string, options?: RequestInit, timeoutMs = 12000) => {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      return await fetch(url, { ...(options || {}), signal: controller.signal })
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  }
+
+  const decodeTokenHints = (token: string) => {
+    try {
+      const payloadBase64 = token.split(".")[1]
+      if (!payloadBase64) return { userId: "", email: "" }
+      const normalized = payloadBase64.replace(/-/g, "+").replace(/_/g, "/")
+      const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4)
+      const payload = JSON.parse(atob(padded))
+      const userId = payload?.userId || payload?.sub || payload?.id || ""
+      const email = payload?.email || payload?.userEmail || ""
+      return { userId: String(userId || ""), email: String(email || "") }
+    } catch {
+      return { userId: "", email: "" }
+    }
+  }
+
+  const fetchJsonSafe = async (url: string, options?: RequestInit, timeoutMs = 12000) => {
+    try {
+      const res = await fetchWithTimeout(url, options, timeoutMs)
+      if (res.status === 401 || res.status === 403) {
+        router.push("/auth/login")
+        return null
+      }
+      if (!res.ok) return null
+      return await res.json()
+    } catch {
+      return null
+    }
+  }
+
   // Fetch user data and stats
   const fetchData = async (showLoading = false) => {
     const token = localStorage.getItem("auth-token")
@@ -170,96 +209,92 @@ export default function TenantDashboard() {
     setError(null)
 
     try {
-      // Get user info
+      let resolvedUser: any = null
       const userStr = localStorage.getItem("user")
       if (userStr) {
         const user = JSON.parse(userStr)
+        resolvedUser = user
         setUserName(user.name || "User")
-        
-        // Fetch full profile to check representation
-        const profileRes = await fetch("/api/auth/profile", {
+      }
+      const profileData = await fetchJsonSafe("/api/auth/profile", {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (profileData?.user) {
+        resolvedUser = profileData.user
+        setUserName(profileData.user.name || "User")
+        localStorage.setItem("user", JSON.stringify(profileData.user))
+      }
+      if (profileData?.user?.representedById) {
+        const agentData = await fetchJsonSafe(`/api/auth/user/${profileData.user.representedById}`, {
           headers: { Authorization: `Bearer ${token}` },
         })
-        if (profileRes.ok) {
-          const profileData = await profileRes.json()
-          if (profileData.user?.representedById) {
-            // Fetch agent details
-            const agentRes = await fetch(`/api/auth/user/${profileData.user.representedById}`, {
-              headers: { Authorization: `Bearer ${token}` },
+        if (agentData) {
+          const agent = agentData?.user || agentData
+          if (agent?.id) {
+            setRepresentedBy({
+              name: agent.name,
+              id: agent.id
             })
-            if (agentRes.ok) {
-              const agentData = await agentRes.json()
-              const agent = agentData?.user || agentData
-              if (agent?.id) {
-                setRepresentedBy({
-                  name: agent.name,
-                  id: agent.id
-                })
-              }
-            }
           }
         }
       }
+      if (!resolvedUser) {
+        const hints = decodeTokenHints(token)
+        if (hints.userId || hints.email) {
+          resolvedUser = {
+            id: hints.userId,
+            email: hints.email,
+          }
+        }
+      }
+      if (!resolvedUser) {
+        router.push("/auth/login")
+        return
+      }
+      const authHeaders: Record<string, string> = { Authorization: `Bearer ${token}` }
+      if (resolvedUser?.id) {
+        authHeaders["x-user-id"] = String(resolvedUser.id)
+      }
+      if (resolvedUser?.email) {
+        authHeaders["x-user-email"] = String(resolvedUser.email)
+      }
 
-      // Fetch saved properties
-      const savedRes = await fetch("/api/saved-properties", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (savedRes.ok) {
-        const savedData = await savedRes.json()
+      const [savedData, appsData, leasesData, paymentsData, notifData, messagesData] = await Promise.all([
+        fetchJsonSafe("/api/saved-properties", { headers: authHeaders }),
+        fetchJsonSafe("/api/applications?userType=tenant", { headers: authHeaders }),
+        fetchJsonSafe("/api/tenant/leases", { headers: authHeaders }),
+        fetchJsonSafe("/api/payments?userType=tenant", { headers: authHeaders }),
+        fetchJsonSafe("/api/notifications", { headers: authHeaders }),
+        fetchJsonSafe("/api/messages/unread-count", { headers: authHeaders }),
+      ])
+
+      if (savedData) {
         setSavedProperties(savedData.properties || [])
         setStats(prev => ({ ...prev, savedCount: savedData.properties?.length || 0 }))
       }
 
-      // Fetch applications
-      const appsRes = await fetch("/api/applications?userType=tenant", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (appsRes.ok) {
-        const appsData = await appsRes.json()
+      if (appsData) {
         setApplications(appsData.applications || [])
         setStats(prev => ({ ...prev, applicationsCount: appsData.applications?.length || 0 }))
       }
 
-      // Fetch Leases (Rentals)
-      const leasesRes = await fetch("/api/tenant/leases", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (leasesRes.ok) {
-        const leasesData = await leasesRes.json()
+      if (leasesData) {
         setLeases(leasesData.leases || [])
         setStats(prev => ({ ...prev, activeLeases: leasesData.leases?.length || 0 }))
       }
 
-      // Fetch Payments (for Check-in status)
-      const paymentsRes = await fetch("/api/payments?userType=tenant", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (paymentsRes.ok) {
-        const paymentsData = await paymentsRes.json()
+      if (paymentsData) {
         const fetchedPayments = paymentsData.payments || []
         console.log('Fetched payments:', fetchedPayments.length, fetchedPayments)
         setPayments(fetchedPayments)
-      } else {
-        console.error('Failed to fetch payments:', paymentsRes.status, await paymentsRes.text())
       }
 
-      // Fetch Notifications
-      const notifRes = await fetch("/api/notifications", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (notifRes.ok) {
-        const notifData = await notifRes.json()
+      if (notifData) {
         setNotifications(notifData.notifications || [])
         setStats(prev => ({ ...prev, unreadNotifications: notifData.notifications?.filter((n: any) => !n.isRead).length || 0 }))
       }
 
-      // Fetch unread messages count
-      const messagesRes = await fetch("/api/messages/unread-count", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (messagesRes.ok) {
-        const messagesData = await messagesRes.json()
+      if (messagesData) {
         setStats(prev => ({ ...prev, unreadMessages: messagesData.count || 0 }))
       }
     } catch (error: any) {

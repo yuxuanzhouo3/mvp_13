@@ -451,8 +451,9 @@ const pageConfigs: Record<string, PageConfig> = {
   },
 }
 
-export default function FooterInfoPage({ params }: { params: { slug?: string[] } }) {
-  const pathKey = (params.slug || []).join("/")
+export default async function FooterInfoPage({ params }: { params: Promise<{ slug?: string[] }> }) {
+  const { slug } = await params
+  const pathKey = (slug || []).join("/")
   const config = pageConfigs[pathKey]
 
   if (!config) {

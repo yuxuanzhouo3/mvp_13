@@ -10,6 +10,13 @@ import { createSupabaseServerClient, supabaseAdmin } from '@/lib/supabase'
  */
 export async function GET(request: NextRequest) {
   try {
+    const timeoutMarker = Symbol('payments-timeout')
+    const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof timeoutMarker> => {
+      return await Promise.race([
+        promise,
+        new Promise<typeof timeoutMarker>((resolve) => setTimeout(() => resolve(timeoutMarker), timeoutMs))
+      ])
+    }
     let user = await getCurrentUser(request)
     if (!user) {
       const legacy = await getAuthUser(request)
@@ -41,11 +48,13 @@ export async function GET(request: NextRequest) {
     }
     let dbUser: any = null
     try {
-      dbUser = await db.findUserById(user.id)
+      const byIdResult = await withTimeout(db.findUserById(user.id), 1200)
+      dbUser = byIdResult === timeoutMarker ? null : byIdResult
     } catch {}
     if (!dbUser && user.email) {
       try {
-        dbUser = await db.findUserByEmail(user.email)
+        const byEmailResult = await withTimeout(db.findUserByEmail(user.email), 1200)
+        dbUser = byEmailResult === timeoutMarker ? null : byEmailResult
       } catch {}
     }
     if (!dbUser && supabaseReaders.length > 0) {
@@ -83,17 +92,17 @@ export async function GET(request: NextRequest) {
     let tokenUserId: string | null = null
     if (accessToken && supabaseClient) {
       try {
-        const { data } = await supabaseClient.auth.getUser(accessToken)
-        if (data?.user?.id) {
-          tokenUserId = String(data.user.id)
+        const tokenResult = await withTimeout(supabaseClient.auth.getUser(accessToken), 1200)
+        if (tokenResult !== timeoutMarker && (tokenResult as any)?.data?.user?.id) {
+          tokenUserId = String((tokenResult as any).data.user.id)
         }
       } catch {}
     }
     if (!tokenUserId && accessToken && supabaseAdmin) {
       try {
-        const { data } = await supabaseAdmin.auth.getUser(accessToken)
-        if (data?.user?.id) {
-          tokenUserId = String(data.user.id)
+        const tokenResult = await withTimeout(supabaseAdmin.auth.getUser(accessToken), 1200)
+        if (tokenResult !== timeoutMarker && (tokenResult as any)?.data?.user?.id) {
+          tokenUserId = String((tokenResult as any).data.user.id)
         }
       } catch {}
     }
@@ -110,6 +119,53 @@ export async function GET(request: NextRequest) {
         getField(obj?.tenantProfile, ['representedById', 'represented_by_id']) ??
         getField(obj?.landlordProfile, ['representedById', 'represented_by_id'])
       )
+    }
+
+    if (resolvedUserType === 'TENANT') {
+      const tenantIds = Array.from(new Set([String(resolvedUserId), String(user.id), tokenUserId ? String(tokenUserId) : ''].filter(Boolean)))
+      const [byCamelResult, bySnakeResult] = await Promise.all([
+        withTimeout(db.query('payments', { userId: tenantIds.length === 1 ? tenantIds[0] : { in: tenantIds } }), 3500),
+        withTimeout(db.query('payments', { user_id: tenantIds.length === 1 ? tenantIds[0] : { in: tenantIds } }), 3500)
+      ])
+      const byCamel = byCamelResult === timeoutMarker ? [] : (Array.isArray(byCamelResult) ? byCamelResult : [])
+      const bySnake = bySnakeResult === timeoutMarker ? [] : (Array.isArray(bySnakeResult) ? bySnakeResult : [])
+      const paymentMap = new Map<string, any>()
+      ;[...byCamel, ...bySnake].forEach((payment: any) => {
+        const key = String(payment.id || payment._id || `${payment.userId || payment.user_id}_${payment.propertyId || payment.property_id}_${payment.createdAt || payment.created_at || ''}`)
+        if (!paymentMap.has(key)) paymentMap.set(key, payment)
+      })
+      const basePayments = Array.from(paymentMap.values())
+      const propertyIds = Array.from(new Set(basePayments.map((p: any) => String(p.propertyId || p.property_id || '')).filter(Boolean)))
+      const userIds = Array.from(new Set(basePayments.map((p: any) => String(p.userId || p.user_id || '')).filter(Boolean)))
+      const [propertyResult, usersResult] = await Promise.all([
+        propertyIds.length > 0 ? withTimeout(db.query('properties', { id: { in: propertyIds } }), 1500) : Promise.resolve([]),
+        userIds.length > 0 ? withTimeout(db.query('users', { id: { in: userIds } }), 1500) : Promise.resolve([])
+      ])
+      const propertyList = propertyResult === timeoutMarker ? [] : (Array.isArray(propertyResult) ? propertyResult : [])
+      const usersList = usersResult === timeoutMarker ? [] : (Array.isArray(usersResult) ? usersResult : [])
+      const propertyMap = new Map<string, any>()
+      const usersMap = new Map<string, any>()
+      propertyList.forEach((item: any) => propertyMap.set(String(item.id || item._id || ''), item))
+      usersList.forEach((item: any) => usersMap.set(String(item.id || item._id || item.userId || ''), item))
+      const paymentsWithRelations = await Promise.all(basePayments.map(async (p: any) => {
+        const propertyId = String(p.propertyId || p.property_id || '')
+        const payUserId = String(p.userId || p.user_id || '')
+        const property = propertyMap.get(propertyId) || null
+        const paymentUser = usersMap.get(payUserId) || null
+        return {
+          ...p,
+          id: p.id ?? p._id,
+          userId: p.userId ?? p.user_id,
+          propertyId: p.propertyId ?? p.property_id,
+          amount: p.amount ?? p.total,
+          createdAt: p.createdAt ?? p.created_at,
+          updatedAt: p.updatedAt ?? p.updated_at,
+          paidAt: p.paidAt ?? p.paid_at,
+          property: property ? { id: property.id, title: property.title, address: property.address } : null,
+          user: paymentUser ? { id: paymentUser.id, name: paymentUser.name, email: paymentUser.email } : null
+        }
+      }))
+      return NextResponse.json({ payments: paymentsWithRelations })
     }
 
     const where: any = {}

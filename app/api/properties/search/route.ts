@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 import { getAppRegion, getDatabaseAdapter } from '@/lib/db-adapter'
-import { prisma } from '@/lib/db'
-import { supabaseAdmin } from '@/lib/supabase'
+import { createSupabaseServerClient, supabaseAdmin } from '@/lib/supabase'
 
 /**
  * 房源搜索接口 - 使用数据库适配器，自动根据环境变量选择数据源
@@ -25,29 +24,108 @@ export async function GET(request: NextRequest) {
 
     const db = getDatabaseAdapter()
     const region = getAppRegion()
+    const authHeader = request.headers.get('authorization')
+    const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : undefined
+    const supabaseClient = createSupabaseServerClient(accessToken)
+    const supabaseReaders = [supabaseAdmin, supabaseClient].filter(Boolean) as any[]
     const fetchPropertiesFromSupabase = async () => {
-      if (!supabaseAdmin) return []
-      const tables = ['Property', 'property', 'properties']
-      for (const tableName of tables) {
-        const { data, error } = await supabaseAdmin.from(tableName).select('*')
-        if (!error && data) return data
+      if (supabaseReaders.length === 0) return []
+      const tables = ['Property', 'property', 'properties', 'Listing', 'listing', 'listings']
+      for (const client of supabaseReaders) {
+        for (const tableName of tables) {
+          const { data, error } = await client.from(tableName).select('*')
+          if (!error && data) return data
+        }
       }
       return []
     }
+    const fetchPropertiesFromPropertiesApi = async () => {
+      try {
+        const url = new URL('/api/properties', request.url)
+        url.searchParams.set('page', '1')
+        url.searchParams.set('limit', '200')
+        const response = await fetch(url.toString(), {
+          cache: 'no-store',
+          headers: {
+            authorization: request.headers.get('authorization') || '',
+          },
+        })
+        if (!response.ok) return []
+        const payload = await response.json()
+        const rows = Array.isArray(payload?.properties) ? payload.properties : []
+        return rows
+      } catch {
+        return []
+      }
+    }
     const fetchUserFromSupabase = async (userId: string) => {
-      if (!supabaseAdmin || !userId) return null
+      if (supabaseReaders.length === 0 || !userId) return null
       const tables = ['User', 'user', 'users']
-      for (const tableName of tables) {
-        const { data, error } = await supabaseAdmin
-          .from(tableName)
-          .select('id,name,email')
-          .eq('id', userId)
-          .limit(1)
-        if (!error && data && data.length > 0) return data[0]
+      for (const client of supabaseReaders) {
+        for (const tableName of tables) {
+          const { data, error } = await client
+            .from(tableName)
+            .select('id,name,email')
+            .eq('id', userId)
+            .limit(1)
+          if (!error && data && data.length > 0) return data[0]
+        }
       }
       return null
     }
     
+    const getField = (obj: any, keys: string[]) => {
+      for (const key of keys) {
+        const value = obj?.[key]
+        if (value !== undefined && value !== null && value !== '') return value
+      }
+      return undefined
+    }
+    const normalizeProperty = (p: any) => {
+      const addressObject =
+        p?.addressInfo ?? p?.addressDetail ?? p?.addressDetails ?? p?.address_details
+      const locationObject = p?.location ?? p?.geo ?? p?.mapLocation
+      const addressValue =
+        getField(p, ['address', 'addressLine', 'address_line', 'street', 'streetAddress', 'street_address']) ??
+        getField(addressObject, ['address', 'detail', 'detailAddress', 'fullAddress', 'full_address']) ??
+        (typeof p?.location === 'string' ? p.location : undefined)
+      const cityValue =
+        getField(p, ['city', 'cityName', 'city_name', 'city_cn', 'district', 'region']) ??
+        getField(locationObject, ['city']) ??
+        getField(addressObject, ['city']) ??
+        getField(p?.address, ['city'])
+      const stateValue =
+        getField(p, ['state', 'stateName', 'state_name', 'province', 'provinceName', 'province_name']) ??
+        getField(locationObject, ['state']) ??
+        getField(addressObject, ['state']) ??
+        getField(p?.address, ['state'])
+      return {
+        ...p,
+        id: getField(p, ['id', '_id', 'propertyId', 'property_id']),
+        landlordId: getField(p, ['landlordId', 'landlord_id', 'ownerId', 'owner_id', 'userId', 'user_id', 'createdBy', 'created_by']),
+        title: getField(p, ['title', 'name', 'propertyName', 'property_name', 'buildingName', 'communityName']),
+        description: getField(p, ['description', 'desc', 'details']),
+        address: addressValue,
+        city: cityValue,
+        state: stateValue,
+        zipCode: getField(p, ['zipCode', 'zip_code', 'postalCode', 'postal_code']),
+        country: getField(p, ['country', 'countryName', 'country_name']),
+        price: getField(p, ['price', 'rent', 'monthlyRent', 'monthly_rent', 'amount']),
+        deposit: getField(p, ['deposit', 'securityDeposit', 'security_deposit']),
+        bedrooms: getField(p, ['bedrooms', 'beds', 'bedrooms_count', 'bedroom_count']),
+        bathrooms: getField(p, ['bathrooms', 'baths', 'bathrooms_count', 'bathroom_count']),
+        sqft: getField(p, ['sqft', 'squareFeet', 'square_feet', 'area']),
+        propertyType: getField(p, ['propertyType', 'property_type', 'type', 'category']),
+        status: getField(p, ['status', 'listingStatus', 'listing_status']),
+        images: getField(p, ['images', 'image', 'image_urls', 'photos', 'photoUrls', 'photo_urls']),
+        amenities: getField(p, ['amenities', 'features', 'facilities']),
+        petFriendly: getField(p, ['petFriendly', 'pet_friendly', 'isPetFriendly', 'is_pet_friendly']),
+        availableFrom: getField(p, ['availableFrom', 'available_from', 'availableDate', 'available_date']),
+        leaseDuration: getField(p, ['leaseDuration', 'lease_duration', 'leaseTerm', 'lease_term']),
+        createdAt: getField(p, ['createdAt', 'created_at', 'createTime', 'create_time']),
+        updatedAt: getField(p, ['updatedAt', 'updated_at', 'updateTime', 'update_time']),
+      }
+    }
     const filters: any = {}
     const statusAllowList = ['AVAILABLE', 'ACTIVE', 'PUBLISHED']
     if (region !== 'china') {
@@ -295,22 +373,7 @@ export async function GET(request: NextRequest) {
           orderBy: { createdAt: 'desc' }
         })
       } else {
-        const prismaWhere: any = {}
-        if (filters.status) {
-          prismaWhere.status = filters.status
-        }
-        if (filters.OR) {
-          prismaWhere.OR = filters.OR
-        } else {
-          if (filters.city) prismaWhere.city = filters.city
-          if (filters.state) prismaWhere.state = filters.state
-        }
-        if (filters.price) prismaWhere.price = filters.price
-        if (filters.bedrooms) prismaWhere.bedrooms = filters.bedrooms
-        if (filters.bathrooms) prismaWhere.bathrooms = filters.bathrooms
-        if (filters.petFriendly !== undefined) prismaWhere.petFriendly = filters.petFriendly
-        allProperties = await prisma.property.findMany({
-          where: prismaWhere,
+        allProperties = await db.query('properties', {}, {
           orderBy: { createdAt: 'desc' }
         })
       }
@@ -325,11 +388,15 @@ export async function GET(request: NextRequest) {
         allProperties = []
       }
     }
-    if (region !== 'china' && supabaseAdmin && allProperties.length === 0) {
+    if (region !== 'china' && supabaseReaders.length > 0 && allProperties.length === 0) {
       allProperties = await fetchPropertiesFromSupabase()
       usedSupabaseFallback = allProperties.length > 0
     }
+    if (region !== 'china' && allProperties.length === 0) {
+      allProperties = await fetchPropertiesFromPropertiesApi()
+    }
     console.log(`Search query returned ${allProperties.length} properties`)
+    allProperties = allProperties.map(normalizeProperty)
     
     const shouldFilterInMemory = Boolean(
       keyword ||
@@ -366,10 +433,10 @@ export async function GET(request: NextRequest) {
       properties.map(async (property: any) => {
         // 统一ID字段，优先使用id，如果没有则使用其他字段
         const normalizedId = String(
-          property?.id || 
-          property?._id || 
-          property?.propertyId || 
-          property?.property_id || 
+          property?.id ||
+          property?._id ||
+          property?.propertyId ||
+          property?.property_id ||
           ''
         ).trim()
         
@@ -386,16 +453,16 @@ export async function GET(request: NextRequest) {
           propertyId: property?.propertyId || normalizedId,
         }
         
-        if (!property?.landlordId) {
+        if (!normalizedProperty?.landlordId) {
           return { ...normalizedProperty, landlord: null }
         }
 
         let landlord = null
         try {
-          landlord = await db.findUserById(property.landlordId)
+          landlord = await db.findUserById(normalizedProperty.landlordId)
         } catch {}
         if (!landlord && region !== 'china') {
-          landlord = await fetchUserFromSupabase(String(property.landlordId))
+          landlord = await fetchUserFromSupabase(String(normalizedProperty.landlordId))
         }
         return {
           ...normalizedProperty,

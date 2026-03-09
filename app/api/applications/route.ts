@@ -259,6 +259,8 @@ export async function GET(request: NextRequest) {
     }
     const isPrisma = region === 'global' && !useSupabaseRest
 
+    const hintedUserId = String(request.headers.get('x-user-id') || '').trim()
+    const hintedUserEmail = String(request.headers.get('x-user-email') || '').trim()
     const authHeader = request.headers.get('authorization')
     const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : undefined
     const supabaseClient = createSupabaseServerClient(accessToken)
@@ -310,6 +312,9 @@ export async function GET(request: NextRequest) {
     }
     const resolvedUserId = dbUser?.id || user.id
     const agentIdSet = new Set([String(user.id), String(resolvedUserId)])
+    if (hintedUserId) {
+      agentIdSet.add(hintedUserId)
+    }
     let tokenUserId: string | null = null
     if (accessToken && supabaseClient) {
       try {
@@ -327,7 +332,32 @@ export async function GET(request: NextRequest) {
         }
       } catch {}
     }
+    const resolvedEmailForLookup = String(dbUser?.email || user.email || hintedUserEmail || '').trim()
+    if (!tokenUserId && resolvedEmailForLookup && supabaseAdmin) {
+      try {
+        const adminApi = (supabaseAdmin as any)?.auth?.admin || (supabaseAdmin as any)?.auth?.api
+        if (adminApi?.getUserByEmail) {
+          const result = await adminApi.getUserByEmail(resolvedEmailForLookup)
+          const adminUser = result?.data?.user
+          if (adminUser?.id) {
+            tokenUserId = String(adminUser.id)
+          }
+        } else if (adminApi?.listUsers) {
+          const listResult = await adminApi.listUsers()
+          const users = listResult?.data?.users || listResult?.data || []
+          const found = Array.isArray(users)
+            ? users.find((u: any) => String(u?.email || '').toLowerCase() === resolvedEmailForLookup.toLowerCase())
+            : null
+          if (found?.id) {
+            tokenUserId = String(found.id)
+          }
+        }
+      } catch {}
+    }
     const landlordIdSet = new Set<string>([String(resolvedUserId), String(user.id)])
+    if (hintedUserId) {
+      landlordIdSet.add(hintedUserId)
+    }
     if (tokenUserId) landlordIdSet.add(String(tokenUserId))
     const requestedUserType = String(userType || '').toUpperCase()
     const dbUserType = String(dbUser?.userType || '').toUpperCase()
@@ -402,8 +432,8 @@ export async function GET(request: NextRequest) {
           propertyIds = await fetchPropertyIdsByField(landlordField, landlordIds)
           if (propertyIds.length > 0) break
         }
-        if (propertyIds.length === 0 && user.email) {
-          propertyIds = await fetchPropertyIdsByEmail(user.email)
+        if (propertyIds.length === 0 && resolvedEmailForLookup) {
+          propertyIds = await fetchPropertyIdsByEmail(resolvedEmailForLookup)
         }
       } else if (effectiveUserType === 'AGENT') {
         for (const agentField of agentFields) {
@@ -437,8 +467,8 @@ export async function GET(request: NextRequest) {
             }
           }
         }
-        if (propertyIds.length === 0 && user.email) {
-          propertyIds = await fetchPropertyIdsByEmail(user.email)
+        if (propertyIds.length === 0 && resolvedEmailForLookup) {
+          propertyIds = await fetchPropertyIdsByEmail(resolvedEmailForLookup)
         }
       }
 
@@ -577,10 +607,20 @@ export async function GET(request: NextRequest) {
         baseWhere.tenantId = resolvedUserId
       } else if (effectiveUserType === 'LANDLORD') {
         const landlordIds = Array.from(landlordIdSet)
-        const landlordProperties = await runWithRetry(() => prisma.property.findMany({
+        let landlordProperties = await runWithRetry(() => prisma.property.findMany({
           where: { landlordId: landlordIds.length === 1 ? landlordIds[0] : { in: landlordIds } },
           select: { id: true }
         }))
+        if (landlordProperties.length === 0 && resolvedEmailForLookup) {
+          landlordProperties = await runWithRetry(() => prisma.property.findMany({
+            where: {
+              landlord: {
+                email: { equals: resolvedEmailForLookup, mode: 'insensitive' }
+              }
+            },
+            select: { id: true }
+          }))
+        }
         const propertyIds = landlordProperties.map((p) => p.id)
         if (propertyIds.length === 0) {
           forceEmpty = true
@@ -644,7 +684,7 @@ export async function GET(request: NextRequest) {
         applications = applications.filter((app: any) => String(getField(app, ['tenantId', 'tenant_id']) || '') === String(resolvedUserId))
       } else if (effectiveUserType === 'LANDLORD') {
         const properties = await effectiveDb.query('properties', {})
-        const normalizedEmail = user?.email ? String(user.email).toLowerCase() : ''
+        const normalizedEmail = resolvedEmailForLookup ? String(resolvedEmailForLookup).toLowerCase() : ''
         const propertyIds = new Set(
           properties
             .filter((p: any) => {

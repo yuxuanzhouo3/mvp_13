@@ -20,6 +20,7 @@ import { AIChat } from "@/components/dashboard/ai-chat"
 export default function LandlordDashboard() {
   const t = useTranslations('dashboard')
   const router = useRouter()
+  const STATS_CACHE_KEY = "landlord-dashboard-stats"
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [stats, setStats] = useState({
     totalProperties: 0,
@@ -64,13 +65,44 @@ export default function LandlordDashboard() {
     }
     return null
   }
+  const parseTokenHints = (token: string) => {
+    try {
+      const payloadBase64 = token.split(".")[1]
+      if (!payloadBase64) return { userId: "", email: "" }
+      const normalized = payloadBase64.replace(/-/g, "+").replace(/_/g, "/")
+      const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4)
+      const decoded = JSON.parse(atob(padded))
+      const userId = decoded?.userId || decoded?.sub || decoded?.id || ""
+      const email = decoded?.email || decoded?.userEmail || ""
+      return { userId: String(userId || ""), email: String(email || "") }
+    } catch {
+      return { userId: "", email: "" }
+    }
+  }
 
   const fetchTenantsList = useCallback(async (providedToken?: string) => {
     const token = providedToken || localStorage.getItem("auth-token")
     if (!token) return []
     try {
+      const headerBag: Record<string, string> = { Authorization: `Bearer ${token}` }
+      let localUser: any = currentUser
+      if (!localUser) {
+        const userStr = localStorage.getItem("user")
+        if (userStr) {
+          try {
+            localUser = JSON.parse(userStr)
+          } catch {
+            localStorage.removeItem("user")
+          }
+        }
+      }
+      const tokenHints = parseTokenHints(token)
+      if (localUser?.id) headerBag["x-user-id"] = String(localUser.id)
+      if (localUser?.email) headerBag["x-user-email"] = String(localUser.email)
+      if (!headerBag["x-user-id"] && tokenHints.userId) headerBag["x-user-id"] = tokenHints.userId
+      if (!headerBag["x-user-email"] && tokenHints.email) headerBag["x-user-email"] = tokenHints.email
       const response = await fetch("/api/landlord/tenants", {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: headerBag,
       })
       if (response.ok) {
         const data = await response.json().catch(() => ({}))
@@ -80,7 +112,7 @@ export default function LandlordDashboard() {
       }
     } catch {}
     return []
-  }, [])
+  }, [currentUser])
 
   useEffect(() => {
     const bootstrap = async () => {
@@ -102,7 +134,7 @@ export default function LandlordDashboard() {
 
       const refreshProfile = async (fallbackUser?: any) => {
         const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 6000)
+        const timeoutId = setTimeout(() => controller.abort(), 12000)
         try {
           const profileRes = await fetch("/api/auth/profile", {
             headers: { Authorization: `Bearer ${token}` },
@@ -128,6 +160,15 @@ export default function LandlordDashboard() {
       }
       const refreshedUser = await refreshProfile(user)
       user = refreshedUser || user
+      if (!user) {
+        const hints = parseTokenHints(token)
+        if (hints.userId || hints.email) {
+          user = {
+            id: hints.userId,
+            email: hints.email,
+          }
+        }
+      }
 
       if (user) {
         setCurrentUser(user)
@@ -168,37 +209,257 @@ export default function LandlordDashboard() {
         handleUnauthorized()
         return
       }
+      let hasCachedNonZeroStats = false
+      const cachedStatsRaw = localStorage.getItem(STATS_CACHE_KEY)
+      if (cachedStatsRaw) {
+        try {
+          const cached = JSON.parse(cachedStatsRaw)
+          const cachedStats = {
+            totalProperties: Number(cached?.totalProperties ?? 0),
+            activeTenants: Number(cached?.activeTenants ?? 0),
+            monthlyRevenue: Number(cached?.monthlyRevenue ?? 0),
+            pendingIssues: Number(cached?.pendingIssues ?? 0),
+          }
+          if (cachedStats.totalProperties || cachedStats.activeTenants || cachedStats.monthlyRevenue || cachedStats.pendingIssues) {
+            hasCachedNonZeroStats = true
+            setStats(cachedStats)
+          }
+        } catch {}
+      }
 
-      const headers = { Authorization: `Bearer ${token}` }
+      const headerBag: Record<string, string> = { Authorization: `Bearer ${token}` }
+      let effectiveUser = user || currentUser
+      if (!effectiveUser) {
+        const userStr = localStorage.getItem("user")
+        if (userStr) {
+          try {
+            effectiveUser = JSON.parse(userStr)
+          } catch {
+            localStorage.removeItem("user")
+          }
+        }
+      }
+      if (!effectiveUser?.id || !effectiveUser?.email) {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 12000)
+        try {
+          const profileRes = await fetch("/api/auth/profile", {
+            headers: { Authorization: `Bearer ${token}` },
+            signal: controller.signal,
+          })
+          if (profileRes.ok) {
+            const profileData = await profileRes.json().catch(() => ({}))
+            if (profileData?.user) {
+              effectiveUser = profileData.user
+              setCurrentUser(profileData.user)
+              localStorage.setItem("user", JSON.stringify(profileData.user))
+            }
+          }
+        } catch {} finally {
+          clearTimeout(timeoutId)
+        }
+      }
+      const tokenHints = parseTokenHints(token)
+      if (effectiveUser?.id) {
+        headerBag["x-user-id"] = String(effectiveUser.id)
+      }
+      if (effectiveUser?.email) {
+        headerBag["x-user-email"] = String(effectiveUser.email)
+      }
+      if (!headerBag["x-user-id"] && tokenHints.userId) {
+        headerBag["x-user-id"] = tokenHints.userId
+      }
+      if (!headerBag["x-user-email"] && tokenHints.email) {
+        headerBag["x-user-email"] = tokenHints.email
+      }
+      const REQUEST_TIMEOUT_MS = 30000
+      const LONG_TIMEOUT_MS = 45000
       const fetchWithTimeout = async (url: string, timeoutMs: number) => {
         const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
         try {
-          return await fetch(url, { headers, signal: controller.signal })
+          return await fetch(url, {
+            headers: headerBag,
+            signal: controller.signal,
+            credentials: "include",
+            cache: "no-store",
+          })
+        } catch (error: any) {
+          if (error?.name === "AbortError") {
+            return null
+          }
+          throw error
         } finally {
           clearTimeout(timeoutId)
         }
       }
-      const statsRes = await fetchWithTimeout("/api/landlord/dashboard-stats", 8000)
-      if (statsRes.status === 401 || statsRes.status === 403) {
-        handleUnauthorized()
-        return
+      const fetchWithFallback = async (urls: string[], timeoutMs: number) => {
+        let firstNon404: Response | null = null
+        for (const url of urls) {
+          const response = await fetchWithTimeout(url, timeoutMs)
+          if (!response) continue
+          if (response.status === 404) continue
+          if (response.ok) return response
+          if (response.status === 401 || response.status === 403) continue
+          if (!firstNon404) firstNon404 = response
+        }
+        return firstNon404
       }
+      const computeCardStatsFromEndpoints = async () => {
+        const result = {
+          totalProperties: 0,
+          activeTenants: 0,
+          monthlyRevenue: 0,
+          pendingIssues: 0,
+        }
+        const landlordIdCandidates = Array.from(
+          new Set(
+            [effectiveUser?.id, currentUser?.id, tokenHints.userId]
+              .filter((v) => v !== undefined && v !== null && String(v).trim() !== '')
+              .map((v) => String(v))
+          )
+        )
+        const propertyUrls = [
+          "/api/properties",
+          ...landlordIdCandidates.map((landlordId) => `/api/properties?landlordId=${encodeURIComponent(landlordId)}`),
+        ]
+        const propertyResponses = await Promise.allSettled(
+          propertyUrls.map((url) => fetchWithTimeout(url, REQUEST_TIMEOUT_MS))
+        )
+        for (const item of propertyResponses) {
+          if (item.status !== "fulfilled" || !item.value?.ok) continue
+          const data = await item.value.json().catch(() => ({}))
+          const list = data?.properties || data?.data?.properties || data?.data || []
+          const total = Math.max(
+            Array.isArray(list) ? list.length : 0,
+            Number(data?.pagination?.total ?? data?.data?.pagination?.total ?? data?.total ?? 0)
+          )
+          if (total > result.totalProperties) {
+            result.totalProperties = total
+          }
+        }
+        const tenantsRes = await fetchWithFallback(["/api/landlord/tenants"], REQUEST_TIMEOUT_MS)
+        if (tenantsRes?.ok) {
+          const tenantsData = await tenantsRes.json().catch(() => ({}))
+          const tenantList = tenantsData.tenants || tenantsData.data?.tenants || tenantsData.data || []
+          result.activeTenants = Math.max(result.activeTenants, Array.isArray(tenantList) ? tenantList.length : 0)
+        }
+        const appsRes = await fetchWithFallback(
+          ["/api/applications?userType=landlord"],
+          REQUEST_TIMEOUT_MS
+        )
+        if (appsRes?.ok) {
+          const appsData = await appsRes.json().catch(() => ({}))
+          const appList = appsData.applications || appsData.data?.applications || appsData.data || []
+          const approved = (Array.isArray(appList) ? appList : []).filter((a: any) => String(a?.status || "").toUpperCase() === "APPROVED")
+          const tenantIdSet = new Set(
+            approved
+              .map((a: any) => String(a?.tenantId || a?.tenant?.id || ""))
+              .filter((v: string) => Boolean(v))
+          )
+          const approvedCount = tenantIdSet.size > 0 ? tenantIdSet.size : approved.length
+          if (approvedCount > result.activeTenants) {
+            result.activeTenants = approvedCount
+          }
+        }
+        const paymentsRes = await fetchWithFallback(["/api/payments"], REQUEST_TIMEOUT_MS)
+        if (paymentsRes?.ok) {
+          const paymentsData = await paymentsRes.json().catch(() => ({}))
+          const paymentsList = paymentsData.payments || paymentsData.data?.payments || paymentsData.data || []
+          const now = new Date()
+          let monthlyRevenue = 0
+          ;(Array.isArray(paymentsList) ? paymentsList : []).forEach((payment: any) => {
+            const status = String(payment?.status || "").toUpperCase()
+            if (status !== "PAID" && status !== "COMPLETED") return
+            const date = new Date(payment?.paidAt || payment?.createdAt || payment?.updatedAt || 0)
+            if (date.getMonth() !== now.getMonth() || date.getFullYear() !== now.getFullYear()) return
+            const dist = safeParseDistribution(payment?.distribution)
+            const amount = payment?.type === "RENT" && dist ? dist.landlordNet : (payment?.amount ?? payment?.total ?? 0)
+            monthlyRevenue += Number(amount) || 0
+          })
+          result.monthlyRevenue = Math.max(result.monthlyRevenue, monthlyRevenue)
+        }
+        const notificationsRes = await fetchWithFallback(["/api/notifications?unreadOnly=true", "/api/notifications"], REQUEST_TIMEOUT_MS)
+        if (notificationsRes?.ok) {
+          const notifData = await notificationsRes.json().catch(() => ({}))
+          const notifList = notifData.notifications || notifData.data?.notifications || notifData.data || []
+          if (Array.isArray(notifList)) {
+            const unread = notifList.filter((n: any) => n?.isRead === false || n?.is_read === false).length
+            result.pendingIssues = Math.max(result.pendingIssues, unread || notifList.length)
+          }
+        }
+        return result
+      }
+      // 只使用实际存在的统计接口，避免无意义的 404 日志
+      const statsCandidates = [
+        "/api/landlord/dashboard-stats",
+      ]
+      const statsRes = await fetchWithFallback(statsCandidates, REQUEST_TIMEOUT_MS)
 
       let serverStats: any = null
-      if (statsRes.ok) {
+      let normalizedServerStats = {
+        totalProperties: 0,
+        activeTenants: 0,
+        monthlyRevenue: 0,
+        pendingIssues: 0,
+      }
+      if (statsRes?.ok) {
         const statsData = await statsRes.json().catch(() => ({}))
-        if (statsData?.stats) {
-          serverStats = statsData.stats
+        serverStats =
+          statsData?.stats ||
+          statsData?.data?.stats ||
+          statsData?.data ||
+          statsData
+      }
+      if (serverStats) {
+        normalizedServerStats = {
+          totalProperties:
+          Number(serverStats?.totalProperties ?? serverStats?.total_properties ?? serverStats?.propertiesCount ?? 0)
+          ,
+          activeTenants:
+          Number(serverStats?.activeTenants ?? serverStats?.active_tenants ?? serverStats?.tenantsCount ?? 0)
+          ,
+          monthlyRevenue:
+          Number(serverStats?.monthlyRevenue ?? serverStats?.monthly_revenue ?? serverStats?.revenue ?? 0)
+          ,
+          pendingIssues:
+          Number(serverStats?.pendingIssues ?? serverStats?.pending_issues ?? serverStats?.issues ?? 0)
         }
+        setStats({
+          totalProperties: normalizedServerStats.totalProperties,
+          activeTenants: normalizedServerStats.activeTenants,
+          monthlyRevenue: normalizedServerStats.monthlyRevenue,
+          pendingIssues: normalizedServerStats.pendingIssues,
+        })
       }
 
-      const [applicationsResult, tenantsResult, propertiesResult, paymentsResult, notificationsResult] = await Promise.allSettled([
-        fetchWithTimeout("/api/applications?userType=landlord", 8000),
-        fetchWithTimeout("/api/landlord/tenants", 8000),
-        fetchWithTimeout("/api/properties", 8000),
-        fetchWithTimeout("/api/payments", 8000),
-        fetchWithTimeout("/api/notifications", 8000),
+      const [
+        applicationsResult,
+        tenantsResult,
+        propertiesResult,
+        paymentsResult,
+        notificationsResult,
+      ] = await Promise.allSettled([
+        fetchWithFallback(
+          ["/api/applications?userType=landlord"],
+          REQUEST_TIMEOUT_MS
+        ),
+        fetchWithFallback(
+          ["/api/landlord/tenants"],
+          REQUEST_TIMEOUT_MS
+        ),
+        fetchWithFallback(
+          ["/api/properties"],
+          REQUEST_TIMEOUT_MS
+        ),
+        fetchWithFallback(
+          ["/api/payments"],
+          REQUEST_TIMEOUT_MS
+        ),
+        fetchWithFallback(
+          ["/api/notifications"],
+          REQUEST_TIMEOUT_MS
+        ),
       ])
 
       let propertiesCount = 0
@@ -207,29 +468,35 @@ export default function LandlordDashboard() {
       let pendingIssuesFallback = 0
       let notifications: any[] = []
       let applications: any[] = []
-      if (applicationsResult.status === "fulfilled" && applicationsResult.value.ok) {
+      if (applicationsResult.status === "fulfilled" && applicationsResult.value?.ok) {
         const applicationsData = await applicationsResult.value.json().catch(() => ({}))
-        applications = applicationsData.applications || []
-        approvedApplicationsCount = applications.filter((a: any) => a.status === 'APPROVED').length
+        applications = applicationsData.applications || applicationsData.data?.applications || applicationsData.data || []
+        approvedApplicationsCount = applications.filter((a: any) => String(a?.status || "").toUpperCase() === 'APPROVED').length
       }
 
       let tenantsCount = 0
-      if (tenantsResult.status === "fulfilled" && tenantsResult.value.ok) {
+      if (tenantsResult.status === "fulfilled" && tenantsResult.value?.ok) {
         const tenantsData = await tenantsResult.value.json().catch(() => ({}))
-        const tenantsList = tenantsData.tenants || []
+        const tenantsList = tenantsData.tenants || tenantsData.data?.tenants || tenantsData.data || []
         tenantsCount = tenantsList.length
         setTenants(tenantsList)
       }
 
-      if (propertiesResult.status === "fulfilled" && propertiesResult.value.ok) {
+      if (propertiesResult.status === "fulfilled" && propertiesResult.value?.ok) {
         const propertiesData = await propertiesResult.value.json().catch(() => ({}))
-        const properties = propertiesData.properties || []
-        propertiesCount = properties.length
+        const properties = propertiesData.properties || propertiesData.data?.properties || propertiesData.data || []
+        const totalFromPagination = Number(
+          propertiesData?.pagination?.total ??
+          propertiesData?.data?.pagination?.total ??
+          propertiesData?.total ??
+          0
+        )
+        propertiesCount = Math.max(properties.length, totalFromPagination)
       }
 
-      if (paymentsResult.status === "fulfilled" && paymentsResult.value.ok) {
+      if (paymentsResult.status === "fulfilled" && paymentsResult.value?.ok) {
         const paymentsData = await paymentsResult.value.json().catch(() => ({}))
-        const payments = paymentsData.payments || []
+        const payments = paymentsData.payments || paymentsData.data?.payments || paymentsData.data || []
         const now = new Date()
         payments.forEach((payment: any) => {
           const status = String(payment.status || '').toUpperCase()
@@ -242,9 +509,9 @@ export default function LandlordDashboard() {
         })
       }
 
-      if (notificationsResult.status === "fulfilled" && notificationsResult.value.ok) {
+      if (notificationsResult.status === "fulfilled" && notificationsResult.value?.ok) {
         const notificationsData = await notificationsResult.value.json().catch(() => ({}))
-        notifications = notificationsData.notifications || []
+        notifications = notificationsData.notifications || notificationsData.data?.notifications || notificationsData.data || []
         pendingIssuesFallback = notifications.filter((n: any) => n.isRead === false || n.is_read === false).length
       }
 
@@ -284,13 +551,25 @@ export default function LandlordDashboard() {
       setRecentActivity(mergedActivity)
 
       const computedStats = {
-        totalProperties: Number(serverStats?.totalProperties || propertiesCount || 0),
-        activeTenants: Number(serverStats?.activeTenants || tenantsCount || approvedApplicationsCount),
-        monthlyRevenue: Number(serverStats?.monthlyRevenue || monthlyRevenueFallback || 0),
-        pendingIssues: Number(serverStats?.pendingIssues || pendingIssuesFallback || 0),
+        totalProperties: Number(normalizedServerStats.totalProperties || propertiesCount || 0),
+        activeTenants: Number(normalizedServerStats.activeTenants || tenantsCount || approvedApplicationsCount),
+        monthlyRevenue: Number(normalizedServerStats.monthlyRevenue || monthlyRevenueFallback || 0),
+        pendingIssues: Number(normalizedServerStats.pendingIssues || pendingIssuesFallback || 0),
       }
-
-      setStats(computedStats)
+      
+      // Update stats with computed values if they are valid
+      if (
+        computedStats.totalProperties > 0 ||
+        computedStats.activeTenants > 0 ||
+        computedStats.monthlyRevenue > 0 ||
+        computedStats.pendingIssues > 0
+      ) {
+        setStats(computedStats)
+        localStorage.setItem(STATS_CACHE_KEY, JSON.stringify(computedStats))
+      } else if (!hasCachedNonZeroStats && serverStats) {
+         // Fallback to server stats if computed is empty but server has data
+         setStats(computedStats)
+      }
     } catch (error) {
       console.error("Failed to fetch dashboard data:", error)
     } finally {
@@ -345,7 +624,6 @@ export default function LandlordDashboard() {
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">{stat.title}</p>
                     <p className="text-2xl font-bold">{stat.value}</p>
-                    {stat.trend && <p className="text-xs text-muted-foreground mt-1">{stat.trend}</p>}
                   </div>
                   <stat.icon className="h-8 w-8 text-primary" />
                 </div>
@@ -372,7 +650,7 @@ export default function LandlordDashboard() {
                       </div>
                     </div>
                     <Badge variant={activity.status === "completed" ? "default" : "secondary"}>
-                      {activity.displayStatus || activity.status.replace("_", " ")}
+                      {activity.displayStatus || activity.status.replace(/^dashboard\./, '').replace("_", " ")}
                     </Badge>
                   </div>
                 ))

@@ -21,6 +21,19 @@ export default function AnalyticsPage() {
   })
   const [revenueData, setRevenueData] = useState<any[]>([])
   const [propertyStatusData, setPropertyStatusData] = useState<any[]>([])
+  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 9000) => {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        cache: "no-store",
+      })
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  }
 
   useEffect(() => {
     fetchAnalyticsData()
@@ -41,10 +54,13 @@ export default function AnalyticsPage() {
   const fetchAnalyticsData = async () => {
     try {
       const token = localStorage.getItem("auth-token")
-      if (!token) return
+      if (!token) {
+        setAnalytics(prev => ({ ...prev, loading: false }))
+        return
+      }
 
       // Fetch properties
-      const propertiesRes = await fetch("/api/properties", {
+      const propertiesRes = await fetchWithTimeout("/api/properties", {
         headers: { Authorization: `Bearer ${token}` },
       })
       let totalProperties = 0
@@ -70,7 +86,7 @@ export default function AnalyticsPage() {
       }
 
       // Fetch applications to get active tenants
-      const applicationsRes = await fetch("/api/applications?userType=landlord", {
+      const applicationsRes = await fetchWithTimeout("/api/applications?userType=landlord", {
         headers: { Authorization: `Bearer ${token}` },
       })
       let activeTenants = 0
@@ -84,7 +100,7 @@ export default function AnalyticsPage() {
       // Fetch leases to calculate occupancy
       let occupiedProperties = 0
       try {
-        const leasesRes = await fetch("/api/leases", {
+        const leasesRes = await fetchWithTimeout("/api/leases", {
           headers: { Authorization: `Bearer ${token}` },
         })
         if (leasesRes.ok) {
@@ -105,7 +121,7 @@ export default function AnalyticsPage() {
       }
 
       // Fetch payments to calculate total revenue
-      const paymentsRes = await fetch("/api/payments", {
+      const paymentsRes = await fetchWithTimeout("/api/payments", {
         headers: { Authorization: `Bearer ${token}` },
       })
       let totalRevenue = 0

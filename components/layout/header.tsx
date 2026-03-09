@@ -2,7 +2,6 @@
 
 import { useState } from "react"
 import Link from "next/link"
-import { useRouter } from "next/navigation"
 import { useTranslations } from 'next-intl'
 import { Button } from "@/components/ui/button"
 import { ModeToggle } from "@/components/mode-toggle"
@@ -11,7 +10,6 @@ import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 
 export function Header() {
   const [isOpen, setIsOpen] = useState(false)
-  const router = useRouter()
   const t = useTranslations('common')
   const tNav = useTranslations('navigation')
 
@@ -23,7 +21,6 @@ export function Header() {
   ]
   const handleLoginClick = () => {
     if (isOpen) setIsOpen(false)
-    router.push("/auth/login")
   }
 
   return (
@@ -40,6 +37,7 @@ export function Header() {
             <Link 
               key={item.name} 
               href={item.href} 
+              prefetch={item.href.startsWith("/auth")}
               className="text-sm font-medium transition-colors hover:text-primary"
             >
               {item.name}
@@ -50,11 +48,11 @@ export function Header() {
         <div className="flex items-center space-x-4">
           <ModeToggle />
           <div className="hidden md:flex items-center space-x-2">
-            <Button variant="ghost" onClick={handleLoginClick}>
-              {t('login')}
+            <Button variant="ghost" asChild>
+              <Link href="/auth/login" prefetch={false}>{t('login')}</Link>
             </Button>
             <Button asChild>
-              <Link href="/auth/signup">{t('signup')}</Link>
+              <Link href="/auth/signup" prefetch={false}>{t('signup')}</Link>
             </Button>
           </div>
 
@@ -71,17 +69,18 @@ export function Header() {
                   <Link
                     key={item.name}
                     href={item.href}
+                    prefetch={item.href.startsWith("/auth")}
                     className="text-lg font-medium transition-colors hover:text-primary"
                   >
                     {item.name}
                   </Link>
                 ))}
                 <div className="flex flex-col space-y-2 pt-4">
-                  <Button variant="ghost" onClick={handleLoginClick}>
-                    {t('login')}
+                  <Button variant="ghost" asChild>
+                    <Link href="/auth/login" prefetch={false} onClick={handleLoginClick}>{t('login')}</Link>
                   </Button>
                   <Button asChild>
-                    <Link href="/auth/signup">{t('signup')}</Link>
+                    <Link href="/auth/signup" prefetch={false}>{t('signup')}</Link>
                   </Button>
                 </div>
               </nav>

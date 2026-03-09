@@ -20,6 +20,19 @@ export default function TenantsPage() {
   const [tenants, setTenants] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const currencySymbol = getCurrencySymbol()
+  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 8000) => {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        cache: "no-store",
+      })
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  }
 
   useEffect(() => {
     fetchTenants()
@@ -28,9 +41,12 @@ export default function TenantsPage() {
   const fetchTenants = async () => {
     try {
       const token = localStorage.getItem("auth-token")
-      if (!token) return
+      if (!token) {
+        router.replace("/auth/login")
+        return
+      }
 
-      const response = await fetch("/api/landlord/tenants", {
+      const response = await fetchWithTimeout("/api/landlord/tenants", {
         headers: { Authorization: `Bearer ${token}` },
       })
 

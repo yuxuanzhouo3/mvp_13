@@ -56,7 +56,21 @@ function MessageCenterContent() {
   const [refreshing, setRefreshing] = useState(false)
   
   const isFetchingRef = useRef(false)
+  const selectedConversationRef = useRef<string | null>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
+  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 8000) => {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        cache: "no-store",
+      })
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  }
 
   // Scroll to bottom
   const scrollToBottom = useCallback(() => {
@@ -133,10 +147,10 @@ function MessageCenterContent() {
       if (!token) return
 
       const [conversationsRes, contactsRes] = await Promise.all([
-        fetch("/api/messages/conversations", {
+        fetchWithTimeout("/api/messages/conversations", {
           headers: { Authorization: `Bearer ${token}` },
         }),
-        fetch("/api/messages/contacts", {
+        fetchWithTimeout("/api/messages/contacts", {
           headers: { Authorization: `Bearer ${token}` },
         })
       ])
@@ -220,10 +234,10 @@ function MessageCenterContent() {
       console.log("Fetching conversations...")
 
       const [conversationsRes, contactsRes] = await Promise.all([
-        fetch("/api/messages/conversations", {
+        fetchWithTimeout("/api/messages/conversations", {
           headers: { Authorization: `Bearer ${token}` },
         }),
-        fetch("/api/messages/contacts", {
+        fetchWithTimeout("/api/messages/contacts", {
           headers: { Authorization: `Bearer ${token}` },
         })
       ])
@@ -294,7 +308,10 @@ function MessageCenterContent() {
       
       // Auto-select first conversation if none selected
       if (allConversations.length > 0 && !selectedConversation) {
-        handleSelectConversation(allConversations[0])
+        // Use setTimeout to avoid state update conflicts during render cycle if any
+        setTimeout(() => {
+             handleSelectConversation(allConversations[0])
+        }, 0)
       }
     } catch (error) {
       console.error("Failed to fetch conversations:", error)
@@ -316,9 +333,15 @@ function MessageCenterContent() {
 
       console.log("Loading messages for partner:", partnerId)
 
-      const response = await fetch(`/api/messages?partnerId=${partnerId}`, {
+      const response = await fetchWithTimeout(`/api/messages?partnerId=${partnerId}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
+
+      // Check if we are still on the same conversation
+      if (partnerId !== selectedConversationRef.current) {
+        console.log("Conversation changed, discarding messages for:", partnerId)
+        return
+      }
 
       if (response.ok) {
         const data = await response.json()
@@ -353,9 +376,18 @@ function MessageCenterContent() {
       })
       return
     }
+    
     setSelectedConversation(conversation)
+    selectedConversationRef.current = conversation.id
     setMessages([])
-    loadMessages(conversation.id, true) // Scroll to bottom on initial load
+    
+    // Force reset fetching state to allow immediate load
+    isFetchingRef.current = false
+    
+    // Use setTimeout to ensure state updates propagate and avoid race conditions
+    setTimeout(() => {
+        loadMessages(conversation.id, true) // Scroll to bottom on initial load
+    }, 10)
   }
 
   const handleSendMessage = async () => {
@@ -568,12 +600,14 @@ function MessageCenterContent() {
           const existing = prev.find(c => c.id === newConv.id)
           if (existing) {
             console.log("Conversation already exists, selecting it")
-            handleSelectConversation(existing)
+            // Side effect moved out
+            setTimeout(() => handleSelectConversation(existing), 0)
             return prev
           }
           console.log("Adding new conversation to list")
           const updated = [newConv, ...prev]
-          handleSelectConversation(newConv)
+          // Side effect moved out
+          setTimeout(() => handleSelectConversation(newConv), 0)
           return updated
         })
       } else {

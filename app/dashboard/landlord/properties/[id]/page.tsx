@@ -32,6 +32,19 @@ export default function LandlordPropertyDetailPage() {
   const [currentImageIndex, setCurrentImageIndex] = useState(0)
   const currencySymbol = getCurrencySymbol()
   const [userType, setUserType] = useState<string>("landlord")
+  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 9000) => {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        cache: "no-store",
+      })
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  }
   const [formData, setFormData] = useState({
     title: "",
     description: "",
@@ -81,7 +94,7 @@ export default function LandlordPropertyDetailPage() {
         return
       }
 
-      const response = await fetch(`/api/properties/${params.id}`, {
+      const response = await fetchWithTimeout(`/api/properties/${params.id}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
 

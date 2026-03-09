@@ -137,6 +137,16 @@ export default function AgentDashboard() {
     }
   }
 
+  const fetchWithTimeout = async (url: string, options?: RequestInit, timeoutMs = 12000) => {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      return await fetch(url, { ...(options || {}), signal: controller.signal })
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  }
+
   const fetchDashboardData = async (providedToken?: string) => {
     try {
       const token = providedToken || localStorage.getItem("auth-token")
@@ -145,60 +155,71 @@ export default function AgentDashboard() {
         return
       }
 
-      const [propertiesRes, landlordRes, tenantRes, messagesRes, pendingAppsRes] = await Promise.all([
-        fetch("/api/agent/properties", { headers: { Authorization: `Bearer ${token}` } }),
-        fetch("/api/agent/landlords", { headers: { Authorization: `Bearer ${token}` } }),
-        fetch("/api/agent/tenants", { headers: { Authorization: `Bearer ${token}` } }),
-        fetch("/api/messages/unread-count", { headers: { Authorization: `Bearer ${token}` } }),
-        fetch("/api/applications?userType=agent&status=PENDING", { headers: { Authorization: `Bearer ${token}` } }),
+      const [propertiesResult, landlordResult, tenantResult, messagesResult, pendingAppsResult] = await Promise.allSettled([
+        fetchWithTimeout(`/api/properties?agentId=${user.id}`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetchWithTimeout(`/api/users?userType=LANDLORD&agentId=${user.id}`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetchWithTimeout(`/api/users?userType=TENANT&agentId=${user.id}`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetchWithTimeout("/api/messages/unread-count", { headers: { Authorization: `Bearer ${token}` } }),
+        fetchWithTimeout(`/api/applications?status=PENDING&agentId=${user.id}`, { headers: { Authorization: `Bearer ${token}` } }),
       ])
+      const propertiesRes = propertiesResult.status === 'fulfilled' ? propertiesResult.value : null
+      const landlordRes = landlordResult.status === 'fulfilled' ? landlordResult.value : null
+      const tenantRes = tenantResult.status === 'fulfilled' ? tenantResult.value : null
+      const messagesRes = messagesResult.status === 'fulfilled' ? messagesResult.value : null
+      const pendingAppsRes = pendingAppsResult.status === 'fulfilled' ? pendingAppsResult.value : null
 
-      const unauthorized = [propertiesRes, landlordRes, tenantRes, messagesRes, pendingAppsRes].some(
-        (res) => res.status === 401 || res.status === 403
+      const unauthorized = [propertiesRes, landlordRes, tenantRes, messagesRes, pendingAppsRes].filter(
+        (res) => res?.status === 401 || res?.status === 403
       )
-      if (unauthorized) {
+      // Only logout if multiple requests fail with 401, indicating invalid token
+      if (unauthorized.length >= 3) {
         handleUnauthorized()
         return
       }
 
-      if (propertiesRes.ok) {
+      if (propertiesRes?.ok) {
         const data = await propertiesRes.json()
         setProperties(data.properties || [])
         setStats(prev => ({ ...prev, totalProperties: data.properties?.length || 0 }))
       }
 
-      if (landlordRes.ok) {
+      if (landlordRes?.ok) {
         const data = await landlordRes.json()
         setLandlords(data.landlords || [])
         setStats(prev => ({ ...prev, totalLandlords: data.landlords?.length || 0 }))
       }
 
-      if (tenantRes.ok) {
+      if (tenantRes?.ok) {
         const data = await tenantRes.json()
         setTenants(data.tenants || [])
         setStats(prev => ({ ...prev, totalTenants: data.tenants?.length || 0 }))
       }
 
-      if (messagesRes.ok) {
+      if (messagesRes?.ok) {
         const data = await messagesRes.json()
         setStats(prev => ({ ...prev, unreadMessages: data.count || 0 }))
       }
       
-      if (pendingAppsRes.ok) {
+      if (pendingAppsRes?.ok) {
         const data = await pendingAppsRes.json()
         setStats(prev => ({ ...prev, pendingDeals: data.applications?.length || 0 }))
       }
 
-      const activityRes = await fetch("/api/agent/activity", {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (activityRes.status === 401 || activityRes.status === 403) {
-        handleUnauthorized()
-        return
-      }
-      if (activityRes.ok) {
-        const data = await activityRes.json()
-        setRecentActivity(data.activities || [])
+      const activityResult = await Promise.allSettled([
+        fetchWithTimeout("/api/agent/activity", {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ])
+      const activityRes = activityResult[0].status === 'fulfilled' ? activityResult[0].value : null
+      if (activityRes) {
+        if (activityRes.status === 401 || activityRes.status === 403) {
+          handleUnauthorized()
+          return
+        }
+        if (activityRes.ok) {
+          const data = await activityRes.json()
+          setRecentActivity(data.activities || [])
+        }
       }
 
     } catch (error) {
@@ -300,7 +321,7 @@ export default function AgentDashboard() {
                       </div>
                     </div>
                     <Badge variant={activity.type === "success" ? "default" : "secondary"}>
-                      {localizeStatus(activity.status)}
+                      {localizeStatus(activity.status).replace(/^dashboard\./, '')}
                     </Badge>
                   </div>
                 ))

@@ -10,6 +10,7 @@
 
 import { prisma, prismaDirect, withPrismaRetry } from './db'
 import { db as cloudbaseDb } from './cloudbase'
+import { supabaseAdmin } from './supabase'
 
 const withTimeoutMs = <T>(p: Promise<T>, ms: number): Promise<T> =>
   Promise.race([
@@ -22,6 +23,8 @@ export function getAppRegion(): 'global' | 'china' {
   const region = process.env.APP_REGION || process.env.NEXT_PUBLIC_APP_REGION
   if (region === 'china') return 'china'
   if (region === 'global') return 'global'
+  const hasSupabaseConfig = Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
+  if (hasSupabaseConfig) return 'global'
   const hasCloudbaseSecrets = Boolean(process.env.CLOUDBASE_SECRET_ID && process.env.CLOUDBASE_SECRET_KEY)
   return hasCloudbaseSecrets ? 'china' : 'global'
 }
@@ -36,6 +39,8 @@ export interface UnifiedUser {
   avatar?: string | null
   userType: string
   isPremium: boolean
+  payoutAccountId?: string | null
+  verified?: boolean
   representedById?: string | null
   premiumExpiry?: Date | null
   vipLevel?: string // FREE, BASIC, PREMIUM, ENTERPRISE
@@ -75,6 +80,193 @@ export interface DatabaseAdapter {
 
 // Supabase (Prisma) 适配器实现
 export class SupabaseAdapter implements DatabaseAdapter {
+  private isConnectionError(error: any): boolean {
+    const errorMsg = String(error?.message || '')
+    const lower = errorMsg.toLowerCase()
+    return (
+      lower.includes("can't reach database server") ||
+      lower.includes('can\\u2019t reach database server') ||
+      lower.includes('maxclients') ||
+      lower.includes('max clients reached') ||
+      lower.includes('pool_size') ||
+      lower.includes('check out') ||
+      lower.includes("can't reach") ||
+      lower.includes('connection') ||
+      lower.includes('timeout') ||
+      lower.includes('pooler') ||
+      lower.includes('pool') ||
+      lower.includes('p1001') ||
+      lower.includes('p1017') ||
+      lower.includes('p1000') ||
+      error?.code === 'P1001' ||
+      error?.code === 'P1017' ||
+      error?.code === 'P1000'
+    )
+  }
+
+  private isSchemaMismatchError(error: any): boolean {
+    const errorMsg = String(error?.message || '').toLowerCase()
+    return (
+      errorMsg.includes('does not exist') ||
+      errorMsg.includes('unknown column') ||
+      errorMsg.includes('unknown argument') ||
+      errorMsg.includes('relation') ||
+      errorMsg.includes('column')
+    )
+  }
+
+  private getSupabaseTableCandidates(collection: string): string[] {
+    const tableNameMap: Record<string, string[]> = {
+      users: ['User', 'user', 'users'],
+      properties: ['Property', 'property', 'properties', 'Listing', 'listing', 'listings'],
+      applications: ['Application', 'application', 'applications'],
+      leases: ['Lease', 'lease', 'leases'],
+      payments: ['Payment', 'payment', 'payments'],
+      deposits: ['Deposit', 'deposit', 'deposits'],
+      disputes: ['Dispute', 'dispute', 'disputes'],
+      messages: ['Message', 'message', 'messages'],
+      savedProperties: ['SavedProperty', 'savedProperty', 'saved_properties', 'savedproperties'],
+      notifications: ['Notification', 'notification', 'notifications'],
+      events: ['Event', 'event', 'events'],
+      agentProfiles: ['AgentProfile', 'agentProfile', 'agent_profiles', 'agentprofiles'],
+      tenantProfiles: ['TenantProfile', 'tenantProfile', 'tenant_profiles', 'tenantprofiles'],
+      landlordProfiles: ['LandlordProfile', 'landlordProfile', 'landlord_profiles', 'landlordprofiles'],
+    }
+    return tableNameMap[collection] || [collection]
+  }
+
+  private applySupabaseFilters(query: any, rawFilters?: any) {
+    const filters = rawFilters ? this.normalizeFilters(rawFilters) : {}
+    for (const key of Object.keys(filters || {})) {
+      if (key.startsWith('_') || key === 'OR' || key === 'AND') continue
+      const value = filters[key]
+      if (value === undefined) continue
+      if (
+        value &&
+        typeof value === 'object' &&
+        !Array.isArray(value) &&
+        !(value instanceof Date)
+      ) {
+        if (Array.isArray(value.in)) {
+          query = query.in(key, value.in)
+          continue
+        }
+        if (value.equals !== undefined) {
+          query = query.eq(key, value.equals)
+          continue
+        }
+        if (value.contains !== undefined) {
+          query = query.ilike(key, `%${value.contains}%`)
+          continue
+        }
+        if (value.gte !== undefined) query = query.gte(key, value.gte)
+        if (value.lte !== undefined) query = query.lte(key, value.lte)
+        if (value.gt !== undefined) query = query.gt(key, value.gt)
+        if (value.lt !== undefined) query = query.lt(key, value.lt)
+        continue
+      }
+      query = query.eq(key, value)
+    }
+    return query
+  }
+
+  private async queryWithSupabase<T = any>(collection: string, filters?: any, options?: any): Promise<T[]> {
+    if (!supabaseAdmin) return []
+    const tableCandidates = this.getSupabaseTableCandidates(collection)
+    for (const tableName of tableCandidates) {
+      let query: any = supabaseAdmin.from(tableName).select('*')
+      query = this.applySupabaseFilters(query, filters)
+      if (options?.orderBy) {
+        const [orderKey, orderValue] = Object.entries(options.orderBy)[0] as [string, any]
+        query = query.order(orderKey, { ascending: String(orderValue).toLowerCase() === 'asc' })
+      }
+      if (options?.take !== undefined && options?.skip !== undefined) {
+        query = query.range(options.skip, options.skip + options.take - 1)
+      } else if (options?.take !== undefined) {
+        query = query.limit(options.take)
+      }
+      const { data, error } = await query
+      if (!error && data) {
+        return data as T[]
+      }
+    }
+    return []
+  }
+
+  private async countWithSupabase(collection: string, filters?: any): Promise<number> {
+    if (!supabaseAdmin) return 0
+    const tableCandidates = this.getSupabaseTableCandidates(collection)
+    for (const tableName of tableCandidates) {
+      let query: any = supabaseAdmin.from(tableName).select('*', { count: 'exact', head: true })
+      query = this.applySupabaseFilters(query, filters)
+      const { count, error } = await query
+      if (!error && typeof count === 'number') {
+        return count
+      }
+    }
+    return 0
+  }
+
+  private getTableNameMap(): Record<string, string> {
+    return {
+      users: 'User',
+      properties: 'Property',
+      applications: 'Application',
+      leases: 'Lease',
+      payments: 'Payment',
+      deposits: 'Deposit',
+      disputes: 'Dispute',
+      messages: 'Message',
+      savedProperties: 'SavedProperty',
+      notifications: 'Notification',
+      events: 'Event',
+      agentProfiles: 'AgentProfile',
+      tenantProfiles: 'TenantProfile',
+      landlordProfiles: 'LandlordProfile',
+    }
+  }
+
+  private async resolveTableMeta(collection: string): Promise<{ tableName: string; columns: Set<string>; columnTypes: Map<string, string> } | null> {
+    const tableNameMap = this.getTableNameMap()
+    const canonicalName = tableNameMap[collection]
+    const candidates = Array.from(
+      new Set([
+        ...(canonicalName ? [canonicalName, canonicalName.toLowerCase()] : []),
+        ...this.getSupabaseTableCandidates(collection),
+      ])
+    )
+
+    for (const candidate of candidates) {
+      const tableRows = await prisma.$queryRawUnsafe(
+        `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name ILIKE $1 LIMIT 1`,
+        candidate
+      ) as any[]
+      const tableName = tableRows?.[0]?.table_name
+      if (!tableName) continue
+      const columnsResult = await prisma.$queryRawUnsafe(
+        `SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1`,
+        tableName
+      ) as any[]
+      
+      const columns = new Set<string>()
+      const columnTypes = new Map<string, string>()
+      
+      if (columnsResult && Array.isArray(columnsResult)) {
+        columnsResult.forEach((col: any) => {
+          const name = String(col.column_name)
+          columns.add(name)
+          columnTypes.set(name, String(col.data_type).toLowerCase())
+        })
+      }
+
+      if (columns.size > 0) {
+        return { tableName, columns, columnTypes }
+      }
+    }
+
+    return null
+  }
+
   async findUserByEmail(email: string): Promise<UnifiedUser | null> {
     const normalizedEmail = email?.trim()
     const whereEmail = normalizedEmail
@@ -115,7 +307,7 @@ export class SupabaseAdapter implements DatabaseAdapter {
           if (directUnreachable) {
             console.warn('[SupabaseAdapter] Direct DB unreachable, falling back to pooler:', directErr?.message)
             // 延长 Pooler 重试超时到 60s (原 20s)，适应国内网络
-            const user = await withPrismaRetry(query, 3, 60000)
+            const user = await withPrismaRetry(query, 3, 20000)
             if (!user) return null
             return this.mapPrismaUserToUnified(user)
           }
@@ -123,32 +315,18 @@ export class SupabaseAdapter implements DatabaseAdapter {
         }
       }
       // 延长默认重试超时到 60s
-      const user = await withPrismaRetry(query, 3, 60000)
+      const user = await withPrismaRetry(query, 3, 20000)
       if (!user) return null
       return this.mapPrismaUserToUnified(user)
     } catch (error: any) {
       const errorMsg = String(error?.message || '')
       const lower = errorMsg.toLowerCase()
       console.error('[SupabaseAdapter] 查询用户失败:', { email, error: errorMsg, code: error?.code })
-      const isConnectionError =
-        lower.includes("can't reach database server") ||
-        lower.includes('can\\u2019t reach database server') ||
-        lower.includes('maxclients') ||
-        lower.includes('max clients reached') ||
-        lower.includes('pool_size') ||
-        lower.includes('check out') ||
-        lower.includes("can't reach") ||
-        lower.includes('connection') ||
-        lower.includes('timeout') ||
-        lower.includes('pooler') ||
-        lower.includes('pool') ||
-        lower.includes('P1001') ||
-        lower.includes('P1017') ||
-        lower.includes('P1000') ||
-        error?.code === 'P1001' ||
-        error?.code === 'P1017' ||
-        error?.code === 'P1000'
-      if (isConnectionError) {
+      if (this.isConnectionError(error)) {
+        const users = await this.queryWithSupabase<any>('users', { email: { equals: normalizedEmail } }, { take: 1 })
+        if (users.length > 0) {
+          return this.mapPrismaUserToUnified(users[0])
+        }
         throw new Error('Database connection failed, please try again later')
       }
       throw error
@@ -190,7 +368,7 @@ export class SupabaseAdapter implements DatabaseAdapter {
           if (directUnreachable) {
             console.warn('[SupabaseAdapter] Direct DB unreachable, falling back to pooler:', directErr?.message)
             // 延长 Pooler 重试超时到 60s
-            const user = await withPrismaRetry(query, 3, 60000)
+            const user = await withPrismaRetry(query, 3, 20000)
             if (!user) return null
             return this.mapPrismaUserToUnified(user)
           }
@@ -198,29 +376,18 @@ export class SupabaseAdapter implements DatabaseAdapter {
         }
       }
       // 延长默认重试超时到 60s
-      const user = await withPrismaRetry(query, 3, 60000)
+      const user = await withPrismaRetry(query, 3, 20000)
       if (!user) return null
       return this.mapPrismaUserToUnified(user)
     } catch (error: any) {
       const errorMsg = String(error?.message || '')
       const lower = errorMsg.toLowerCase()
       console.error('[SupabaseAdapter] 查询用户失败:', { id, error: errorMsg, code: error?.code })
-      const isConnectionError =
-        lower.includes("can't reach database server") ||
-        lower.includes('can\\u2019t reach database server') ||
-        lower.includes('maxclients') ||
-        lower.includes('max clients reached') ||
-        lower.includes('pool_size') ||
-        lower.includes('check out') ||
-        lower.includes("can't reach") ||
-        lower.includes('connection') ||
-        lower.includes('timeout') ||
-        lower.includes('pooler') ||
-        lower.includes('pool') ||
-        lower.includes('P1001') ||
-        lower.includes('P1017') ||
-        lower.includes('P1000')
-      if (isConnectionError) {
+      if (this.isConnectionError(error)) {
+        const users = await this.queryWithSupabase<any>('users', { id: { equals: id } }, { take: 1 })
+        if (users.length > 0) {
+          return this.mapPrismaUserToUnified(users[0])
+        }
         throw new Error('Database connection failed, please try again later')
       }
       throw error
@@ -275,7 +442,7 @@ export class SupabaseAdapter implements DatabaseAdapter {
     })
 
     try {
-      const user = await withPrismaRetry(query, 3, 20000) // 20s 超时，重试 3 次
+      const user = await withPrismaRetry(query, 3, 20000)
       
       // 如果有 representedById，单独更新（因为 Prisma Client 可能未包含该字段）
       if (data.representedById) {
@@ -432,22 +599,7 @@ export class SupabaseAdapter implements DatabaseAdapter {
       'landlordProfiles': prisma.landlordProfile,
     }
     
-    const tableNameMap: Record<string, string> = {
-      users: 'User',
-      properties: 'Property',
-      applications: 'Application',
-      leases: 'Lease',
-      payments: 'Payment',
-      deposits: 'Deposit',
-      disputes: 'Dispute',
-      messages: 'Message',
-      savedProperties: 'SavedProperty',
-      notifications: 'Notification',
-      events: 'Event',
-      agentProfiles: 'AgentProfile',
-      tenantProfiles: 'TenantProfile',
-      landlordProfiles: 'LandlordProfile',
-    }
+    const tableNameMap = this.getTableNameMap()
     const model = modelMap[collection]
     if (!model) {
       // 如果 Events 表不存在，使用原始 SQL 查询（降级方案）
@@ -494,24 +646,15 @@ export class SupabaseAdapter implements DatabaseAdapter {
     }
 
     const runRawQuery = async () => {
-      const tableName = tableNameMap[collection]
-      if (!tableName) {
+      const tableMeta = await this.resolveTableMeta(collection)
+      if (!tableMeta) {
         throw new Error(`Collection ${collection} not found in Prisma schema`)
       }
-      const columnsResult: any[] = await prisma.$queryRawUnsafe(
-        `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1`,
-        tableName
-      )
-      const fallbackColumns = columnsResult.length
-        ? columnsResult
-        : (await prisma.$queryRawUnsafe(
-            `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1`,
-            tableName.toLowerCase()
-          ) as any[])
-      const actualTableName = columnsResult.length ? tableName : tableName.toLowerCase()
-      const existingColumns = new Set(
-        (fallbackColumns || []).map((col: any) => String(col.column_name))
-      )
+      const actualTableName = tableMeta.tableName
+      const existingColumns = tableMeta.columns
+      if (existingColumns.size === 0) {
+        return []
+      }
       const selectableColumns = Array.from(existingColumns)
         .map((col) => `"${actualTableName}"."${col}"`) // Qualify column names
         .join(', ')
@@ -630,7 +773,11 @@ export class SupabaseAdapter implements DatabaseAdapter {
     }
 
     try {
-      const results = await model.findMany(queryOptions) as T[]
+      const results = await withPrismaRetry(
+        () => model.findMany(queryOptions) as Promise<T[]>,
+        1,
+        4000
+      )
       if (collection === 'users' && results.length > 0) {
         const hasRepId = results.some((r: any) =>
           r?.representedById !== undefined ||
@@ -650,6 +797,9 @@ export class SupabaseAdapter implements DatabaseAdapter {
       return results
     } catch (error: any) {
       console.warn(`[SupabaseAdapter] findMany failed for ${collection}, falling back to raw SQL:`, error.message)
+      if (this.isConnectionError(error)) {
+        return await this.queryWithSupabase<T>(collection, filters, options)
+      }
       const errorMsg = String(error?.message || '')
       const lower = errorMsg.toLowerCase()
       const isColumnMissing =
@@ -745,7 +895,28 @@ export class SupabaseAdapter implements DatabaseAdapter {
     const model = modelMap[collection]
     if (!model) return null
     
-    return model.findUnique({ where: { id } }) as Promise<T | null>
+    try {
+      return await withPrismaRetry(
+        () => model.findUnique({ where: { id } }) as Promise<T | null>,
+        3,
+        15000
+      )
+    } catch (error: any) {
+      if (this.isConnectionError(error)) {
+        const results = await this.queryWithSupabase<T>(collection, { id: { equals: id } }, { take: 1 })
+        return results[0] || null
+      }
+      if (this.isSchemaMismatchError(error)) {
+        const tableMeta = await this.resolveTableMeta(collection)
+        if (!tableMeta || !tableMeta.columns.has('id')) return null
+        const rows = await prisma.$queryRawUnsafe(
+          `SELECT * FROM "${tableMeta.tableName}" WHERE "id" = $1 LIMIT 1`,
+          id
+        ) as any[]
+        return (rows?.[0] || null) as T | null
+      }
+      throw error
+    }
   }
 
   async create<T = any>(collection: string, data: any): Promise<T> {
@@ -789,7 +960,64 @@ export class SupabaseAdapter implements DatabaseAdapter {
       throw new Error(`Collection ${collection} not found in Prisma schema`)
     }
     
-    return model.create({ data }) as Promise<T>
+    try {
+      return await withPrismaRetry(
+        () => model.create({ data }) as Promise<T>,
+        3,
+        20000
+      )
+    } catch (error: any) {
+      if (!this.isSchemaMismatchError(error)) {
+        throw error
+      }
+      const tableMeta = await this.resolveTableMeta(collection)
+      if (!tableMeta || tableMeta.columns.size === 0) {
+        throw error
+      }
+      const payload: Record<string, any> = { ...(data || {}) }
+      if (tableMeta.columns.has('id') && !payload.id) {
+        payload.id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+      }
+      if (tableMeta.columns.has('createdAt') && payload.createdAt === undefined) {
+        payload.createdAt = new Date()
+      }
+      if (tableMeta.columns.has('updatedAt') && payload.updatedAt === undefined) {
+        payload.updatedAt = new Date()
+      }
+      const entries = Object.entries(payload).filter(([key, value]) => tableMeta.columns.has(key) && value !== undefined)
+      if (entries.length === 0) {
+        throw error
+      }
+      const columns = entries.map(([key]) => `"${key}"`).join(', ')
+      const placeholders = entries.map(([key], idx) => {
+          const type = tableMeta.columnTypes.get(key)
+          if (type === 'json' || type === 'jsonb') {
+            return `$${idx + 1}::jsonb`
+          }
+          if (type && (type.includes('timestamp') || type.includes('date'))) {
+            return `$${idx + 1}::timestamp`
+          }
+          return `$${idx + 1}`
+        }).join(', ')
+      const values = entries.map(([key, value]) => {
+        const type = tableMeta.columnTypes.get(key)
+        if ((type === 'json' || type === 'jsonb') && typeof value === 'object' && value !== null) {
+          return JSON.stringify(value)
+        }
+        if (value instanceof Date) {
+          return value.toISOString()
+        }
+        return value
+      })
+      const rows = await prisma.$queryRawUnsafe(
+        `INSERT INTO "${tableMeta.tableName}" (${columns}) VALUES (${placeholders}) RETURNING *`,
+        ...values
+      ) as any[]
+      if (!rows?.[0]) {
+        throw error
+      }
+      return rows[0] as T
+    }
   }
 
   async update<T = any>(collection: string, id: string, data: any): Promise<T> {
@@ -815,7 +1043,66 @@ export class SupabaseAdapter implements DatabaseAdapter {
       throw new Error(`Collection ${collection} not found in Prisma schema`)
     }
     
-    return model.update({ where: { id }, data }) as Promise<T>
+    try {
+      return await withPrismaRetry(
+        () => model.update({ where: { id }, data }) as Promise<T>,
+        3,
+        20000
+      )
+    } catch (error: any) {
+      if (!this.isSchemaMismatchError(error)) {
+        throw error
+      }
+      const tableMeta = await this.resolveTableMeta(collection)
+      if (!tableMeta || !tableMeta.columns.has('id')) {
+        throw error
+      }
+      const payload: Record<string, any> = { ...(data || {}) }
+      if (tableMeta.columns.has('updatedAt') && payload.updatedAt === undefined) {
+        payload.updatedAt = new Date()
+      }
+      const entries = Object.entries(payload)
+        .filter(([key, value]) => key !== 'id' && tableMeta.columns.has(key) && value !== undefined)
+      if (entries.length === 0) {
+        const rows = await prisma.$queryRawUnsafe(
+          `SELECT * FROM "${tableMeta.tableName}" WHERE "id" = $1 LIMIT 1`,
+          id
+        ) as any[]
+        if (!rows?.[0]) {
+          throw error
+        }
+        return rows[0] as T
+      }
+      const setClauses = entries.map(([key], idx) => {
+        const type = tableMeta.columnTypes.get(key)
+        if (type === 'json' || type === 'jsonb') {
+          return `"${key}" = $${idx + 1}::jsonb`
+        }
+        if (type && (type.includes('timestamp') || type.includes('date'))) {
+          return `"${key}" = $${idx + 1}::timestamp`
+        }
+        return `"${key}" = $${idx + 1}`
+      }).join(', ')
+      const values = entries.map(([key, value]) => {
+        const type = tableMeta.columnTypes.get(key)
+        if ((type === 'json' || type === 'jsonb') && typeof value === 'object' && value !== null) {
+          return JSON.stringify(value)
+        }
+        if (value instanceof Date) {
+          return value.toISOString()
+        }
+        return value
+      })
+      const rows = await prisma.$queryRawUnsafe(
+        `UPDATE "${tableMeta.tableName}" SET ${setClauses} WHERE "id" = $${entries.length + 1} RETURNING *`,
+        ...values,
+        id
+      ) as any[]
+      if (!rows?.[0]) {
+        throw error
+      }
+      return rows[0] as T
+    }
   }
 
   async delete(collection: string, id: string): Promise<boolean> {
@@ -874,7 +1161,52 @@ export class SupabaseAdapter implements DatabaseAdapter {
     }
     
     const where = filters ? this.normalizeFilters(filters) : {}
-    return model.count({ where })
+    try {
+      return await model.count({ where })
+    } catch (error: any) {
+      if (this.isConnectionError(error)) {
+        return await this.countWithSupabase(collection, filters)
+      }
+      if (this.isSchemaMismatchError(error)) {
+        const tableMeta = await this.resolveTableMeta(collection)
+        if (!tableMeta) {
+          return await this.countWithSupabase(collection, filters)
+        }
+        const normalizedFilters = filters ? this.normalizeFilters(filters) : {}
+        const conditions: string[] = []
+        const values: any[] = []
+        let index = 1
+        Object.keys(normalizedFilters || {}).forEach((key) => {
+          if (!tableMeta.columns.has(key)) return
+          const value = normalizedFilters[key]
+          if (
+            value &&
+            typeof value === 'object' &&
+            !Array.isArray(value) &&
+            !(value instanceof Date)
+          ) {
+            if (value.equals !== undefined) {
+              conditions.push(`"${key}" = $${index}`)
+              values.push(value.equals)
+              index += 1
+            }
+            return
+          }
+          if (value !== undefined) {
+            conditions.push(`"${key}" = $${index}`)
+            values.push(value)
+            index += 1
+          }
+        })
+        const whereClause = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+        const rows = await prisma.$queryRawUnsafe(
+          `SELECT COUNT(*)::int as count FROM "${tableMeta.tableName}" ${whereClause}`,
+          ...values
+        ) as any[]
+        return Number(rows?.[0]?.count || 0)
+      }
+      throw error
+    }
   }
 
   private mapPrismaUserToUnified(user: any): UnifiedUser {

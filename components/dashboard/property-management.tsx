@@ -16,6 +16,18 @@ export function PropertyManagement() {
   const tCommon = useTranslations('common')
   const [properties, setProperties] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 9000) => {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  }
 
   useEffect(() => {
     fetchProperties()
@@ -30,9 +42,29 @@ export function PropertyManagement() {
         setLoading(false)
         return
       }
+      const userStr = localStorage.getItem("user")
+      let parsedUser: any = null
+      if (userStr) {
+        try {
+          parsedUser = JSON.parse(userStr)
+        } catch {}
+      }
+      const headerBag: Record<string, string> = {
+        Authorization: `Bearer ${token}`,
+      }
+      const hintedUserId = parsedUser?.id || parsedUser?.userId || parsedUser?._id
+      const hintedUserEmail = parsedUser?.email
+      if (hintedUserId) {
+        headerBag["x-user-id"] = String(hintedUserId)
+      }
+      if (hintedUserEmail) {
+        headerBag["x-user-email"] = String(hintedUserEmail)
+      }
 
-      const response = await fetch("/api/properties", {
-        headers: { Authorization: `Bearer ${token}` },
+      const response = await fetchWithTimeout("/api/properties", {
+        headers: headerBag,
+        credentials: "include",
+        cache: "no-store",
       })
 
       if (!response.ok) {
@@ -45,20 +77,20 @@ export function PropertyManagement() {
 
       const data = await response.json()
       console.log("Properties data received:", data)
-      let propertiesSource = data.properties || []
+      let propertiesSource = data.properties || data.data?.properties || data.data || []
       if (propertiesSource.length === 0) {
-        const userStr = localStorage.getItem("user")
-        if (userStr) {
+        if (parsedUser) {
           try {
-            const parsedUser = JSON.parse(userStr)
             const fallbackLandlordId = parsedUser?.id || parsedUser?.userId
             if (fallbackLandlordId) {
-              const fallbackRes = await fetch(`/api/properties?landlordId=${fallbackLandlordId}`, {
-                headers: { Authorization: `Bearer ${token}` },
+              const fallbackRes = await fetchWithTimeout(`/api/properties?landlordId=${fallbackLandlordId}`, {
+                headers: headerBag,
+                credentials: "include",
+                cache: "no-store",
               })
               if (fallbackRes.ok) {
                 const fallbackData = await fallbackRes.json().catch(() => ({}))
-                propertiesSource = fallbackData.properties || []
+                propertiesSource = fallbackData.properties || fallbackData.data?.properties || fallbackData.data || []
               }
             }
           } catch {}

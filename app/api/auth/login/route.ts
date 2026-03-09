@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { loginWithJWT, loginWithSupabase } from '@/lib/auth-adapter'
-import { prisma } from '@/lib/db'
+import { login, loginWithJWT } from '@/lib/auth-adapter'
 
 const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> => {
   return await Promise.race([
@@ -13,7 +12,7 @@ const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, timeoutMe
 
 const TOTAL_LOGIN_MS = 40000
 const JWT_TIMEOUT_MS_CHINA = 25000
-const JWT_TIMEOUT_MS_GLOBAL = 35000
+const JWT_TIMEOUT_MS_GLOBAL = 15000
 
 export async function POST(request: NextRequest) {
   const requestId = Math.random().toString(36).substring(7)
@@ -39,7 +38,6 @@ export async function POST(request: NextRequest) {
     }
 
     const jwtTimeoutMs = isChina ? JWT_TIMEOUT_MS_CHINA : JWT_TIMEOUT_MS_GLOBAL
-    const jwtFallbackTimeoutMs = 15000
     console.log(`[${requestId}] Timeout Limit: ${jwtTimeoutMs}ms`)
     
     const start = Date.now()
@@ -57,8 +55,8 @@ export async function POST(request: NextRequest) {
         )
       } else {
         result = await withTimeout(
-          loginWithSupabase(email, password),
-          25000,
+          login(email, password),
+          18000,
           timeoutMessage
         )
       }

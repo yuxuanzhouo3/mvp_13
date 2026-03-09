@@ -1,11 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-adapter'
-import { prisma } from '@/lib/db'
 import { getDatabaseAdapter, getAppRegion } from '@/lib/db-adapter'
 import { createSupabaseServerClient, supabaseAdmin } from '@/lib/supabase'
 
 export async function GET(request: NextRequest) {
   try {
+    const timeoutMarker = Symbol('tenant-leases-timeout')
+    const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof timeoutMarker> => {
+      return await Promise.race([
+        promise,
+        new Promise<typeof timeoutMarker>((resolve) => setTimeout(() => resolve(timeoutMarker), timeoutMs))
+      ])
+    }
     const user = await getCurrentUser(request)
     if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -19,20 +25,27 @@ export async function GET(request: NextRequest) {
     let tokenUserId: string | null = null
     if (accessToken && supabaseClient) {
       try {
-        const { data } = await supabaseClient.auth.getUser(accessToken)
-        if (data?.user?.id) tokenUserId = String(data.user.id)
+        const tokenResult = await withTimeout(supabaseClient.auth.getUser(accessToken), 2500)
+        if (tokenResult !== timeoutMarker && (tokenResult as any)?.data?.user?.id) tokenUserId = String((tokenResult as any).data.user.id)
       } catch {}
     }
     if (!tokenUserId && accessToken && supabaseAdmin) {
       try {
-        const { data } = await supabaseAdmin.auth.getUser(accessToken)
-        if (data?.user?.id) tokenUserId = String(data.user.id)
+        const tokenResult = await withTimeout(supabaseAdmin.auth.getUser(accessToken), 2500)
+        if (tokenResult !== timeoutMarker && (tokenResult as any)?.data?.user?.id) tokenUserId = String((tokenResult as any).data.user.id)
       } catch {}
     }
     const db = getDatabaseAdapter()
     let resolvedUserId = user.id
     try {
-      const dbUser = (await db.findUserById(user.id)) || (user.email ? await db.findUserByEmail(user.email) : null)
+      const byIdResult = await withTimeout(db.findUserById(user.id), 1200)
+      const byIdUser = byIdResult === timeoutMarker ? null : byIdResult
+      let byEmailUser: any = null
+      if (!byIdUser && user.email) {
+        const byEmailResult = await withTimeout(db.findUserByEmail(user.email), 1200)
+        byEmailUser = byEmailResult === timeoutMarker ? null : byEmailResult
+      }
+      const dbUser = byIdUser || byEmailUser
       if (dbUser?.id) resolvedUserId = dbUser.id
     } catch {}
     if (tokenUserId) resolvedUserId = tokenUserId
@@ -115,91 +128,50 @@ export async function GET(request: NextRequest) {
     let leases = []
 
     if (region === 'global') {
-      try {
-        leases = await prisma.lease.findMany({
-          where: { tenantId: user.id },
-          include: {
-            property: {
-              select: {
-                id: true,
-                title: true,
-                address: true,
-                city: true,
-                state: true,
-                images: true
-              }
-            },
-            listingAgent: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                phone: true
-              }
-            }
-          },
-          orderBy: { createdAt: 'desc' }
-        })
-      } catch (error) {
-        if (supabaseReaders.length === 0) {
-          throw error
-        }
-        const rawLeases = await fetchLeasesFromSupabase()
-        const propertyCache = new Map<string, any>()
-        const userCache = new Map<string, any>()
-        const getProperty = async (propertyId: string) => {
-          if (!propertyId) return null
-          if (propertyCache.has(propertyId)) return propertyCache.get(propertyId)
-          const prop = await fetchPropertyFromSupabase(propertyId)
-          propertyCache.set(propertyId, prop)
-          return prop
-        }
-        const getUser = async (userId: string) => {
-          if (!userId) return null
-          if (userCache.has(userId)) return userCache.get(userId)
-          const u = await fetchUserFromSupabase(userId)
-          userCache.set(userId, u)
-          return u
-        }
-        const normalizeLease = (lease: any) => ({
+      const [byTenantResult, byTenantSnakeResult] = await Promise.all([
+        withTimeout(db.query('leases', { tenantId: Array.from(tenantIdSet).length === 1 ? Array.from(tenantIdSet)[0] : { in: Array.from(tenantIdSet) } }), 3000),
+        withTimeout(db.query('leases', { tenant_id: Array.from(tenantIdSet).length === 1 ? Array.from(tenantIdSet)[0] : { in: Array.from(tenantIdSet) } }), 3000)
+      ])
+      const byTenant = byTenantResult === timeoutMarker ? [] : (Array.isArray(byTenantResult) ? byTenantResult : [])
+      const byTenantSnake = byTenantSnakeResult === timeoutMarker ? [] : (Array.isArray(byTenantSnakeResult) ? byTenantSnakeResult : [])
+      const map = new Map<string, any>()
+      ;[...byTenant, ...byTenantSnake].forEach((lease: any) => {
+        const key = String(lease.id || lease._id || lease.leaseId || lease.lease_id || `${lease.tenantId || lease.tenant_id}_${lease.propertyId || lease.property_id}`)
+        if (!map.has(key)) map.set(key, lease)
+      })
+      const rawLeases = Array.from(map.values())
+      leases = await Promise.all(rawLeases.map(async (lease: any) => {
+        const propertyId = String(lease.propertyId || lease.property_id || '').trim()
+        const listingAgentId = String(lease.listingAgentId || lease.listing_agent_id || '').trim()
+        const [propertyResult, agentResult] = await Promise.all([
+          propertyId ? withTimeout(db.findById('properties', propertyId), 1200) : Promise.resolve(null),
+          listingAgentId ? withTimeout(db.findUserById(listingAgentId), 1200) : Promise.resolve(null)
+        ])
+        const property = propertyResult === timeoutMarker ? null : propertyResult
+        const listingAgent = agentResult === timeoutMarker ? null : agentResult
+        return {
           ...lease,
           id: lease.id ?? lease._id ?? lease.leaseId ?? lease.lease_id,
           tenantId: lease.tenantId ?? lease.tenant_id,
           propertyId: lease.propertyId ?? lease.property_id,
           listingAgentId: lease.listingAgentId ?? lease.listing_agent_id,
-          createdAt: lease.createdAt ?? lease.created_at
-        })
-        const filtered = rawLeases
-          .map(normalizeLease)
-          .filter((l: any) => tenantIdSet.has(String(l.tenantId || '')))
-          .sort((a: any, b: any) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
-        leases = await Promise.all(filtered.map(async (lease: any) => {
-          const propertyId = String(lease.propertyId || '').trim()
-          const listingAgentId = String(lease.listingAgentId || '').trim()
-          const property = propertyId ? await getProperty(propertyId) : null
-          const listingAgent = listingAgentId ? await getUser(listingAgentId) : null
-          const images = Array.isArray(property?.images)
-            ? property.images
-            : (typeof property?.images === 'string' ? JSON.parse(property.images) : [])
-          return {
-            ...lease,
-            property: property ? {
-              id: property.id || property._id || property.propertyId || property.property_id,
-              title: property.title,
-              address: property.address,
-              city: property.city,
-              state: property.state,
-              images
-            } : null,
-            listingAgent: listingAgent ? {
-              id: listingAgent.id,
-              name: listingAgent.name,
-              email: listingAgent.email,
-              phone: listingAgent.phone
-            } : null
-          }
-        }))
-      }
+          createdAt: lease.createdAt ?? lease.created_at,
+          property: property ? {
+            id: property.id,
+            title: property.title,
+            address: property.address,
+            city: property.city,
+            state: property.state,
+            images: property.images
+          } : null,
+          listingAgent: listingAgent ? {
+            id: listingAgent.id,
+            name: listingAgent.name,
+            email: listingAgent.email,
+            phone: listingAgent.phone
+          } : null
+        }
+      }))
     } else {
       // 获取所有租赁记录，然后过滤（因为CloudBase可能不支持复杂查询）
       let allLeases = await db.query('leases', {})

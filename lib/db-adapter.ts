@@ -666,6 +666,12 @@ export class SupabaseAdapter implements DatabaseAdapter {
         if (key.startsWith('_')) {
           return
         }
+        // Skip keys that are not columns in the table (e.g., OR, AND, or unknown columns)
+        // This prevents SQL injection and "column does not exist" errors in raw queries
+        if (!existingColumns.has(key)) {
+          return
+        }
+
         const value = normalizedFilters[key]
         if (
           value &&

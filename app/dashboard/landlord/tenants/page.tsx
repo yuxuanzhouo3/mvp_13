@@ -38,6 +38,11 @@ export default function TenantsPage() {
     fetchTenants()
   }, [])
 
+  const cleanText = (text: string) => {
+    if (!text) return ''
+    return text.replace(/^(dashboard\.|property\.|common\.|application\.|payment\.)/i, '')
+  }
+
   const fetchTenants = async () => {
     try {
       const token = localStorage.getItem("auth-token")
@@ -106,7 +111,7 @@ export default function TenantsPage() {
                     {tenant.propertyName && (
                       <div className="flex items-center text-sm">
                         <Home className="h-4 w-4 mr-1" />
-                        {tenant.propertyName}
+                        {cleanText(tenant.propertyName)}
                       </div>
                     )}
                     {tenant.leaseStart && tenant.leaseEnd && (
@@ -120,13 +125,23 @@ export default function TenantsPage() {
                       </div>
                     )}
                     <Badge variant={tenant.source === 'lease' ? 'default' : 'secondary'} className="mt-1">
-                      {tenant.source === 'lease' ? t('activeLease') : t('approved')}
+                      {tenant.source === 'lease' ? t('activeLease') : cleanText(t('approved'))}
                     </Badge>
                   </div>
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => router.push(`/dashboard/landlord/messages?userId=${tenant.id}`)}
+                    onClick={() => {
+                      if (tenant.id) {
+                        router.push(`/dashboard/landlord/messages?userId=${tenant.id}`)
+                      } else {
+                        toast({
+                          title: tCommon('error'),
+                          description: "Invalid tenant ID",
+                          variant: "destructive",
+                        })
+                      }
+                    }}
                   >
                     <MessageSquare className="h-4 w-4 mr-1" />
                     {t('messages')}

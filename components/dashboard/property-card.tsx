@@ -47,6 +47,10 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
       ''
   )
 
+  const cleanText = (text: string) => {
+    return text?.replace(/^(property\.|dashboard\.|common\.|application\.|payment\.)/i, '') || text
+  }
+
   useEffect(() => {
     // Check if property is saved
     const checkSaved = async () => {
@@ -213,14 +217,14 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
         )}
         {property.status && (
           <Badge className="absolute top-2 left-2" variant={property.status === "available" ? "default" : "secondary"}>
-            {tProperty(property.status?.toLowerCase()) || property.status}
+            {cleanText(tProperty(cleanText(property.status?.toLowerCase())) || cleanText(property.status))}
           </Badge>
         )}
       </div>
 
       <CardContent className="p-4 flex flex-col h-[200px]">
         <div className="flex items-start justify-between mb-2">
-          <h3 className="font-semibold text-lg line-clamp-1 flex-1 mr-2" title={property.title}>{property.title}</h3>
+          <h3 className="font-semibold text-lg line-clamp-1 flex-1 mr-2" title={cleanText(property.title)}>{cleanText(property.title)}</h3>
           <span className="text-xl font-bold text-primary whitespace-nowrap">
             {currencySymbol}{property.price.toLocaleString()}
             <span className="text-sm font-normal text-muted-foreground">
@@ -231,21 +235,21 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
 
         <div className="flex items-center text-muted-foreground mb-3">
           <MapPin className="h-4 w-4 mr-1 flex-shrink-0" />
-          <span className="text-sm line-clamp-1" title={property.location}>{property.location}</span>
+          <span className="text-sm line-clamp-1" title={cleanText(property.location)}>{cleanText(property.location)}</span>
         </div>
 
         <div className="flex items-center space-x-4 text-sm text-muted-foreground mb-4">
           <div className="flex items-center whitespace-nowrap">
             <Bed className="h-4 w-4 mr-1" />
-            {property.beds} {tProperty('bedrooms')}
+            {property.beds} {cleanText(tProperty('bedrooms'))}
           </div>
           <div className="flex items-center whitespace-nowrap">
             <Bath className="h-4 w-4 mr-1" />
-            {property.baths} {tProperty('bathrooms')}
+            {property.baths} {cleanText(tProperty('bathrooms'))}
           </div>
           <div className="flex items-center whitespace-nowrap">
             <Square className="h-4 w-4 mr-1" />
-            {property.sqft} {tProperty('sqft') || tProperty('buildingArea')}
+            {property.sqft} {cleanText(tProperty('sqft') || tProperty('buildingArea'))}
           </div>
         </div>
 
@@ -255,7 +259,7 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
             <div className="flex space-x-2">
               <Button size="sm" variant="outline" className="flex-1 bg-transparent" onClick={handleViewDetails}>
                 <Eye className="mr-2 h-4 w-4" />
-                {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '查看详情' : (tCommon('view') || t('viewDetails'))}
+                {cleanText(process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '查看详情' : (tCommon('view') || t('viewDetails')))}
               </Button>
               <Button 
                 size="sm" 
@@ -317,7 +321,7 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
                 }}
               >
                 <MessageSquare className="mr-2 h-4 w-4" />
-                {t('messages')}
+                {cleanText(t('messages'))}
               </Button>
             </div>
           ) : (
@@ -326,7 +330,7 @@ export function PropertyCard({ property, showSaveButton = true, showManagementAc
               e.preventDefault()
               handleViewDetails(e)
             }}>
-              {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '查看详情' : (t('viewDetails') || tCommon('view'))}
+              {cleanText(process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '查看详情' : (t('viewDetails') || tCommon('view')))}
             </Button>
           )}
         </div>

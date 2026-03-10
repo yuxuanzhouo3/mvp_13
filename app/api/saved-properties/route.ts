@@ -78,6 +78,15 @@ export async function GET(request: NextRequest) {
               .eq(field, resolvedUserId)
             if (!error && data?.length) return data
           }
+          if (user.email) {
+             const { data, error } = await client
+              .from(tableName)
+              .select('*')
+              .ilike('user_email', user.email) // Common field convention
+             if (!error && data?.length) return data
+             
+             // Try fetching by user relation if possible (complex in Supabase via REST, skip for now)
+          }
         }
       }
       for (const client of supabaseReaders) {

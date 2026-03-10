@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createNotification } from '@/lib/notification-service'
 import { getDatabaseAdapter } from '@/lib/db-adapter'
 import crypto from 'crypto'
 
@@ -141,24 +142,21 @@ export async function POST(request: NextRequest) {
             const isChina = region === 'china'
             
             // 创建通知
-            const notificationData = {
+            await createNotification({
               userId: property.landlordId,
               type: 'SYSTEM',
               title: isChina ? '租客已支付' : 'Tenant Payment Received',
               message: isChina 
                 ? `租客已支付租金 ${totalAmount} 元，资金已进入托管账户。`
                 : `Tenant has paid rent ${totalAmount} yuan, funds are now in escrow.`,
-              isRead: false,
               link: `/dashboard/landlord`,
-              metadata: JSON.stringify({
+              metadata: {
                 paymentId: paymentId,
                 propertyId: property.id,
                 amount: totalAmount,
                 type: 'PAYMENT_RECEIVED'
-              })
-            }
-            
-            await db.create('notifications', notificationData)
+              }
+            })
             
             console.log('Notification sent to landlord:', {
               landlordId: property.landlordId,

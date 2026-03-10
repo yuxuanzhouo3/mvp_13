@@ -379,21 +379,56 @@ export async function GET(request: NextRequest) {
               let query = client
                 .from(tableName)
                 .select('*')
-                .in(landlordField, landlordIdsForQuery)
                 .in(statusField, activeStatuses)
-              const { data, error } = await query
-              if (!error && data) {
-                activeLeases = data.map((lease: any) => ({
-                  id: getField(lease, ['id', '_id']),
-                  tenantId: getField(lease, ['tenantId', 'tenant_id']),
-                  propertyId: getField(lease, ['propertyId', 'property_id']),
-                  startDate: getField(lease, ['startDate', 'start_date']),
-                  endDate: getField(lease, ['endDate', 'end_date']),
-                  monthlyRent: lease.monthlyRent ?? lease.monthly_rent,
-                  status: lease.status,
-                  landlordId: getField(lease, ['landlordId', 'landlord_id'])
-                }))
-                break
+              
+              // Query by landlordId OR propertyId
+              // Supabase REST doesn't support OR across different fields easily in one go without raw query
+              // So we do two queries or use .or() syntax if supported and careful
+              
+              // Method 1: Fetch by landlordId
+              const { data: dataByLandlord, error: errorByLandlord } = await query
+                .in(landlordField, landlordIdsForQuery)
+                
+              // Method 2: Fetch by propertyId (if we have properties)
+               let dataByProperty: any[] = []
+               if (propertyIds.length > 0) {
+                  const pFields = ['propertyId', 'property_id']
+                  for (const pField of pFields) {
+                     const { data: d, error: e } = await client
+                         .from(tableName)
+                         .select('*')
+                         .in(statusField, activeStatuses)
+                         .in(pField, propertyIds)
+                     if (d) {
+                         dataByProperty = [...dataByProperty, ...d]
+                     }
+                  }
+               }
+
+               if (!errorByLandlord || dataByProperty.length > 0) {
+                const combined = [...(dataByLandlord || []), ...dataByProperty]
+                // Deduplicate
+                const seen = new Set()
+                const uniqueData = combined.filter(item => {
+                    const id = item.id || item._id
+                    if (seen.has(id)) return false
+                    seen.add(id)
+                    return true
+                })
+                
+                if (uniqueData.length > 0) {
+                    activeLeases = uniqueData.map((lease: any) => ({
+                      id: getField(lease, ['id', '_id']),
+                      tenantId: getField(lease, ['tenantId', 'tenant_id']),
+                      propertyId: getField(lease, ['propertyId', 'property_id']),
+                      startDate: getField(lease, ['startDate', 'start_date']),
+                      endDate: getField(lease, ['endDate', 'end_date']),
+                      monthlyRent: lease.monthlyRent ?? lease.monthly_rent,
+                      status: lease.status,
+                      landlordId: getField(lease, ['landlordId', 'landlord_id'])
+                    }))
+                    break
+                }
               }
             }
             if (activeLeases.length > 0) break
@@ -465,41 +500,43 @@ export async function GET(request: NextRequest) {
 
       const tenantsFromLeases = activeLeases.map((lease: any) => {
         const tenant = tenantMap.get(String(lease.tenantId))
-        if (!tenant) return null
+        // If tenant user is not found, still return partial info from lease
         const property = lease.propertyId ? propertyMap.get(String(lease.propertyId)) : null
         return {
           id: tenant?.id || lease.tenantId,
-          name: tenant?.name,
-          email: tenant?.email,
-          phone: tenant?.phone,
-          propertyId: property?.id,
-          propertyName: property?.title,
-          propertyAddress: property?.address,
+          name: tenant?.name || lease.tenantName || 'Unknown Tenant',
+          email: tenant?.email || lease.tenantEmail || '',
+          phone: tenant?.phone || lease.tenantPhone || '',
+          propertyId: property?.id || lease.propertyId,
+          propertyName: property?.title || 'Unknown Property',
+          propertyAddress: property?.address || '',
           leaseStart: lease.startDate,
           leaseEnd: lease.endDate,
           monthlyRent: lease.monthlyRent,
           status: lease.status,
+          source: 'lease'
         }
-      }).filter(Boolean)
+      })
 
       const tenantsFromApplications = approvedApplications.map((app: any) => {
         const tenant = tenantMap.get(String(app.tenantId))
-        if (!tenant) return null
+        // If tenant user is not found, still return partial info
         const property = app.propertyId ? propertyMap.get(String(app.propertyId)) : null
         return {
           id: tenant?.id || app.tenantId,
-          name: tenant?.name,
-          email: tenant?.email,
-          phone: tenant?.phone,
-          propertyId: property?.id,
-          propertyName: property?.title,
-          propertyAddress: property?.address,
+          name: tenant?.name || app.applicantName || 'Applicant',
+          email: tenant?.email || app.applicantEmail || '',
+          phone: tenant?.phone || app.applicantPhone || '',
+          propertyId: property?.id || app.propertyId,
+          propertyName: property?.title || 'Unknown Property',
+          propertyAddress: property?.address || '',
           leaseStart: null,
           leaseEnd: null,
-          monthlyRent: null,
-          status: 'APPROVED'
+          monthlyRent: app.monthlyIncome ? Math.round(app.monthlyIncome * 0.3) : null, // Estimate
+          status: 'APPROVED',
+          source: 'application'
         }
-      }).filter(Boolean)
+      })
 
       const combined = [...tenantsFromLeases, ...tenantsFromApplications]
       const uniqueTenants = new Map<string, any>()
@@ -538,19 +575,20 @@ export async function GET(request: NextRequest) {
             property = await effectiveDb.findById('properties', lease.propertyId)
           }
         }
-        if (!tenant) return null
+        // Relaxed check: return partial info if tenant user not found
         return {
           id: tenant?.id || lease.tenantId,
-          name: tenant?.name,
-          email: tenant?.email,
-          phone: tenant?.phone,
-          propertyId: property?.id,
-          propertyName: property?.title,
-          propertyAddress: property?.address,
+          name: tenant?.name || lease.tenantName || 'Unknown Tenant',
+          email: tenant?.email || lease.tenantEmail || '',
+          phone: tenant?.phone || lease.tenantPhone || '',
+          propertyId: property?.id || lease.propertyId,
+          propertyName: property?.title || 'Unknown Property',
+          propertyAddress: property?.address || '',
           leaseStart: lease.startDate,
           leaseEnd: lease.endDate,
           monthlyRent: lease.monthlyRent,
-          source: 'lease'
+          source: 'lease',
+          status: lease.status
         }
       })
     )
@@ -568,39 +606,41 @@ export async function GET(request: NextRequest) {
             where: { id: app.propertyId },
             select: { id: true, title: true, address: true }
           })) : null
-          if (!tenant) return null
+          // Relaxed check
           return {
             id: tenant?.id || app.tenantId,
-            name: tenant?.name,
-            email: tenant?.email,
-            phone: tenant?.phone,
+            name: tenant?.name || 'Applicant',
+            email: tenant?.email || '',
+            phone: tenant?.phone || '',
             propertyId: property?.id || app.propertyId,
-            propertyName: property?.title,
-            propertyAddress: property?.address,
+            propertyName: property?.title || 'Unknown Property',
+            propertyAddress: property?.address || '',
             applicationDate: app.appliedDate,
-            source: 'application'
+            source: 'application',
+            status: 'APPROVED'
           }
         })
-      )).filter(Boolean)
+      ))
     } else {
       tenantsFromApplications = (await Promise.all(
         approvedApplications.map(async (app: any) => {
           const tenant = await effectiveDb.findUserById(app.tenantId)
           const property = app.propertyId ? await effectiveDb.findById('properties', app.propertyId) : null
-          if (!tenant) return null
+          // Relaxed check
           return {
             id: tenant?.id || app.tenantId,
-            name: tenant?.name,
-            email: tenant?.email,
-            phone: tenant?.phone,
+            name: tenant?.name || 'Applicant',
+            email: tenant?.email || '',
+            phone: tenant?.phone || '',
             propertyId: property?.id || app.propertyId,
-            propertyName: property?.title,
-            propertyAddress: property?.address,
+            propertyName: property?.title || 'Unknown Property',
+            propertyAddress: property?.address || '',
             applicationDate: app.appliedDate,
-            source: 'application'
+            source: 'application',
+            status: 'APPROVED'
           }
         })
-      )).filter(Boolean)
+      ))
     }
 
     // Deduplicate by tenant ID
@@ -774,37 +814,39 @@ export async function GET(request: NextRequest) {
       const tenantsFromLeases = (activeLeases || []).map(normalizeLease).map((lease: any) => {
         const tenant = tenantMap.get(String(lease.tenantId))
         const property = propertyMap.get(String(lease.propertyId))
-        if (!tenant) return null
+        // Relaxed check
         return {
-          id: tenant.id,
-          name: tenant.name,
-          email: tenant.email,
-          phone: tenant.phone,
+          id: tenant?.id || lease.tenantId,
+          name: tenant?.name || 'Unknown Tenant',
+          email: tenant?.email || '',
+          phone: tenant?.phone || '',
           propertyId: property?.id,
-          propertyName: property?.title,
+          propertyName: property?.title || 'Unknown Property',
           propertyAddress: property?.address,
           leaseStart: lease.startDate,
           leaseEnd: lease.endDate,
           monthlyRent: lease.monthlyRent,
-          source: 'lease'
+          source: 'lease',
+          status: lease.status
         }
-      }).filter(Boolean)
+      })
       const tenantsFromApplications = (approvedApplications || []).map(normalizeApplication).map((app: any) => {
         const tenant = tenantMap.get(String(app.tenantId))
         const property = propertyMap.get(String(app.propertyId))
-        if (!tenant) return null
+        // Relaxed check
         return {
-          id: tenant.id,
-          name: tenant.name,
-          email: tenant.email,
-          phone: tenant.phone,
+          id: tenant?.id || app.tenantId,
+          name: tenant?.name || 'Applicant',
+          email: tenant?.email || '',
+          phone: tenant?.phone || '',
           propertyId: property?.id || app.propertyId,
-          propertyName: property?.title,
+          propertyName: property?.title || 'Unknown Property',
           propertyAddress: property?.address,
           applicationDate: app.appliedDate,
-          source: 'application'
+          source: 'application',
+          status: 'APPROVED'
         }
-      }).filter(Boolean)
+      })
       const tenantMergeMap = new Map<string, any>()
       tenantsFromLeases.forEach((t: any) => {
         if (t?.id) tenantMergeMap.set(String(t.id), t)

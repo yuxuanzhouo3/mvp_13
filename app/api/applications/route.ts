@@ -97,6 +97,31 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Ensure user exists in DB before creating application (for global region)
+    if (region === 'global') {
+      try {
+        const dbUser = await runWithRetry(() => prisma.user.findUnique({ where: { id: user.id } }))
+        if (!dbUser) {
+          console.log('User not found in DB, attempting to sync:', user.id)
+          // Try to sync user from auth data
+          await runWithRetry(() => prisma.user.create({
+            data: {
+              id: user.id,
+              email: user.email,
+              name: user.name || user.email.split('@')[0],
+              userType: user.userType || 'TENANT',
+              password: 'placeholder-password-managed-by-supabase', // Placeholder for Supabase auth users
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            }
+          }))
+        }
+      } catch (userError) {
+        console.warn('Failed to check/sync user:', userError)
+        // Continue and let the foreign key constraint fail if necessary
+      }
+    }
+
     // 检查是否已经申请过
     const allApplications = region === 'global'
       ? await runWithRetry(() => prisma.application.findMany({
@@ -117,6 +142,8 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const finalDepositAmount = depositAmount ? parseFloat(depositAmount) : (property.deposit || 0)
+
     const application = region === 'global'
       ? await runWithRetry(() => prisma.application.create({
           data: {
@@ -124,7 +151,7 @@ export async function POST(request: NextRequest) {
             propertyId,
             monthlyIncome: monthlyIncome ? parseFloat(monthlyIncome) : null,
             creditScore: creditScore ? parseInt(creditScore) : null,
-            depositAmount: depositAmount ? parseFloat(depositAmount) : property.deposit,
+            depositAmount: finalDepositAmount,
             message,
             status: 'PENDING',
             appliedDate: new Date(),
@@ -135,7 +162,7 @@ export async function POST(request: NextRequest) {
           propertyId,
           monthlyIncome: monthlyIncome ? parseFloat(monthlyIncome) : null,
           creditScore: creditScore ? parseInt(creditScore) : null,
-          depositAmount: depositAmount ? parseFloat(depositAmount) : property.deposit,
+          depositAmount: finalDepositAmount,
           message,
           status: 'PENDING',
           appliedDate: new Date(),
@@ -492,26 +519,29 @@ export async function GET(request: NextRequest) {
             }
             if (applications.length > 0) break
           }
-          if (applications.length === 0) {
+          if (applications.length === 0 && propertyIds.length === 0) {
             return NextResponse.json({ applications: [] })
           }
         }
-        for (const client of supabaseReaders) {
-          for (const tableName of applicationTables) {
-            for (const propertyField of propertyIdFields) {
-              let query = client
-                .from(tableName)
-                .select('*')
-                .in(propertyField, propertyIds)
-              const { data, error } = await query
-              if (!error && data) {
-                applications = data.map(normalizeApplication)
-                break
+        
+        if (propertyIds.length > 0) {
+          for (const client of supabaseReaders) {
+            for (const tableName of applicationTables) {
+              for (const propertyField of propertyIdFields) {
+                let query = client
+                  .from(tableName)
+                  .select('*')
+                  .in(propertyField, propertyIds)
+                const { data, error } = await query
+                if (!error && data) {
+                  applications = data.map(normalizeApplication)
+                  break
+                }
               }
+              if (applications.length > 0) break
             }
             if (applications.length > 0) break
           }
-          if (applications.length > 0) break
         }
       } else {
         for (const client of supabaseReaders) {
@@ -688,10 +718,10 @@ export async function GET(request: NextRequest) {
         const propertyIds = new Set(
           properties
             .filter((p: any) => {
-              const ownerId = String(getField(p, ['landlordId', 'landlord_id', 'ownerId', 'owner_id', 'userId', 'user_id']) || '')
+              const ownerId = String(getField(p, ['landlordId', 'landlord_id', 'ownerId', 'owner_id', 'userId', 'user_id']) || p.landlord?.id || p.landlord?._id || '')
               if (ownerId && landlordIdSet.has(ownerId)) return true
               if (!normalizedEmail) return false
-              const ownerEmail = String(getField(p, ['landlordEmail', 'landlord_email', 'ownerEmail', 'owner_email', 'userEmail', 'user_email']) || '').toLowerCase()
+              const ownerEmail = String(getField(p, ['landlordEmail', 'landlord_email', 'ownerEmail', 'owner_email', 'userEmail', 'user_email']) || p.landlord?.email || '').toLowerCase()
               return ownerEmail && ownerEmail === normalizedEmail
             })
             .map((p: any) => String(getField(p, ['id']) || ''))
@@ -700,10 +730,10 @@ export async function GET(request: NextRequest) {
         applications = applications.filter((app: any) => {
           const pid = String(getField(app, ['propertyId', 'property_id']) || '')
           if (pid && propertyIds.has(pid)) return true
-          const appLandlordId = String(getField(app, ['landlordId', 'landlord_id', 'ownerId', 'owner_id', 'userId', 'user_id']) || '')
+          const appLandlordId = String(getField(app, ['landlordId', 'landlord_id', 'ownerId', 'owner_id', 'userId', 'user_id']) || app.landlord?.id || app.landlord?._id || '')
           if (appLandlordId && landlordIdSet.has(appLandlordId)) return true
           if (!normalizedEmail) return false
-          const appEmail = String(getField(app, ['landlordEmail', 'landlord_email', 'ownerEmail', 'owner_email', 'userEmail', 'user_email']) || '').toLowerCase()
+          const appEmail = String(getField(app, ['landlordEmail', 'landlord_email', 'ownerEmail', 'owner_email', 'userEmail', 'user_email']) || app.landlord?.email || '').toLowerCase()
           return appEmail && appEmail === normalizedEmail
         })
       } else if (effectiveUserType === 'AGENT') {

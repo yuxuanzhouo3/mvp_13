@@ -85,39 +85,43 @@ export default function TenantDashboard() {
     return Array.from(map.values())
   }, [applications])
 
+  const cleanText = (text: string) => {
+    return text?.replace(/^(property\.|dashboard\.|common\.|application\.|payment\.)/i, '') || text
+  }
+
   const renderAppStatus = (status?: string) => {
-    const s = (status || '').toUpperCase()
+    const s = (status || '').toUpperCase().replace(/^(DASHBOARD\.|PROPERTY\.|COMMON\.|APPLICATION\.|PAYMENT\.)/i, '')
     let variant: "default" | "secondary" | "destructive" | "outline" | "success" | "warning" = "default"
-    let label = t('status')
+    let label = cleanText(t('status'))
 
     switch (s) {
       case 'APPROVED':
         variant = "success"
-        label = t('approved')
+        label = cleanText(t('approved'))
         break
       case 'AGENT_APPROVED':
         variant = "warning"
-        label = t('agentApproved') || "中介已通过"
+        label = cleanText(t('agentApproved') || "Agent Approved")
         break
       case 'PENDING':
         variant = "secondary"
-        label = t('pending')
+        label = cleanText(t('pending'))
         break
       case 'REJECTED':
         variant = "destructive"
-        label = t('rejected')
+        label = cleanText(t('rejected'))
         break
       case 'WITHDRAWN':
         variant = "outline"
-        label = t('withdrawn')
+        label = cleanText(t('withdrawn'))
         break
       case 'UNDER_REVIEW':
         variant = "secondary"
-        label = t('underReview')
+        label = cleanText(t('underReview'))
         break
       default:
         variant = "outline"
-        label = status ? status.replace(/^dashboard\./, '') : (process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '状态' : 'Status')
+        label = status ? cleanText(status) : cleanText(process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '状态' : 'Status')
     }
     
     // Using a custom Badge wrapper or styling since "success" variant might not exist in standard shadcn Badge
@@ -431,8 +435,8 @@ export default function TenantDashboard() {
       <div className="space-y-8">
         {/* Header */}
         <div>
-          <h1 className="text-3xl font-bold">{t('welcome')} {userName || tCommon('user')}!</h1>
-          <p className="text-muted-foreground">{t('findIdealHome') || "Find your ideal home with secure deposit protection."}</p>
+          <h1 className="text-3xl font-bold">{cleanText(t('welcome'))} {userName || cleanText(tCommon('user'))}!</h1>
+          <p className="text-muted-foreground">{cleanText(t('findIdealHome') || "Find your ideal home with secure deposit protection.")}</p>
           {representedBy && (
             <div className="mt-2 inline-flex items-center px-3 py-1 rounded-full bg-primary/10 text-primary text-sm">
               <span>
@@ -450,15 +454,15 @@ export default function TenantDashboard() {
             <div className="flex items-center space-x-3">
               <UserCheck className="h-6 w-6 text-primary" />
               <div>
-                <h3 className="font-semibold text-primary">{t('youAreRepresentedBy')} {representedBy.name}</h3>
+                <h3 className="font-semibold text-primary">{cleanText(t('youAreRepresentedBy'))} {representedBy.name}</h3>
                 <p className="text-sm text-muted-foreground">
-                  {t('agentRepresentsYouDesc') || "This agent handles your property search and negotiations."}
+                  {cleanText(t('agentRepresentsYouDesc') || "This agent handles your property search and negotiations.")}
                 </p>
               </div>
             </div>
             <Button variant="outline" onClick={() => router.push(`/dashboard/tenant/messages?userId=${representedBy.id}`)}>
               <MessageSquare className="h-4 w-4 mr-2" />
-              {t('messages')}
+              {cleanText(t('messages'))}
             </Button>
           </div>
         )}
@@ -466,7 +470,7 @@ export default function TenantDashboard() {
         {/* Notifications Area */}
         {notifications.length > 0 && (
            <div className="mb-6 space-y-2">
-             <h3 className="text-lg font-semibold">{t('notifications')}</h3>
+             <h3 className="text-lg font-semibold">{cleanText(t('notifications'))}</h3>
              {notifications.map((notif: any) => {
                // 国内版：将英文通知标题和内容转换为中文
                const region = process.env.NEXT_PUBLIC_APP_REGION || 'global'
@@ -497,12 +501,12 @@ export default function TenantDashboard() {
                return (
                  <div key={notif.id} className={`p-4 rounded-lg border flex justify-between items-center ${notif.isRead ? 'bg-background' : 'bg-muted/30'}`}>
                    <div>
-                     <p className="font-medium">{displayTitle}</p>
-                     <p className="text-sm text-muted-foreground">{displayMessage}</p>
+                     <p className="font-medium">{cleanText(displayTitle)}</p>
+                     <p className="text-sm text-muted-foreground">{cleanText(displayMessage)}</p>
                      <p className="text-xs text-muted-foreground mt-1">{new Date(notif.createdAt).toLocaleDateString()}</p>
                    </div>
                    {!notif.isRead && (
-                      <Badge variant="secondary">{t('unread')}</Badge>
+                      <Badge variant="secondary">{cleanText(t('unread'))}</Badge>
                    )}
                  </div>
                )
@@ -628,8 +632,8 @@ export default function TenantDashboard() {
                        return (
                         <div key={lease.id} className="p-4 border rounded-lg flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                           <div className="flex-1">
-                            <div className="font-semibold text-lg">{lease.property?.title || (isChina ? "房源" : "Property")}</div>
-                            <div className="text-sm text-muted-foreground">{lease.property?.address || lease.propertyId}</div>
+                            <div className="font-semibold text-lg">{cleanText(lease.property?.title) || (isChina ? "房源" : "Property")}</div>
+                            <div className="text-sm text-muted-foreground">{cleanText(lease.property?.address) || lease.propertyId}</div>
                             <div className="flex gap-4 mt-2 text-sm">
                               <span>{isChina ? '开始日期' : 'Start'}: {new Date(lease.startDate).toLocaleDateString()}</span>
                               <span>{isChina ? '结束日期' : 'End'}: {new Date(lease.endDate).toLocaleDateString()}</span>

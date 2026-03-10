@@ -15,7 +15,6 @@ interface PaymentHistoryProps {
 
 export function PaymentHistory({ userType }: PaymentHistoryProps) {
   const t = useTranslations('dashboard')
-  const tPayment = useTranslations('payment')
   const tCommon = useTranslations('common')
   const currencySymbol = getCurrencySymbol()
   const [payments, setPayments] = useState<any[]>([])
@@ -139,17 +138,55 @@ export function PaymentHistory({ userType }: PaymentHistoryProps) {
   }
 
   const getPaymentKey = (payment: any) => {
+    // If we have a unique ID, use it as the primary key
+    if (payment.id) return `id:${String(payment.id)}`
+    if (payment._id) return `id:${String(payment._id)}`
+
     const metadata = parseMetadata(payment)
     const propertyId = payment?.propertyId || payment?.property?.id || ''
     const userId = payment?.userId || payment?.user?.id || ''
     const type = payment?.type || ''
-    if (type === 'RENT' && propertyId && userId) return `rent:${String(userId)}|${String(propertyId)}`
+    
+    // Add timestamp to rent key to allow multiple rent payments for same user/property
+    if (type === 'RENT' && propertyId && userId) {
+      const date = new Date(payment.createdAt || payment.paidAt || 0).toISOString().split('T')[0] // Group by day
+      return `rent:${String(userId)}|${String(propertyId)}|${date}|${payment.amount}`
+    }
+    
     const leaseId = metadata?.leaseId || payment?.leaseId
     if (leaseId) return `lease:${String(leaseId)}`
+    
     const orderId = metadata?.orderId || metadata?.outTradeNo || metadata?.tradeNo || payment?.transactionId
     if (orderId) return `order:${String(orderId)}`
+    
     const amount = payment?.amount || ''
     return `fallback:${String(userId)}|${String(propertyId)}|${String(type)}|${String(amount)}`
+  }
+
+  const cleanText = (text: string) => {
+    if (!text) return ''
+    return text.replace(/^(dashboard\.|property\.|common\.|application\.|payment\.)/i, '')
+  }
+
+  const renderStatus = (status: string) => {
+    const s = (status || '').toUpperCase().replace(/^(DASHBOARD\.|PROPERTY\.|COMMON\.|APPLICATION\.|PAYMENT\.)/i, '')
+    switch (s) {
+      case 'COMPLETED':
+      case 'PAID':
+        return <Badge className="bg-green-500">{cleanText(tCommon('success'))}</Badge>
+      case 'PENDING':
+        return <Badge variant="outline" className="text-yellow-500 border-yellow-500">{cleanText(t('pending'))}</Badge>
+      case 'FAILED':
+        return <Badge variant="destructive">{cleanText(t('failed'))}</Badge>
+      case 'OVERDUE':
+        return <Badge variant="destructive">{cleanText(t('overdue'))}</Badge>
+      case 'PARTIALLY_RELEASED':
+        return <Badge className="bg-blue-500">{cleanText(t('partiallyReleased') || 'Partially Released')}</Badge>
+      case 'RELEASED':
+        return <Badge className="bg-green-500">{cleanText(t('released') || 'Released')}</Badge>
+      default:
+        return <Badge variant="secondary">{cleanText(status)}</Badge>
+    }
   }
 
   const dedupePayments = (list: any[]) => {
@@ -248,7 +285,7 @@ export function PaymentHistory({ userType }: PaymentHistoryProps) {
         <CardHeader>
           <CardTitle className="flex items-center space-x-2">
             <CreditCard className="h-5 w-5" />
-            <span>{tPayment('title')}</span>
+            <span>{t('payments')}</span>
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -263,7 +300,7 @@ export function PaymentHistory({ userType }: PaymentHistoryProps) {
       <CardHeader>
         <CardTitle className="flex items-center space-x-2">
           <CreditCard className="h-5 w-5" />
-          <span>{tPayment('title')}</span>
+          <span>{t('payments')}</span>
         </CardTitle>
         <CardDescription>
           {userType === "tenant"
@@ -315,19 +352,9 @@ export function PaymentHistory({ userType }: PaymentHistoryProps) {
                     )}
                   </div>
                   <div>
-                    <div className="font-medium">{payment.description || `${payment.type} - ${payment.property?.title || (isChina ? '房源' : 'Property')}`}</div>
+                    <div className="font-medium">{cleanText(payment.property?.title || payment.description || (isChina ? '房源' : 'Property'))}</div>
                     <div className="text-sm text-muted-foreground">
-                      {new Date(payment.createdAt).toLocaleDateString()}
-                      {payment.status === 'PENDING' && (
-                        <Badge variant="outline" className="ml-2 text-amber-600 border-amber-600">
-                          {isChina ? '待支付' : 'Pending'}
-                        </Badge>
-                      )}
-                      {payment.status === 'COMPLETED' && (
-                        <Badge variant="default" className="ml-2 text-green-600 border-green-600 bg-green-50">
-                          {isChina ? '已支付' : 'Paid'}
-                        </Badge>
-                      )}
+                      {payment.tenantName ? `${t('tenant')}: ${cleanText(payment.tenantName)}` : new Date(payment.createdAt).toLocaleDateString()}
                     </div>
                     {/* Breakdown for Landlords */}
                     {userType === 'landlord' && payment.distribution && (
@@ -370,22 +397,8 @@ export function PaymentHistory({ userType }: PaymentHistoryProps) {
                 <div className="text-right">
                   <div className="font-semibold text-lg">{currencySymbol}{payment.amount.toLocaleString()}</div>
                   <div className="flex items-center space-x-2">
-                    <Badge variant={payment.status === "COMPLETED" ? "default" : payment.status === "PENDING" ? "outline" : "secondary"}>
-                      {(() => {
-                        if (payment.status === "COMPLETED") {
-                          return isChina ? "已支付" : "Paid"
-                        } else if (payment.status === "PENDING") {
-                          return isChina ? "待支付" : "Pending"
-                        } else if (payment.status === "FAILED") {
-                          return isChina ? "失败" : "Failed"
-                        } else if (payment.status === "REFUNDED") {
-                          return isChina ? "已退款" : "Refunded"
-                        } else {
-                          return isChina ? payment.status : payment.status.replace("_", " ").toLowerCase()
-                        }
-                      })()}
-                    </Badge>
-                    {payment.status === "PENDING" && userType === "tenant" && (
+                    {renderStatus(payment.status)}
+                    {(payment.status === "PENDING" || payment.status === "FAILED") && userType === "tenant" && (
                       <div className="flex items-center space-x-2">
                         <Button size="sm" variant="default" onClick={() => {
                           setSelectedPayment(payment)

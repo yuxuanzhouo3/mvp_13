@@ -27,6 +27,9 @@ export default function ReviewsPage() {
     content: "",
     rating: 5,
   })
+  const cleanText = (text: string) => {
+    return text?.replace(/^(property\.|dashboard\.|common\.|application\.|payment\.)/i, '') || text
+  }
   const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 9000) => {
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
@@ -82,10 +85,12 @@ export default function ReviewsPage() {
 
     setSubmitting(true)
     try {
+      const token = localStorage.getItem("auth-token")
       const response = await fetch("/api/testimonials", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify(formData),
       })
@@ -131,19 +136,19 @@ export default function ReviewsPage() {
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">{t('reviews')}</h1>
-            <p className="text-muted-foreground">{t('shareExperience') || "Share your experience and read what others say"}</p>
+            <h1 className="text-3xl font-bold">{cleanText(t('reviews'))}</h1>
+            <p className="text-muted-foreground">{cleanText(t('shareExperience') || "Share your experience and read what others say")}</p>
           </div>
           <Button onClick={() => setShowForm(!showForm)}>
-            {showForm ? tCommon('cancel') : (t('writeReview') || "Write a Review")}
+            {showForm ? cleanText(tCommon('cancel')) : cleanText(t('writeReview') || "Write a Review")}
           </Button>
         </div>
 
         {showForm && (
           <Card>
             <CardHeader>
-              <CardTitle>{t('writeReview') || "Write Your Review"}</CardTitle>
-              <CardDescription>{t('shareExperienceWithRentGuard') || "Share your experience with RentGuard"}</CardDescription>
+              <CardTitle>{cleanText(t('writeReview') || "Write Your Review")}</CardTitle>
+              <CardDescription>{cleanText(t('shareExperienceWithRentGuard') || "Share your experience with RentGuard")}</CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={handleSubmit} className="space-y-4">

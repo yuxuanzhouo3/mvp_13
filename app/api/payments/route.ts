@@ -373,7 +373,13 @@ export async function GET(request: NextRequest) {
             for (const propertyField of paymentPropertyFields) {
               let query = client.from(tableName).select('*')
               if (resolvedUserType === 'TENANT') {
-                query = query.eq(userField, resolvedUserId)
+                if (user.email) {
+                   // Or logic is hard in simple chaining, try separate queries if needed, 
+                   // but here we can rely on resolvedUserId being accurate or fallback below
+                   query = query.or(`${userField}.eq.${resolvedUserId},user_email.eq.${user.email},userEmail.eq.${user.email}`)
+                } else {
+                   query = query.eq(userField, resolvedUserId)
+                }
               } else if (resolvedUserType === 'LANDLORD') {
                 if (propertyIds.length === 0) {
                   return NextResponse.json({ payments: [] })
@@ -482,6 +488,8 @@ export async function GET(request: NextRequest) {
                 p.owner_id ||
                 p.userId ||
                 p.user_id ||
+                p.landlord?.id ||
+                p.landlord?._id ||
                 ''
             )
             if (ownerId && landlordIds.has(ownerId)) return true
@@ -493,16 +501,26 @@ export async function GET(request: NextRequest) {
                 p.owner_email ||
                 p.userEmail ||
                 p.user_email ||
+                p.landlord?.email ||
                 ''
             ).toLowerCase()
             return ownerEmail && ownerEmail === normalizedEmail
           })
-          .map((p: any) => p.id || p._id)
+          .map((p: any) => String(p.id || p._id || ''))
           .filter(Boolean)
       )
+
+      if (propertyIds.size === 0) {
+         // Fallback: try to match payments directly if they have landlord info (rare but possible)
+      }
+
       payments = payments.filter((p: any) => {
         const pid = String(p.propertyId || p.property_id || '')
-        return pid && propertyIds.has(pid)
+        if (pid && propertyIds.has(pid)) return true
+        // Also check if payment has direct landlord info
+        const payLandlordId = String(p.landlordId || p.landlord_id || p.ownerId || p.owner_id || '')
+        if (payLandlordId && landlordIds.has(payLandlordId)) return true
+        return false
       })
     } else if (resolvedUserType === 'AGENT') {
       const properties = await effectiveDb.query('properties', {})

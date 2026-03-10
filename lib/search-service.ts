@@ -328,6 +328,8 @@ async function searchOwnDatabase(criteria: ParsedTenantSearchCriteria): Promise<
     try {
       const db = getDatabaseAdapter()
       const rawProperties = await db.query('properties', {})
+      
+      // Strategy 1: Strict search
       let filteredProperties = applyFilters(rawProperties, {
         useKeyword: !hasLocationFilter,
         useLocation: true,
@@ -335,7 +337,9 @@ async function searchOwnDatabase(criteria: ParsedTenantSearchCriteria): Promise<
         enforceNumeric: true,
         enforcePet: true
       })
-      if (filteredProperties.length === 0 && rawQuery) {
+      
+      // Strategy 2: If no results, relax keyword filter (keep location & numeric)
+      if (filteredProperties.length === 0 && keywordTokens.length > 0) {
         filteredProperties = applyFilters(rawProperties, {
           useKeyword: false,
           useLocation: true,
@@ -344,8 +348,21 @@ async function searchOwnDatabase(criteria: ParsedTenantSearchCriteria): Promise<
           enforcePet: true
         })
       }
-      if (filteredProperties.length === 0 && rawQuery) {
+
+      // Strategy 3: If still no results, relax numeric filter (keep location)
+      if (filteredProperties.length === 0 && (criteria.minPrice || criteria.maxPrice || criteria.minBedrooms)) {
         filteredProperties = applyFilters(rawProperties, {
+          useKeyword: false,
+          useLocation: true,
+          enforceStatus: true,
+          enforceNumeric: false,
+          enforcePet: true
+        })
+      }
+
+      // Strategy 4: If still no results and we have location, try relaxing location (keep numeric)
+      if (filteredProperties.length === 0 && hasLocationFilter) {
+         filteredProperties = applyFilters(rawProperties, {
           useKeyword: false,
           useLocation: false,
           enforceStatus: true,
@@ -353,33 +370,7 @@ async function searchOwnDatabase(criteria: ParsedTenantSearchCriteria): Promise<
           enforcePet: true
         })
       }
-      if (filteredProperties.length === 0 && rawQuery) {
-        filteredProperties = applyFilters(rawProperties, {
-          useKeyword: false,
-          useLocation: hasLocationFilter,
-          enforceStatus: true,
-          enforceNumeric: false,
-          enforcePet: false
-        })
-      }
-      if (filteredProperties.length === 0) {
-        filteredProperties = applyFilters(rawProperties, {
-          useKeyword: keywordTokens.length > 0,
-          useLocation: hasLocationFilter,
-          enforceStatus: false,
-          enforceNumeric: true,
-          enforcePet: true
-        })
-      }
-      if (filteredProperties.length === 0) {
-        filteredProperties = applyFilters(rawProperties, {
-          useKeyword: false,
-          useLocation: hasLocationFilter,
-          enforceStatus: false,
-          enforceNumeric: false,
-          enforcePet: false
-        })
-      }
+      
       filteredProperties = filteredProperties.slice(0, 50)
       return buildResult(filteredProperties)
     } catch (error) {
@@ -441,14 +432,16 @@ async function searchOwnDatabase(criteria: ParsedTenantSearchCriteria): Promise<
         return where
       }
 
+      // Strategy 1: Strict DB query
       const baseWhere = buildWhere({
         includeStatus: true,
-        includeKeyword: true,
-        includeLocation: true,
-        includeNumeric: true,
-        includePet: true
+        includeKeyword: false,
+        includeLocation: false,
+        includeNumeric: false, // We'll filter numeric in memory to match CloudBase behavior, or keep simple
+        includePet: false 
       })
 
+      // Fetch broad set
       let properties = await prisma.property.findMany({
         where: baseWhere,
         include: {
@@ -460,135 +453,47 @@ async function searchOwnDatabase(criteria: ParsedTenantSearchCriteria): Promise<
             }
           }
         },
-        take: 50
+        take: 500,
+        orderBy: {
+          createdAt: 'desc'
+        }
       })
-      properties = applyFilters(properties, {
-        useKeyword: false,
+      
+      // Strategy 1: Strict In-Memory
+      let filteredProperties = applyFilters(properties, {
+        useKeyword: keywordTokens.length > 0,
         useLocation: hasLocationFilter,
         enforceStatus: true,
-        enforceNumeric: false,
-        enforcePet: false
+        enforceNumeric: true,
+        enforcePet: true
       })
-      if (properties.length === 0 && rawQuery) {
-        const relaxedWhere = buildWhere({
-          includeStatus: false,
-          includeKeyword: false,
-          includeLocation: true,
-          includeNumeric: true,
-          includePet: true
-        })
-        const relaxedProperties = await prisma.property.findMany({
-          where: relaxedWhere,
-          include: {
-            landlord: {
-              select: {
-                id: true,
-                name: true,
-                email: true
-              }
-            }
-          },
-          take: 200
-        })
-        let filtered = applyFilters(relaxedProperties, {
+
+      // Strategy 2: Relax keyword
+      if (filteredProperties.length === 0 && keywordTokens.length > 0) {
+        filteredProperties = applyFilters(properties, {
           useKeyword: false,
-          useLocation: true,
+          useLocation: hasLocationFilter,
           enforceStatus: true,
           enforceNumeric: true,
           enforcePet: true
         })
-        if (filtered.length === 0) {
-          filtered = applyFilters(relaxedProperties, {
-            useKeyword: false,
-            useLocation: hasLocationFilter,
-            enforceStatus: true,
-            enforceNumeric: true,
-            enforcePet: true
-          })
-        }
-        if (filtered.length === 0) {
-          const allProperties = await prisma.property.findMany({
-            where: {},
-            include: {
-              landlord: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true
-                }
-              }
-            },
-            take: 200
-          })
-          filtered = applyFilters(allProperties, {
-            useKeyword: false,
-            useLocation: hasLocationFilter,
-            enforceStatus: true,
-            enforceNumeric: false,
-            enforcePet: false
-          })
-        }
-        if (filtered.length === 0) {
-          const allProperties = await prisma.property.findMany({
-            where: {},
-            include: {
-              landlord: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true
-                }
-              }
-            },
-            take: 50
-          })
-          filtered = applyFilters(allProperties, {
-            useKeyword: false,
-            useLocation: hasLocationFilter,
-            enforceStatus: false,
-            enforceNumeric: false,
-            enforcePet: false
-          })
-        }
-        properties = filtered
-      }
-      if (properties.length === 0) {
-        const allProperties = await prisma.property.findMany({
-          where: {},
-          include: {
-            landlord: {
-              select: {
-                id: true,
-                name: true,
-                email: true
-              }
-            }
-          },
-          take: 200
-        })
-        let relaxed = applyFilters(allProperties, {
-          useKeyword: keywordTokens.length > 0,
-          useLocation: hasLocationFilter,
-          enforceStatus: false,
-          enforceNumeric: true,
-          enforcePet: true
-        })
-        if (relaxed.length === 0) {
-          relaxed = applyFilters(allProperties, {
-            useKeyword: false,
-            useLocation: hasLocationFilter,
-            enforceStatus: false,
-            enforceNumeric: false,
-            enforcePet: false
-          })
-        }
-        properties = relaxed
       }
 
+      // Strategy 3: Relax numeric
+      if (filteredProperties.length === 0 && (criteria.minPrice || criteria.maxPrice || criteria.minBedrooms)) {
+        filteredProperties = applyFilters(properties, {
+          useKeyword: false,
+          useLocation: hasLocationFilter,
+          enforceStatus: true,
+          enforceNumeric: false,
+          enforcePet: true
+        })
+      }
+      
       return {
         platform: 'RentGuard',
         platformUrl: '/',
-        properties: properties.map(p => ({
+        properties: filteredProperties.map(p => ({
           id: p.id,
           title: p.title,
           address: p.address,
@@ -603,7 +508,7 @@ async function searchOwnDatabase(criteria: ParsedTenantSearchCriteria): Promise<
           availableFrom: p.availableFrom?.toISOString(),
           leaseDuration: p.leaseDuration || undefined
         })),
-        totalCount: properties.length
+        totalCount: filteredProperties.length
       }
     } catch (error) {
       console.error('Database search error:', error)
@@ -712,20 +617,21 @@ async function searchOwnTenantDatabase(criteria: ParsedLandlordSearchCriteria, l
         .filter(Boolean)
       if (landlordPropertyIds.length === 0) return []
 
-      // CloudBase: 分别获取 PENDING 和 UNDER_REVIEW 的申请，然后合并
+      // CloudBase: 分别获取 PENDING, UNDER_REVIEW, APPROVED 的申请，然后合并
       // CloudBaseAdapter 目前支持简单的 where 查询，但不支持数组 in 查询
       const pendingApps = await db.query('applications', { status: 'PENDING' })
       const reviewApps = await db.query('applications', { status: 'UNDER_REVIEW' })
+      const approvedApps = await db.query('applications', { status: 'APPROVED' })
       
       // 合并并去重 (以防万一)
-      const rawApplications = [...pendingApps, ...reviewApps]
+      const rawApplications = [...pendingApps, ...reviewApps, ...approvedApps]
       
       // 内存过滤
       const filteredApplications = []
       
       for (const app of rawApplications) {
         // 状态过滤 (如果 DB 层未过滤)
-        if (!['PENDING', 'UNDER_REVIEW'].includes(app.status)) continue
+        if (!['PENDING', 'UNDER_REVIEW', 'APPROVED'].includes(app.status)) continue
         if (!landlordPropertyIds.includes(app.propertyId)) continue
         
         let match = true
@@ -863,7 +769,7 @@ async function searchOwnTenantDatabase(criteria: ParsedLandlordSearchCriteria, l
 
   const applications = await prisma.application.findMany({
     where: {
-      status: { in: ['PENDING', 'UNDER_REVIEW'] as any[] },
+      status: { in: ['PENDING', 'UNDER_REVIEW', 'APPROVED'] as any[] },
       property: { landlordId },
       ...where
     },

@@ -176,7 +176,14 @@ export async function GET(request: NextRequest) {
       // 获取所有租赁记录，然后过滤（因为CloudBase可能不支持复杂查询）
       let allLeases = await db.query('leases', {})
       // 过滤出该租客的租赁记录
-      leases = allLeases.filter((l: any) => l.tenantId === user.id)
+      const targetTenantId = String(resolvedUserId).trim()
+      leases = allLeases.filter((l: any) => {
+        const tid = String(l.tenantId || l.tenant_id || '').trim()
+        if (tid && (tid === targetTenantId || tid === String(user.id).trim())) return true
+        // Try fuzzy match or email match if available
+        if (user.email && (l.tenantEmail === user.email || l.tenant_email === user.email)) return true
+        return false
+      })
       
       // Enrich with property data
       leases = await Promise.all(leases.map(async (lease: any) => {

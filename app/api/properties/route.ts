@@ -252,6 +252,23 @@ export async function POST(request: NextRequest) {
           console.warn('Failed to check landlord profile for representation:', err)
         }
       }
+
+      // 宽松检查：如果该中介之前已经为该房东发布过房源，也允许继续发布
+      if (!isRepresented) {
+        try {
+          // 检查是否存在该房东和该中介关联的现有房源
+          const existingProps = await safeDbCall(() => db.query('properties', { 
+            landlordId: landlord.id,
+            agentId: dbUser?.id || user.id 
+          }), 5000)
+          
+          if (existingProps && existingProps.length > 0) {
+            isRepresented = true
+          }
+        } catch (err) {
+          console.warn('Failed to check existing properties for permission:', err)
+        }
+      }
       
       if (!isRepresented) {
         const errorMsg = region === 'china' 
@@ -545,6 +562,7 @@ export async function GET(request: NextRequest) {
     let user = await getCurrentUser(request)
     const { searchParams } = new URL(request.url)
     const landlordId = searchParams.get('landlordId')
+    const agentId = searchParams.get('agentId')
     const page = parseInt(searchParams.get('page') || '1')
     const limit = parseInt(searchParams.get('limit') || '20')
     const region = getAppRegion()
@@ -687,7 +705,9 @@ export async function GET(request: NextRequest) {
       } catch {}
     }
     
-    if (landlordId) {
+    if (agentId) {
+      filters.agentId = agentId
+    } else if (landlordId) {
       filters.landlordId = landlordId
       resolvedUserId = landlordId
     } else if (user) {

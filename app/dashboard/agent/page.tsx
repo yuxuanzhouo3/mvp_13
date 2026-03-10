@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useRouter } from "next/navigation"
 import { useSearchParams } from "next/navigation"
 import { useTranslations } from 'next-intl'
@@ -15,7 +15,7 @@ import { TenantApplications } from "@/components/dashboard/tenant-applications"
 import { MessageCenter } from "@/components/dashboard/message-center"
 import { useToast } from "@/hooks/use-toast"
 
-export default function AgentDashboard() {
+function AgentDashboardContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const initialUserId = searchParams.get('userId')
@@ -521,5 +521,13 @@ export default function AgentDashboard() {
         </Tabs>
       </div>
     </DashboardLayout>
+  )
+}
+
+export default function AgentDashboard() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center min-h-screen">Loading...</div>}>
+      <AgentDashboardContent />
+    </Suspense>
   )
 }

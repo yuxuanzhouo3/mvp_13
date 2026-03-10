@@ -12,11 +12,11 @@ export default function SuccessStoriesPage() {
         </p>
         <div className="space-y-8">
           <div className="border p-6 rounded-lg">
-            <blockquote className="text-xl italic mb-4">"RentGuard made finding a tenant so easy. The screening process gave me peace of mind."</blockquote>
+            <blockquote className="text-xl italic mb-4">&ldquo;RentGuard made finding a tenant so easy. The screening process gave me peace of mind.&rdquo;</blockquote>
             <cite className="font-semibold">- Sarah J., Landlord</cite>
           </div>
           <div className="border p-6 rounded-lg">
-            <blockquote className="text-xl italic mb-4">"I love how secure the deposit protection is. It makes renting much less stressful."</blockquote>
+            <blockquote className="text-xl italic mb-4">&ldquo;I love how secure the deposit protection is. It makes renting much less stressful.&rdquo;</blockquote>
             <cite className="font-semibold">- Michael T., Tenant</cite>
           </div>
         </div>

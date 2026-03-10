@@ -13,7 +13,7 @@ export default function HelpCenterPage() {
             <AccordionItem value="item-1">
               <AccordionTrigger>How do I reset my password?</AccordionTrigger>
               <AccordionContent>
-                Go to the login page and click "Forgot Password". Follow the instructions sent to your email.
+                Go to the login page and click &quot;Forgot Password&quot;. Follow the instructions sent to your email.
               </AccordionContent>
             </AccordionItem>
             <AccordionItem value="item-2">

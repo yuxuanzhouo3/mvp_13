@@ -9,7 +9,7 @@ export default function CareersPage() {
       <main className="container py-12 flex-1">
         <h1 className="text-4xl font-bold mb-6">Join Our Team</h1>
         <p className="text-lg text-muted-foreground mb-8">
-          We're looking for passionate individuals to help us redefine the rental experience.
+          We&apos;re looking for passionate individuals to help us redefine the rental experience.
         </p>
         <div className="space-y-6">
           <div className="border p-6 rounded-lg flex justify-between items-center">

@@ -175,7 +175,7 @@ export async function GET(request: NextRequest) {
         where: { propertyId: { in: propertyIds } },
         include: {
           tenant: {
-            select: { id: true, name: true, email: true, image: true, avatar: true }
+            select: { id: true, name: true, email: true, avatar: true }
           }
         },
         orderBy: { updatedAt: 'desc' }
@@ -191,7 +191,7 @@ export async function GET(request: NextRequest) {
           id: app.tenant?.id,
           name: app.tenant?.name || 'Unknown',
           email: app.tenant?.email,
-          image: app.tenant?.image || app.tenant?.avatar
+          image: app.tenant?.avatar
         },
         message: app.message
       }))

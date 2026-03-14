@@ -9,8 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Separator } from "@/components/ui/separator"
-import { Shield, Chrome, Apple } from "lucide-react"
+import { Shield } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
 function SignUpForm() {
@@ -26,6 +25,10 @@ function SignUpForm() {
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [phone, setPhone] = useState("")
+  const [verificationCode, setVerificationCode] = useState("")
+  const [verificationId, setVerificationId] = useState("")
+  const [sendingCode, setSendingCode] = useState(false)
+  const [countdown, setCountdown] = useState(0)
   const [loading, setLoading] = useState(false)
   
   useEffect(() => {
@@ -41,6 +44,61 @@ function SignUpForm() {
       setEmail(emailParam)
     }
   }, [searchParams])
+
+  useEffect(() => {
+    if (countdown <= 0) return
+    const timer = setInterval(() => {
+      setCountdown((prev) => (prev <= 1 ? 0 : prev - 1))
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [countdown])
+
+  const isChina = process.env.NEXT_PUBLIC_APP_REGION === 'china'
+
+  const handleSendCode = async () => {
+    const normalizedEmail = email.trim()
+    if (!normalizedEmail) {
+      toast({
+        title: tCommon('error'),
+        description: t('emailRequired'),
+        variant: "destructive",
+      })
+      return
+    }
+    setSendingCode(true)
+    try {
+      const response = await fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: 'sendEmailCode',
+          email: normalizedEmail,
+        }),
+      })
+      const text = await response.text()
+      const data = text ? JSON.parse(text) : {}
+      if (!response.ok) {
+        throw new Error(data?.error || t('sendCodeFailed'))
+      }
+      if (!data?.verificationId) {
+        throw new Error(t('sendCodeFailed'))
+      }
+      setVerificationId(data.verificationId)
+      setCountdown(60)
+      toast({
+        title: tCommon('success'),
+        description: t('sendCodeSuccess'),
+      })
+    } catch (error: any) {
+      toast({
+        title: tCommon('error'),
+        description: error?.message || t('sendCodeFailed'),
+        variant: "destructive",
+      })
+    } finally {
+      setSendingCode(false)
+    }
+  }
 
   const handleSignup = async () => {
     if (password !== confirmPassword) {
@@ -61,6 +119,25 @@ function SignUpForm() {
       return
     }
 
+    if (isChina) {
+      if (!verificationCode.trim()) {
+        toast({
+          title: tCommon('error'),
+          description: t('verificationCodeRequired'),
+          variant: "destructive",
+        })
+        return
+      }
+      if (!verificationId) {
+        toast({
+          title: tCommon('error'),
+          description: t('sendCodeFirst'),
+          variant: "destructive",
+        })
+        return
+      }
+    }
+
     setLoading(true)
 
     try {
@@ -78,10 +155,12 @@ function SignUpForm() {
           body: JSON.stringify({
             email,
             password,
-            name: email.split("@")[0], // 使用邮箱前缀作为默认名称
+            name: email.split("@")[0],
             phone: phone || undefined,
             userType: userType.toUpperCase(),
-            ref: ref || undefined, // 传递邀请码
+            verificationCode: isChina ? verificationCode.trim() : undefined,
+            verificationId: isChina ? verificationId : undefined,
+            ref: ref || undefined,
             sig: sig || undefined,
           }),
           signal: controller.signal
@@ -95,7 +174,6 @@ function SignUpForm() {
         throw new Error(process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '网络错误，请检查网络连接' : 'Network error, please check your connection')
       }
 
-      // 尝试解析响应
       try {
         const text = await response.text()
         if (!text) {
@@ -112,7 +190,6 @@ function SignUpForm() {
         throw new Error(errorMsg)
       }
 
-      // 保存 token
       if (data.token) {
         localStorage.setItem("auth-token", data.token)
         localStorage.setItem("user", JSON.stringify(data.user))
@@ -123,7 +200,6 @@ function SignUpForm() {
         description: t('signupSuccessful') || "Welcome to RentGuard!",
       })
 
-      // 根据用户类型跳转
       if (data.user.userType === "TENANT") {
         router.push("/dashboard/tenant")
       } else if (data.user.userType === "LANDLORD") {
@@ -134,7 +210,6 @@ function SignUpForm() {
         router.push("/dashboard/tenant")
       }
     } catch (error: any) {
-      // 处理超时错误
       if (error.name === 'AbortError' || error.message?.includes('timeout')) {
         toast({
           title: process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '请求超时' : 'Request timeout',
@@ -142,8 +217,6 @@ function SignUpForm() {
           variant: "destructive",
         })
       } else {
-        // 如果错误信息已经包含了 "Registration failed" 或 "注册失败"，直接使用
-        // 否则添加前缀
         let errorMessage = error.message || t('signupFailed')
         const lower = errorMessage.toLowerCase()
         if (!lower.includes('registration failed') && !lower.includes('注册失败') && !lower.includes('signup failed')) {
@@ -173,7 +246,6 @@ function SignUpForm() {
         </CardHeader>
 
         <CardContent className="space-y-6">
-          {/* User Type Selection */}
           <div>
             <Label className="text-sm font-medium mb-3 block">{t('iAmA')}</Label>
             <Tabs value={userType} onValueChange={(value) => setUserType(value as any)} className="w-full">
@@ -185,28 +257,6 @@ function SignUpForm() {
             </Tabs>
           </div>
 
-          {/* OAuth Buttons */}
-          <div className="space-y-3">
-            <Button variant="outline" className="w-full bg-transparent" size="lg">
-              <Chrome className="mr-2 h-4 w-4" />
-              {t('continueWithGoogle')}
-            </Button>
-            <Button variant="outline" className="w-full bg-transparent" size="lg">
-              <Apple className="mr-2 h-4 w-4" />
-              {t('continueWithApple')}
-            </Button>
-          </div>
-
-          <div className="relative">
-            <div className="absolute inset-0 flex items-center">
-              <Separator className="w-full" />
-            </div>
-            <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-background px-2 text-muted-foreground">{t('orContinueWith')}</span>
-            </div>
-          </div>
-
-          {/* Email/Phone Tabs */}
           <Tabs defaultValue="email" className="w-full">
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="email">{t('email')}</TabsTrigger>
@@ -246,6 +296,25 @@ function SignUpForm() {
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   required
                 />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="signup-verification-code">{t('verificationCode')}</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="signup-verification-code"
+                    placeholder={t('verificationCode')}
+                    value={verificationCode}
+                    onChange={(e) => setVerificationCode(e.target.value)}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleSendCode}
+                    disabled={sendingCode || countdown > 0}
+                  >
+                    {countdown > 0 ? `${countdown}s` : (sendingCode ? tCommon('loading') : t('sendCode'))}
+                  </Button>
+                </div>
               </div>
             </TabsContent>
 

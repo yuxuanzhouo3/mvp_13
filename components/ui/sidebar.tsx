@@ -206,13 +206,19 @@ const Sidebar = React.forwardRef<
           <SheetContent
             data-sidebar="sidebar"
             data-mobile="true"
-            className="w-[--sidebar-width] bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
+            className="w-[85vw] max-w-[var(--sidebar-width)] bg-sidebar p-0 text-sidebar-foreground"
             style={
               {
                 '--sidebar-width': SIDEBAR_WIDTH_MOBILE,
               } as React.CSSProperties
             }
             side={side}
+            onClickCapture={(event) => {
+              const target = event.target as HTMLElement
+              if (target.closest('a[href]')) {
+                setOpenMobile(false)
+              }
+            }}
           >
             <div className="flex h-full w-full flex-col">{children}</div>
           </SheetContent>
@@ -557,12 +563,13 @@ const SidebarMenuButton = React.forwardRef<
       size = 'default',
       tooltip,
       className,
+      onClick,
       ...props
     },
     ref,
   ) => {
     const Comp = asChild ? Slot : 'button'
-    const { isMobile, state } = useSidebar()
+    const { isMobile, state, setOpenMobile } = useSidebar()
 
     const button = (
       <Comp
@@ -571,6 +578,12 @@ const SidebarMenuButton = React.forwardRef<
         data-size={size}
         data-active={isActive}
         className={cn(sidebarMenuButtonVariants({ variant, size }), className)}
+        onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
+          onClick?.(event)
+          if (isMobile) {
+            setOpenMobile(false)
+          }
+        }}
         {...props}
       />
     )

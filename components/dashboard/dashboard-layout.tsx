@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { useTranslations } from 'next-intl'
@@ -148,128 +148,50 @@ export function DashboardLayout({ children, userType }: DashboardLayoutProps) {
   const [unreadCount, setUnreadCount] = useState(0)
   const [notifications, setNotifications] = useState<any[]>([])
   const [currentUser, setCurrentUser] = useState<any>(null)
-  const notificationsInFlightRef = useRef(false)
-  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 12000) => {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
-    try {
-      return await fetch(url, {
-        ...options,
-        signal: controller.signal,
-      })
-    } catch (error: any) {
-      if (error?.name === "AbortError") {
-        return null
-      }
-      throw error
-    } finally {
-      clearTimeout(timeoutId)
-    }
-  }
 
   useEffect(() => {
+    // Load user data from localStorage
     const userStr = localStorage.getItem("user")
     const token = localStorage.getItem("auth-token")
-
-    if (!token) {
+    
+    if (!userStr || !token) {
+      // Not logged in, redirect to login
       router.replace("/auth/login")
       return
     }
 
-    const expectedType = String(userType || "").toUpperCase()
-    const redirectByRole = (role?: string) => {
-      const type = String(role || "").toUpperCase()
-      if (type === "LANDLORD") {
-        router.replace("/dashboard/landlord")
-        return
-      }
-      if (type === "AGENT") {
-        router.replace("/dashboard/agent")
-        return
-      }
-      if (type === "TENANT") {
-        router.replace("/dashboard/tenant")
-        return
-      }
+    try {
+      const user = JSON.parse(userStr)
+      setCurrentUser(user)
+    } catch (e) {
+      // Invalid user data
+      localStorage.removeItem("user")
+      localStorage.removeItem("auth-token")
       router.replace("/auth/login")
-    }
-    const fetchProfileUser = async () => {
-      try {
-        const response = await fetchWithTimeout("/api/auth/profile", {
-          headers: { Authorization: `Bearer ${token}` },
-          cache: "no-store",
-        })
-        if (!response || !response.ok) return null
-        const data = await response.json().catch(() => ({}))
-        return data?.user || null
-      } catch {
-        return null
-      }
-    }
-    const ensureUser = async () => {
-      let resolvedUser: any = null
-      if (userStr) {
-        try {
-          resolvedUser = JSON.parse(userStr)
-        } catch {}
-      }
-      if (!resolvedUser) {
-        const profileUser = await fetchProfileUser()
-        if (profileUser) {
-          localStorage.setItem("user", JSON.stringify(profileUser))
-          resolvedUser = profileUser
-        }
-      }
-      if (!resolvedUser) {
-        localStorage.removeItem("user")
-        localStorage.removeItem("auth-token")
-        router.replace("/auth/login")
-        return false
-      }
-      setCurrentUser(resolvedUser)
-      const actualType = String(resolvedUser.userType || "").toUpperCase()
-      if (actualType && expectedType && actualType !== expectedType) {
-        redirectByRole(actualType)
-        return false
-      }
-      return true
+      return
     }
 
-    let mounted = true
-    ensureUser().then((ok) => {
-      if (!mounted || !ok) return
-      fetchNotifications()
-    })
-    const interval = setInterval(() => {
-      if (document.visibilityState === "hidden") return
-      fetchNotifications()
-    }, 30000)
-    return () => {
-      mounted = false
-      clearInterval(interval)
-    }
+    fetchNotifications()
+    const interval = setInterval(fetchNotifications, 5000)
+    return () => clearInterval(interval)
   }, [])
 
   const fetchNotifications = async () => {
-    if (notificationsInFlightRef.current) return
     try {
-      notificationsInFlightRef.current = true
       const token = localStorage.getItem("auth-token")
       if (!token) return
 
-      const response = await fetchWithTimeout("/api/notifications?unreadOnly=true", {
+      const response = await fetch("/api/notifications?unreadOnly=true", {
         headers: { Authorization: `Bearer ${token}` },
       })
 
-      if (response?.ok) {
+      if (response.ok) {
         const data = await response.json()
         setNotifications(data.notifications || [])
         setUnreadCount(data.notifications?.length || 0)
       }
     } catch (error) {
       console.error("Failed to fetch notifications:", error)
-    } finally {
-      notificationsInFlightRef.current = false
     }
   }
 
@@ -316,20 +238,6 @@ export function DashboardLayout({ children, userType }: DashboardLayoutProps) {
   const getSettingsUrl = () => {
     return `/dashboard/${userType}/settings`
   }
-  const navigateTo = (url: string, event?: React.MouseEvent<HTMLAnchorElement>) => {
-    if (event) {
-      const modified = event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0
-      if (modified) return
-      event.preventDefault()
-    }
-    if (!url || pathname === url) return
-    router.push(url)
-    window.setTimeout(() => {
-      if (window.location.pathname !== url) {
-        window.location.assign(url)
-      }
-    }, 1000)
-  }
 
   return (
     <SidebarProvider>
@@ -351,7 +259,7 @@ export function DashboardLayout({ children, userType }: DashboardLayoutProps) {
                     {group.items.map((item) => (
                       <SidebarMenuItem key={item.title}>
                         <SidebarMenuButton asChild isActive={pathname === item.url}>
-                          <Link href={item.url} onClick={(event) => navigateTo(item.url, event)}>
+                          <Link href={item.url}>
                             <item.icon className="h-4 w-4" />
                             <span>{item.title}</span>
                           </Link>
@@ -408,7 +316,7 @@ export function DashboardLayout({ children, userType }: DashboardLayoutProps) {
           <header className="flex h-16 shrink-0 items-center gap-2 border-b px-4">
             <SidebarTrigger className="-ml-1" />
             <div className="flex-1" />
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-1 sm:space-x-4">
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" size="icon" className="relative">
@@ -420,7 +328,7 @@ export function DashboardLayout({ children, userType }: DashboardLayoutProps) {
                     )}
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-80">
+                <DropdownMenuContent align="end" className="w-[calc(100vw-2rem)] max-w-80">
                   <DropdownMenuLabel>{t('notifications')}</DropdownMenuLabel>
                   <DropdownMenuSeparator />
                   {notifications.length > 0 ? (
@@ -455,16 +363,25 @@ export function DashboardLayout({ children, userType }: DashboardLayoutProps) {
               </DropdownMenu>
               <Button
                 variant="ghost"
+                className="hidden sm:inline-flex"
                 onClick={handleLogout}
               >
                 <LogOut className="mr-2 h-4 w-4" />
                 {tCommon('logout')}
               </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="sm:hidden"
+                onClick={handleLogout}
+              >
+                <LogOut className="h-4 w-4" />
+              </Button>
               <ModeToggle />
             </div>
           </header>
 
-          <main className="flex-1 p-6">{children}</main>
+          <main className="flex-1 p-3 sm:p-6">{children}</main>
         </SidebarInset>
       </div>
     </SidebarProvider>

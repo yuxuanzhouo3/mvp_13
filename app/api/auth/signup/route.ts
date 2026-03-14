@@ -3,6 +3,74 @@ import { signUp } from '@/lib/auth-adapter'
 import { trackEvent } from '@/lib/analytics'
 import { getDatabaseAdapter } from '@/lib/db-adapter'
 import { validateEmail } from '@/lib/validation'
+import cloudbase from '@cloudbase/node-sdk'
+
+const CLOUDBASE_ENV_ID =
+  process.env.CLOUDBASE_ENV_ID ||
+  process.env.NEXT_PUBLIC_CLOUDBASE_ENV_ID ||
+  'homes-8ghqrqte660fbf1d'
+
+const cloudbaseApp = cloudbase.init({
+  env: CLOUDBASE_ENV_ID,
+  secretId: process.env.CLOUDBASE_SECRET_ID || '',
+  secretKey: process.env.CLOUDBASE_SECRET_KEY || '',
+})
+
+const getCloudbaseAccessToken = async () => {
+  const authClient = (cloudbaseApp as any).auth()
+  const credential = await authClient.getClientCredential()
+  const accessToken =
+    credential?.access_token ||
+    credential?.token ||
+    credential?.data?.access_token ||
+    credential?.body?.access_token
+  if (!accessToken) {
+    throw new Error('CloudBase 鉴权失败')
+  }
+  return accessToken as string
+}
+
+const callCloudbaseAuthApi = async (path: string, payload: Record<string, any>) => {
+  const accessToken = await getCloudbaseAccessToken()
+  const response = await fetch(`https://${CLOUDBASE_ENV_ID}.api.tcloudbasegateway.com${path}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  })
+  const text = await response.text()
+  const data = text ? JSON.parse(text) : {}
+  if (!response.ok) {
+    throw new Error(data?.error_description || data?.error || data?.message || 'CloudBase 请求失败')
+  }
+  return data
+}
+
+const sendCloudbaseEmailCode = async (email: string) => {
+  const result = await callCloudbaseAuthApi('/auth/v1/verification', {
+    email,
+    target: 'ANY',
+  })
+  const verificationId = result?.verification_id || result?.data?.verification_id
+  if (!verificationId) {
+    throw new Error('验证码发送失败，请稍后重试')
+  }
+  return verificationId as string
+}
+
+const verifyCloudbaseEmailCode = async (verificationId: string, verificationCode: string) => {
+  const result = await callCloudbaseAuthApi('/auth/v1/verification/verify', {
+    verification_id: verificationId,
+    verification_code: verificationCode,
+  })
+  const verificationToken = result?.verification_token || result?.data?.verification_token
+  if (!verificationToken) {
+    throw new Error('验证码无效或已过期')
+  }
+  return verificationToken as string
+}
 
 export async function POST(request: NextRequest) {
   const requestId = Math.random().toString(36).substring(7)
@@ -10,7 +78,7 @@ export async function POST(request: NextRequest) {
   
   const run = async (): Promise<NextResponse> => {
     const body = await request.json()
-    let { email, password, name, phone, userType, agentId, ref, sig } = body
+    let { email, password, name, phone, userType, agentId, ref, sig, action, verificationCode, verificationId } = body
     
     // 去除首尾空格，防止因空格导致邮箱格式校验失败
     if (email && typeof email === 'string') {
@@ -48,6 +116,25 @@ export async function POST(request: NextRequest) {
     const { getAppRegion } = await import('@/lib/db-adapter')
     const region = getAppRegion()
     const isChina = region === 'china'
+
+    if (action === 'sendEmailCode') {
+      if (!email) {
+        return NextResponse.json(
+          { error: isChina ? '邮箱不能为空' : 'Email is required' },
+          { status: 400 }
+        )
+      }
+      if (!validateEmail(email)) {
+        return NextResponse.json(
+          { error: isChina ? '邮箱格式不正确' : 'Invalid email format' },
+          { status: 400 }
+        )
+      }
+      const verificationIdResult = await sendCloudbaseEmailCode(email)
+      return NextResponse.json({
+        verificationId: verificationIdResult,
+      })
+    }
     
     if (!email || !password || !name) {
       return NextResponse.json(
@@ -64,6 +151,16 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    if (isChina) {
+      if (!verificationCode || !verificationId) {
+        return NextResponse.json(
+          { error: '请输入邮箱验证码' },
+          { status: 400 }
+        )
+      }
+      await verifyCloudbaseEmailCode(String(verificationId), String(verificationCode))
+    }
+
     // 使用统一的注册接口（自动根据环境变量选择 Supabase 或 JWT）
     const start = Date.now()
     console.log(`[${requestId}] Calling signUp adapter...`)
@@ -71,8 +168,7 @@ export async function POST(request: NextRequest) {
     const result = await signUp(email, password, {
       name,
       phone,
-      userType,
-      representedById
+      userType
     })
     
     console.log(`[${requestId}] SignUp Adapter Success in ${Date.now() - start}ms`)

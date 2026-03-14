@@ -19,6 +19,11 @@ function LoginContent() {
   const tCommon = useTranslations('common')
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
+  const [verificationCode, setVerificationCode] = useState("")
+  const [verificationId, setVerificationId] = useState("")
+  const [loginMethod, setLoginMethod] = useState<"password" | "code">("password")
+  const [sendingCode, setSendingCode] = useState(false)
+  const [countdown, setCountdown] = useState(0)
   const [loading, setLoading] = useState(false)
   const searchParams = useSearchParams()
   const navigateByRole = (rawType?: string) => {
@@ -82,7 +87,62 @@ function LoginContent() {
     completeOAuthLogin()
   }, [searchParams, router, toast, t])
 
-  const submitLogin = async () => {
+  useEffect(() => {
+    if (countdown <= 0) return
+    const timer = setInterval(() => {
+      setCountdown((prev) => (prev <= 1 ? 0 : prev - 1))
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [countdown])
+
+  const handleSendCode = async () => {
+    const normalizedEmail = email.trim()
+    if (!normalizedEmail) {
+      toast({
+        title: tCommon('error'),
+        description: t('emailRequired'),
+        variant: "destructive",
+      })
+      return
+    }
+
+    setSendingCode(true)
+    try {
+      const response = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: 'sendEmailCode',
+          email: normalizedEmail,
+        }),
+      })
+      const text = await response.text()
+      const data = text ? JSON.parse(text) : {}
+      if (!response.ok) {
+        throw new Error(data?.error || t('sendCodeFailed'))
+      }
+      if (!data?.verificationId) {
+        throw new Error(t('sendCodeFailed'))
+      }
+      setVerificationId(data.verificationId)
+      setCountdown(60)
+      toast({
+        title: tCommon('success'),
+        description: t('sendCodeSuccess'),
+      })
+    } catch (error: any) {
+      toast({
+        title: tCommon('error'),
+        description: error?.message || t('sendCodeFailed'),
+        variant: "destructive",
+      })
+    } finally {
+      setSendingCode(false)
+    }
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
     setLoading(true)
     const isChina = process.env.NEXT_PUBLIC_APP_REGION === 'china'
     const isGlobal = !isChina
@@ -90,38 +150,11 @@ function LoginContent() {
     try {
       const normalizedEmail = email.trim()
       const normalizedPassword = password
-      const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> => {
-        return await Promise.race([
-          promise,
-          new Promise<T>((_, reject) => {
-            setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs)
-          })
-        ])
-      }
-      const fetchProfile = async (token: string) => {
+      const backendLogin = async (options?: { useJwtOnly?: boolean; loginType?: "password" | "code" }) => {
         const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), 8000)
-        try {
-          const response = await fetch("/api/auth/profile", {
-            headers: { Authorization: `Bearer ${token}` },
-            signal: controller.signal,
-          })
-          const data = await response.json().catch(() => ({}))
-          if (!response.ok) {
-            throw new Error(data.error || t('invalidCredentials'))
-          }
-          return data.user || null
-        } finally {
-          clearTimeout(timeoutId)
-        }
-      }
-      const backendLogin = async (options?: { useJwtOnly?: boolean }) => {
-        const controller = new AbortController()
-        // 后端整次登录最长约 80s；前端设置 90s 超时以覆盖极端情况
-        const timeoutMs = process.env.NEXT_PUBLIC_APP_REGION === 'china' ? 30000 : 35000
+        const timeoutMs = process.env.NEXT_PUBLIC_APP_REGION === 'china' ? 30000 : 20000
         console.log('[Login Frontend] Timeout setting:', { region: process.env.NEXT_PUBLIC_APP_REGION, timeoutMs })
         const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
-        // 8s 后提示“正在验证”，避免用户以为卡死
         const hintId = setTimeout(() => {
           toast({
             description: isChina ? '正在验证，请稍候…' : 'Verifying, please wait…',
@@ -136,8 +169,11 @@ function LoginContent() {
             },
             body: JSON.stringify({ 
               email: normalizedEmail, 
-              password: normalizedPassword, 
-              useJwtOnly: options?.useJwtOnly || false 
+              password: options?.loginType === 'code' ? undefined : normalizedPassword,
+              verificationCode: options?.loginType === 'code' ? verificationCode.trim() : undefined,
+              verificationId: options?.loginType === 'code' ? verificationId : undefined,
+              loginType: options?.loginType || 'password',
+              useJwtOnly: options?.useJwtOnly || false
             }),
             signal: controller.signal
           })
@@ -174,9 +210,20 @@ function LoginContent() {
         }
       }
 
+      if (loginMethod === 'code') {
+        if (!verificationCode.trim()) {
+          throw new Error(t('verificationCodeRequired'))
+        }
+        if (!verificationId) {
+          throw new Error(t('sendCodeFirst'))
+        }
+        await backendLogin({ loginType: 'code', useJwtOnly: true })
+        return
+      }
+
       if (isGlobal) {
         try {
-          await backendLogin()
+          await backendLogin({ loginType: 'password' })
           return
         } catch (backendError: any) {
           const backendStatus = (backendError as any)?.status
@@ -210,9 +257,8 @@ function LoginContent() {
         }
       }
 
-      await backendLogin()
+      await backendLogin({ loginType: 'password' })
     } catch (error: any) {
-      // 处理超时错误
       const message = String(error?.message || '')
       if (error.name === 'AbortError' || message.includes('超时') || message.toLowerCase().includes('timeout')) {
         toast({
@@ -224,23 +270,9 @@ function LoginContent() {
         return
       }
       
-      // 优化错误日志打印
       console.error('[Login Frontend] Login Error Object:', error)
       let errorMessage = error.message || String(error) || t('invalidCredentials')
-      
-      // 暂时移除对中文错误的强制替换，以便排查真实原因
-      /*
-      if (isGlobal) {
-        const hasChinese = /[\u4e00-\u9fa5]/.test(errorMessage)
-        if (hasChinese) {
-          errorMessage = 'Login failed, please try again'
-        }
-      }
-      */
-      
       console.error('[Login Frontend] Error Message:', errorMessage)
-      
-      // 只显示 description，避免重复显示 "Login failed"
       toast({
         title: tCommon('error'),
         description: errorMessage,
@@ -249,11 +281,6 @@ function LoginContent() {
     } finally {
       setLoading(false)
     }
-  }
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (loading) return
-    void submitLogin()
   }
 
   return (
@@ -268,7 +295,13 @@ function LoginContent() {
         </CardHeader>
 
         <CardContent>
-          <form onSubmit={handleSubmit} className="space-y-4" action="#" method="post">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <Tabs value={loginMethod} onValueChange={(value) => setLoginMethod(value as "password" | "code")} className="w-full">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="password">{t('passwordLogin')}</TabsTrigger>
+                <TabsTrigger value="code">{t('emailCodeLogin')}</TabsTrigger>
+              </TabsList>
+            </Tabs>
             <div className="space-y-2">
               <Label htmlFor="email">{t('email')}</Label>
               <Input
@@ -280,18 +313,41 @@ function LoginContent() {
                 required
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">{t('password')}</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder={t('password')}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
-            </div>
-            <Button type="button" className="w-full" size="lg" disabled={loading} onClick={() => void submitLogin()}>
+            {loginMethod === "password" ? (
+              <div className="space-y-2">
+                <Label htmlFor="password">{t('password')}</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder={t('password')}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                />
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Label htmlFor="verification-code">{t('verificationCode')}</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="verification-code"
+                    placeholder={t('verificationCode')}
+                    value={verificationCode}
+                    onChange={(e) => setVerificationCode(e.target.value)}
+                    required
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleSendCode}
+                    disabled={sendingCode || countdown > 0}
+                  >
+                    {countdown > 0 ? `${countdown}s` : (sendingCode ? tCommon('loading') : t('sendCode'))}
+                  </Button>
+                </div>
+              </div>
+            )}
+            <Button type="submit" className="w-full" size="lg" disabled={loading}>
               {loading ? t('signingIn') : t('signIn')}
             </Button>
           </form>

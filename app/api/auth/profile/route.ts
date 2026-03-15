@@ -10,55 +10,17 @@ import { supabaseAdmin } from '@/lib/supabase'
  */
 export async function GET(request: NextRequest) {
   try {
-    const timeoutMarker = Symbol('profile-timeout')
-    const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof timeoutMarker> => {
-      return await Promise.race([
-        promise,
-        new Promise<typeof timeoutMarker>((resolve) => setTimeout(() => resolve(timeoutMarker), timeoutMs))
-      ])
-    }
-    const getField = (obj: any, keys: string[]) => {
-      for (const key of keys) {
-        const value = obj?.[key]
-        if (value !== undefined && value !== null && value !== '') return value
-      }
-      return undefined
-    }
-    const decodeTokenHints = (token: string) => {
-      try {
-        const payloadBase64 = token.split('.')[1]
-        if (!payloadBase64) return { userId: '', email: '', userType: '' }
-        const normalized = payloadBase64.replace(/-/g, '+').replace(/_/g, '/')
-        const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
-        const payload = JSON.parse(Buffer.from(padded, 'base64').toString('utf8'))
-        const hintedType = getField(payload, ['userType', 'role']) || getField(payload?.user_metadata, ['userType', 'role']) || getField(payload?.app_metadata, ['userType', 'role'])
-        return {
-          userId: String(payload?.userId || payload?.sub || payload?.id || ''),
-          email: String(payload?.email || payload?.userEmail || ''),
-          userType: hintedType ? String(hintedType) : ''
-        }
-      } catch {
-        return { userId: '', email: '', userType: '' }
-      }
-    }
-
-    const authHeader = request.headers.get('authorization')
-    const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : ''
-    const headerUserId = String(request.headers.get('x-user-id') || '').trim()
-    const headerUserEmail = String(request.headers.get('x-user-email') || '').trim()
-    const tokenHints = accessToken ? decodeTokenHints(accessToken) : { userId: '', email: '', userType: '' }
-
-    const unified = await getCurrentUser(request)
-    let user: { userId: string; id: string; email: string; userType?: string } | null = unified
-      ? {
+    let user = await getAuthUser(request)
+    if (!user) {
+      const unified = await getCurrentUser(request)
+      if (unified) {
+        user = {
           userId: unified.id,
           id: unified.id,
           email: unified.email,
           userType: unified.userType
         }
-      : null
-    if (!user) {
-      user = await getAuthUser(request)
+      }
     }
     if (!user) {
       return NextResponse.json(
@@ -66,15 +28,30 @@ export async function GET(request: NextRequest) {
         { status: 401 }
       )
     }
-    user = {
-      ...user,
-      userId: String(user.userId || user.id || headerUserId || tokenHints.userId || ''),
-      id: String(user.id || user.userId || headerUserId || tokenHints.userId || ''),
-      email: String(user.email || headerUserEmail || tokenHints.email || ''),
-      userType: user.userType || tokenHints.userType || undefined,
-    }
 
     const region = getAppRegion()
+    if (region === 'china') {
+      const db = getDatabaseAdapter()
+      const profile = await db.findUserById(user.userId)
+      if (!profile) {
+        return NextResponse.json(
+          { error: 'User not found' },
+          { status: 404 }
+        )
+      }
+      return NextResponse.json({ user: profile })
+    }
+
+    const timeoutPromise = new Promise<{ __timeout: true }>((resolve) =>
+      setTimeout(() => resolve({ __timeout: true }), 3000)
+    )
+    const getField = (obj: any, keys: string[]) => {
+      for (const key of keys) {
+        const value = obj?.[key]
+        if (value !== undefined && value !== null && value !== '') return value
+      }
+      return undefined
+    }
     const profileSelect = {
       id: true,
       name: true,
@@ -87,121 +64,20 @@ export async function GET(request: NextRequest) {
       tenantProfile: true,
       landlordProfile: true,
     }
-
-    if (region === 'china') {
-      const db = getDatabaseAdapter()
-      let profile: any = null
-      if (user.userId) {
-        const byIdResult = await withTimeout(db.findUserById(user.userId), 5000)
-        profile = byIdResult === timeoutMarker ? null : byIdResult
-      }
-      if (!profile && user.email) {
-        const byEmailResult = await withTimeout(db.findUserByEmail(user.email), 5000)
-        profile = byEmailResult === timeoutMarker ? null : byEmailResult
-      }
-      if (!profile) {
-        return NextResponse.json({
-          user: {
-            id: user.userId,
-            name: user.email ? user.email.split('@')[0] : '',
-            email: user.email,
-            userType: user.userType || 'TENANT',
-            isPremium: false
-          }
-        })
-      }
-      return NextResponse.json({ user: profile })
-    }
-
     let profileResult: any = null
     try {
-      profileResult = await withTimeout(
+      profileResult = await Promise.race([
         prisma.user.findUnique({
           where: { id: user.userId },
           select: profileSelect
         }),
-        5000
-      )
+        timeoutPromise
+      ])
     } catch (error: any) {
       profileResult = null
     }
 
-    if (profileResult === timeoutMarker) {
-      profileResult = null
-    }
-
-    if (!profileResult && user.email) {
-      try {
-        const byEmailResult = await withTimeout(
-          prisma.user.findUnique({
-            where: { email: user.email },
-            select: profileSelect
-          }),
-          5000
-        )
-        profileResult = byEmailResult === timeoutMarker ? null : byEmailResult
-      } catch {
-        profileResult = null
-      }
-    }
-
-    let profile = profileResult as any
-    if (!profile) {
-      const db = getDatabaseAdapter()
-      const byIdResult = await withTimeout(db.findUserById(user.userId), 5000)
-      profile = byIdResult === timeoutMarker ? null : byIdResult
-      if (!profile && user.email) {
-        const byEmailResult = await withTimeout(db.findUserByEmail(user.email), 5000)
-        profile = byEmailResult === timeoutMarker ? null : byEmailResult
-      }
-    }
-
-    if (!profile && supabaseAdmin) {
-      const adminClient: any = supabaseAdmin
-      const userTables = ['User', 'users', 'user']
-      for (const tableName of userTables) {
-        if (user.userId) {
-          const byIdResult = await withTimeout(
-            adminClient
-              .from(tableName)
-              .select('id,name,email,phone,avatar,userType,user_type,type,role,isPremium,is_premium,createdAt,tenantProfile,landlordProfile')
-              .eq('id', user.userId)
-              .limit(1),
-            3000
-          )
-          if (byIdResult !== timeoutMarker && !(byIdResult as any)?.error && (byIdResult as any)?.data?.length > 0) {
-            const row = (byIdResult as any).data[0]
-            profile = {
-              ...row,
-              userType: String(getField(row, ['userType', 'user_type', 'type', 'role']) || 'TENANT'),
-              isPremium: Boolean(getField(row, ['isPremium', 'is_premium']))
-            }
-            break
-          }
-        }
-        if (user.email) {
-          const byEmailResult = await withTimeout(
-            adminClient
-              .from(tableName)
-              .select('id,name,email,phone,avatar,userType,user_type,type,role,isPremium,is_premium,createdAt,tenantProfile,landlordProfile')
-              .ilike('email', user.email)
-              .limit(1),
-            3000
-          )
-          if (byEmailResult !== timeoutMarker && !(byEmailResult as any)?.error && (byEmailResult as any)?.data?.length > 0) {
-            const row = (byEmailResult as any).data[0]
-            profile = {
-              ...row,
-              userType: String(getField(row, ['userType', 'user_type', 'type', 'role']) || 'TENANT'),
-              isPremium: Boolean(getField(row, ['isPremium', 'is_premium']))
-            }
-            break
-          }
-        }
-      }
-    }
-
-    if (!profile) {
+    if ((profileResult as any)?.__timeout) {
       return NextResponse.json({
         user: {
           id: user.userId,
@@ -213,8 +89,153 @@ export async function GET(request: NextRequest) {
       })
     }
 
+    let profile = profileResult as any
+    if (!profile && user.email) {
+      try {
+        profile = await prisma.user.findUnique({
+          where: { email: user.email },
+          select: profileSelect
+        })
+      } catch (error: any) {
+        profile = null
+      }
+    }
+    if (!profile && supabaseAdmin) {
+      const userTables = ['User', 'user', 'users', 'profiles', 'profile', 'user_profiles', 'userProfiles']
+      for (const tableName of userTables) {
+        if (user.userId) {
+          const { data, error } = await supabaseAdmin
+            .from(tableName)
+            .select('id,name,email,phone,avatar,userType,user_type,type,role,isPremium,is_premium,createdAt,tenantProfile,landlordProfile')
+            .eq('id', user.userId)
+            .limit(1)
+          if (!error && data && data.length > 0) {
+            const row = data[0]
+            profile = {
+              ...row,
+              userType: String(getField(row, ['userType', 'user_type', 'type', 'role']) || row.userType || 'TENANT'),
+              isPremium: Boolean(getField(row, ['isPremium', 'is_premium']))
+            }
+            break
+          }
+        }
+        if (user.email) {
+          const { data, error } = await supabaseAdmin
+            .from(tableName)
+            .select('id,name,email,phone,avatar,userType,user_type,type,role,isPremium,is_premium,createdAt,tenantProfile,landlordProfile')
+            .ilike('email', user.email)
+            .limit(1)
+          if (!error && data && data.length > 0) {
+            const row = data[0]
+            profile = {
+              ...row,
+              userType: String(getField(row, ['userType', 'user_type', 'type', 'role']) || row.userType || 'TENANT'),
+              isPremium: Boolean(getField(row, ['isPremium', 'is_premium']))
+            }
+            break
+          }
+        }
+      }
+    }
+    if (!profile) {
+      const fallbackUserType = (user.userType || 'TENANT').toUpperCase()
+      try {
+        const created = await prisma.user.create({
+          data: {
+            id: user.userId,
+            email: user.email,
+            password: `supabase_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            name: user.email ? user.email.split('@')[0] : 'user',
+            userType: fallbackUserType,
+            isPremium: false,
+            vipLevel: 'FREE',
+            dailyQuota: 10,
+            monthlyQuota: 100,
+            ...(fallbackUserType === 'TENANT' && {
+              tenantProfile: { create: {} }
+            }),
+            ...(fallbackUserType === 'LANDLORD' && {
+              landlordProfile: { create: {} }
+            })
+          },
+          select: profileSelect
+        })
+        profile = created
+      } catch (error: any) {
+        return NextResponse.json({
+          user: {
+            id: user.userId,
+            name: user.email ? user.email.split('@')[0] : '',
+            email: user.email,
+            userType: user.userType || 'TENANT',
+            isPremium: false
+          }
+        })
+      }
+    }
+
     const normalizeType = (value: any) => String(value || '').toUpperCase()
-    const finalUserType = normalizeType(profile?.userType || user.userType || 'TENANT')
+    let finalUserType = normalizeType(profile?.userType || user.userType || 'TENANT')
+    const detectLandlord = async () => {
+      if (finalUserType === 'LANDLORD') return
+      if (profile?.landlordProfile) {
+        finalUserType = 'LANDLORD'
+        return
+      }
+      const candidateIds = Array.from(new Set([profile?.id, user.userId, user.id].filter(Boolean).map((id) => String(id))))
+      try {
+        if (candidateIds.length > 0) {
+          const propertyCount = await prisma.property.count({
+            where: { landlordId: { in: candidateIds } }
+          })
+          if (propertyCount > 0) {
+            finalUserType = 'LANDLORD'
+            return
+          }
+        }
+      } catch {}
+      if (supabaseAdmin) {
+        const propertyTables = ['Property', 'property', 'properties', 'Listing', 'listing', 'listings']
+        const landlordFields = ['landlordId', 'landlord_id', 'ownerId', 'owner_id', 'userId', 'user_id']
+        for (const tableName of propertyTables) {
+          if (candidateIds.length > 0) {
+            for (const landlordField of landlordFields) {
+              const { data, error } = await supabaseAdmin
+                .from(tableName)
+                .select('id')
+                .in(landlordField, candidateIds)
+                .limit(1)
+              if (!error && data && data.length > 0) {
+                finalUserType = 'LANDLORD'
+                return
+              }
+            }
+          }
+          if (user.email) {
+            for (const emailField of ['landlordEmail', 'landlord_email', 'ownerEmail', 'owner_email', 'userEmail', 'user_email']) {
+              const { data, error } = await supabaseAdmin
+                .from(tableName)
+                .select('id')
+                .ilike(emailField, user.email)
+                .limit(1)
+              if (!error && data && data.length > 0) {
+                finalUserType = 'LANDLORD'
+                return
+              }
+            }
+          }
+        }
+      }
+    }
+    await detectLandlord()
+    if (finalUserType && normalizeType(profile.userType) !== finalUserType) {
+      try {
+        await prisma.user.update({
+          where: { id: profile.id },
+          data: { userType: finalUserType }
+        })
+      } catch {}
+    }
 
     return NextResponse.json({
       user: {
@@ -248,11 +269,35 @@ export async function PATCH(request: NextRequest) {
     const body = await request.json()
     const { name, phone, avatar } = body
 
-    const db = getDatabaseAdapter()
-    const updatedUser = await db.updateUser(user.userId, {
-      ...(name && { name }),
-      ...(phone !== undefined && { phone: phone || null }),
-      ...(avatar !== undefined && { avatar: avatar || null }),
+    const region = getAppRegion()
+    if (region === 'china') {
+      const db = getDatabaseAdapter()
+      const updatedUser = await db.updateUser(user.userId, {
+        ...(name && { name }),
+        ...(phone !== undefined && { phone: phone || null }),
+        ...(avatar !== undefined && { avatar: avatar || null }),
+      })
+      return NextResponse.json({ user: updatedUser })
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: user.userId },
+      data: {
+        ...(name && { name }),
+        ...(phone !== undefined && { phone: phone || null }),
+        ...(avatar !== undefined && { avatar: avatar || null }),
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        avatar: true,
+        userType: true,
+        isPremium: true,
+        tenantProfile: true,
+        landlordProfile: true,
+      }
     })
 
     return NextResponse.json({

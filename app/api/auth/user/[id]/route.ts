@@ -1,38 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { getCurrentUser } from '@/lib/auth-adapter'
 import { getDatabaseAdapter } from '@/lib/db-adapter'
 
+/**
+ * Get user by ID
+ * 使用数据库适配器，自动根据环境变量选择数据源
+ */
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: { id: string } }
 ) {
   try {
-    const { id } = await params
-    const db = getDatabaseAdapter()
-    
-    // Check if requester is authenticated
-    const token = request.headers.get('authorization')?.split(' ')[1]
-    if (!token) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    // We don't strictly enforce that the user can only see themselves here, 
-    // because this endpoint is used to fetch conversation partners.
-    // However, in a real app, you might want to check if the requester has a relationship with the target user.
-
-    const user = await db.findUserById(id)
-    
+    const user = await getCurrentUser(request)
     if (!user) {
-      return NextResponse.json({ error: 'User not found' }, { status: 404 })
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      )
     }
 
-    // Return public info only
+    const db = getDatabaseAdapter()
+    const targetUser = await db.findUserById(params.id)
+
+    if (!targetUser) {
+      return NextResponse.json(
+        { error: 'User not found' },
+        { status: 404 }
+      )
+    }
+
+    // 只返回必要的字段
     return NextResponse.json({
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      avatar: user.avatar,
-      userType: user.userType,
-      role: user.userType // Alias for compatibility
+      id: targetUser.id,
+      name: targetUser.name,
+      email: targetUser.email,
+      phone: targetUser.phone,
+      userType: targetUser.userType,
+      avatar: targetUser.avatar
     })
   } catch (error: any) {
     console.error('Get user error:', error)

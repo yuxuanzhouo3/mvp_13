@@ -1,24 +1,21 @@
 
 import { PrismaClient } from '@prisma/client'
-import dns from 'dns'
 
-// 强制 IPv4
-if (typeof dns.setDefaultResultOrder === 'function') {
-  dns.setDefaultResultOrder('ipv4first')
-}
+// Hardcode the direct URL for testing
+const directUrl = "postgresql://postgres.dhtfuyddjteoqduzvoqw:RDdoFMFmSTVCQP4r@aws-1-ap-south-1.pooler.supabase.com:5432/postgres?connect_timeout=30"
 
 const prisma = new PrismaClient({
-  log: ['query', 'info', 'warn', 'error'],
+  log: ['info', 'warn', 'error'],
   datasources: {
     db: {
-      url: process.env.DATABASE_URL
+      url: directUrl
     }
   }
 })
 
 async function main() {
-  console.log('Testing Prisma connection...')
-  console.log('DATABASE_URL:', process.env.DATABASE_URL?.replace(/:[^:]*@/, ':****@'))
+  console.log('Testing Direct Connection (5432)...')
+  console.log('URL:', directUrl.replace(/:[^:]*@/, ':****@'))
   
   const start = Date.now()
   try {
@@ -33,7 +30,6 @@ async function main() {
     console.error('Error name:', e.name)
     console.error('Error message:', e.message)
     console.error('Error code:', e.code)
-    console.error('Error meta:', e.meta)
   } finally {
     await prisma.$disconnect()
   }

@@ -1,7 +1,7 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useState, useEffect, useMemo } from "react"
+import { useRouter } from "next/navigation"
 import { useTranslations } from 'next-intl'
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -19,10 +19,11 @@ import { getCurrencySymbol } from "@/lib/utils"
 
 export default function TenantDashboard() {
   const router = useRouter()
-  const searchParams = useSearchParams()
   const t = useTranslations('dashboard')
   const tHero = useTranslations('hero')
   const tCommon = useTranslations('common')
+  const tPayment = useTranslations('payment')
+  const tFooter = useTranslations('footer')
   const currencySymbol = getCurrencySymbol()
   const isChina = process.env.NEXT_PUBLIC_APP_REGION === 'china'
   const [searchQuery, setSearchQuery] = useState("")
@@ -32,6 +33,8 @@ export default function TenantDashboard() {
   const [leases, setLeases] = useState<any[]>([])
   const [payments, setPayments] = useState<any[]>([])
   const [notifications, setNotifications] = useState<any[]>([])
+  const [hasSearched, setHasSearched] = useState(false)
+  const [searchLoading, setSearchLoading] = useState(false)
   const [stats, setStats] = useState({
     savedCount: 0,
     applicationsCount: 0,
@@ -45,6 +48,42 @@ export default function TenantDashboard() {
   const [activeTab, setActiveTab] = useState("ai-search")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  const uniqueLeases = useMemo(() => {
+    return leases.reduce((acc: any[], current) => {
+      const existingIndex = acc.findIndex(item => item.propertyId === current.propertyId);
+      if (existingIndex === -1) {
+        return [...acc, current];
+      }
+      
+      const existing = acc[existingIndex];
+      // If current is ACTIVE and existing is not, replace existing
+      if ((current.status === 'ACTIVE' || current.isActive) && !(existing.status === 'ACTIVE' || existing.isActive)) {
+        const newAcc = [...acc];
+        newAcc[existingIndex] = current;
+        return newAcc;
+      }
+      return acc;
+    }, []);
+  }, [leases]);
+
+  const uniqueApplications = useMemo(() => {
+    const map = new Map<string, any>()
+    applications.forEach((application) => {
+      const tenantId = application.tenantId || application.tenant?.id
+      const propertyId = application.propertyId || application.property?.id
+      const key = tenantId || propertyId
+        ? `tenant:${String(tenantId || 'unknown')}|property:${String(propertyId || 'unknown')}`
+        : `id:${String(application.id || '')}`
+      const existing = map.get(key)
+      const nextTime = new Date(application.updatedAt || application.appliedDate || application.createdAt || 0).getTime()
+      const existingTime = existing ? new Date(existing.updatedAt || existing.appliedDate || existing.createdAt || 0).getTime() : 0
+      if (!existing || nextTime >= existingTime) {
+        map.set(key, application)
+      }
+    })
+    return Array.from(map.values())
+  }, [applications])
 
   const renderAppStatus = (status?: string) => {
     const s = (status || '').toUpperCase()
@@ -78,7 +117,7 @@ export default function TenantDashboard() {
         break
       default:
         variant = "outline"
-        label = status || t('status')
+        label = status || (process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '状态' : 'Status')
     }
     
     // Using a custom Badge wrapper or styling since "success" variant might not exist in standard shadcn Badge
@@ -97,6 +136,23 @@ export default function TenantDashboard() {
         {label}
       </Badge>
     )
+  }
+
+  const resolveImageUrl = (images: any) => {
+    if (!images) return "/placeholder.svg"
+    if (Array.isArray(images)) {
+      return images[0] || "/placeholder.svg"
+    }
+    if (typeof images === "string") {
+      try {
+        const parsed = JSON.parse(images)
+        if (Array.isArray(parsed) && parsed[0]) {
+          return parsed[0]
+        }
+      } catch {}
+      return images.startsWith("http") ? images : "/placeholder.svg"
+    }
+    return "/placeholder.svg"
   }
 
   // Fetch user data and stats
@@ -221,7 +277,7 @@ export default function TenantDashboard() {
 
   // Handle Confirm Check-in
   const handleCheckIn = async (leaseId: string) => {
-    if (!confirm(t('confirmCheckIn') + "?")) return
+    if (!confirm(t('confirmCheckInPrompt') || (t('confirmCheckIn') + "?"))) return
     
     // Find payment for this lease - using robust matching logic similar to render
     const lease = leases.find(l => l.id === leaseId)
@@ -260,11 +316,11 @@ export default function TenantDashboard() {
             return
           }
         }
-        alert(err.error || err.message || "Failed to confirm check-in")
+        alert(err.error || err.message || t('failedToConfirmCheckIn') || (isChina ? '确认入住失败' : 'Failed to confirm check-in'))
       }
     } catch (e) {
       console.error(e)
-      alert("Error confirming check-in")
+      alert(t('errorConfirmingCheckIn') || (isChina ? '确认入住时发生错误' : 'Error confirming check-in'))
     }
   }
 
@@ -480,7 +536,7 @@ export default function TenantDashboard() {
               {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '搜索' : t('search')}
             </TabsTrigger>
             <TabsTrigger value="rentals">
-              {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '我的租赁' : t('myRentals')}
+              {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '我的租赁' : tFooter('myRentals')}
             </TabsTrigger>
             <TabsTrigger value="saved">
               {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '收藏的房源' : t('savedProperties')}
@@ -504,7 +560,7 @@ export default function TenantDashboard() {
             <Card>
               <CardHeader>
                 <CardTitle>
-                  {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '我的租赁' : t('myRentals')}
+                  {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '我的租赁' : tFooter('myRentals')}
                 </CardTitle>
                 <CardDescription>
                   {process.env.NEXT_PUBLIC_APP_REGION === 'china' ? '跟踪您的租金支付和押金状态' : t('trackRentPayments')}
@@ -513,7 +569,7 @@ export default function TenantDashboard() {
               <CardContent>
                 {leases.length > 0 ? (
                   <div className="space-y-4">
-                    {leases.map((lease) => {
+                    {uniqueLeases.map((lease) => {
                        // Check for escrow payment - 通过多种方式匹配
                        const escrowPayment = payments.find(p => {
                          // 方法1: 通过metadata中的leaseId匹配
@@ -587,7 +643,7 @@ export default function TenantDashboard() {
                                 )}
                               </div>
                             )}
-                            <Button variant="outline" size="sm" onClick={() => window.location.href=`/properties/${lease.propertyId}`}>
+                            <Button variant="outline" size="sm" onClick={() => router.push(`/properties/${lease.propertyId}`)}>
                               {isChina ? "查看详情" : tCommon('viewDetails')}
                             </Button>
                           </div>
@@ -617,37 +673,48 @@ export default function TenantDashboard() {
                       onChange={(e) => setSearchQuery(e.target.value)}
                     />
                   </div>
-                  <Button onClick={async () => {
+                  <Button
+                    onClick={async () => {
                     if (!searchQuery.trim()) {
                       alert(tCommon('error') || "Please enter search content")
                       return
                     }
                     const token = localStorage.getItem("auth-token")
+                    setSearchLoading(true)
+                    setHasSearched(true)
                     try {
-                      const response = await fetch(`/api/properties/search?city=${encodeURIComponent(searchQuery)}`, {
+                      const response = await fetch(`/api/properties/search?q=${encodeURIComponent(searchQuery)}`, {
                         headers: token ? { Authorization: `Bearer ${token}` } : {}
                       })
                       const data = await response.json()
-                      if (data.properties) {
+                      if (response.ok && data.properties) {
                         setSearchResults(data.properties.map((p: any) => ({
                           id: p.id,
                           title: p.title,
-                          location: `${p.city}, ${p.state}`,
+                          location: [p.city, p.state].filter(Boolean).join(", "),
                           price: p.price,
                           beds: p.bedrooms,
                           baths: p.bathrooms,
                           sqft: p.sqft || 0,
-                          image: typeof p.images === 'string' ? (JSON.parse(p.images)?.[0] || '/placeholder.svg') : (p.images?.[0] || '/placeholder.svg'),
+                          image: resolveImageUrl(p.images),
                           status: 'available',
                         })))
+                      } else {
+                        setSearchResults([])
+                        alert(data.error || "Search failed, please try again later")
                       }
                     } catch (err) {
+                      setSearchResults([])
                       console.error(err)
                       alert("Search failed, please try again later")
+                    } finally {
+                      setSearchLoading(false)
                     }
-                  }}>
+                  }}
+                  disabled={searchLoading}
+                  >
                     <Search className="mr-2 h-4 w-4" />
-                    {isChina ? "搜索" : "Search"}
+                    {searchLoading ? (tCommon('loading') || "Loading...") : (isChina ? "搜索" : "Search")}
                   </Button>
                 </div>
               </CardContent>
@@ -663,7 +730,11 @@ export default function TenantDashboard() {
             ) : (
               <Card>
                 <CardContent className="p-12 text-center">
-                  <p className="text-muted-foreground">{t('enterSearchCriteria') || "Enter search criteria and click search to find properties"}</p>
+                  <p className="text-muted-foreground">
+                    {hasSearched
+                      ? (t('noPropertiesFound') || "No properties found")
+                      : (t('enterSearchCriteria') || "Enter search criteria and click search to find properties")}
+                  </p>
                 </CardContent>
               </Card>
             )}
@@ -696,9 +767,9 @@ export default function TenantDashboard() {
                 <CardDescription>{t('trackApplicationStatus')}</CardDescription>
               </CardHeader>
               <CardContent>
-                {applications.length > 0 ? (
+                {uniqueApplications.length > 0 ? (
                   <div className="space-y-4">
-                    {applications.map((application) => (
+                    {uniqueApplications.map((application) => (
                       <div key={application.id} className="flex items-center justify-between p-4 border rounded-lg">
                         <div>
                           <div className="font-semibold">{application.property?.title || t('property')}</div>
@@ -709,18 +780,40 @@ export default function TenantDashboard() {
                             {t('deposit')}: {currencySymbol}{application.depositAmount?.toLocaleString() || 0}
                           </div>
                         </div>
-                        <div className="text-right">
-                          <Badge variant={application.status === "APPROVED" || application.status === "AGENT_APPROVED" ? "default" : "secondary"}>
-                            {renderAppStatus(application.status)}
-                          </Badge>
+                      <div className="text-right">
+                          {renderAppStatus(application.status)}
+                          {((application.status || '').toUpperCase() === 'APPROVED' || (application.status || '').toUpperCase() === 'AGENT_APPROVED') ? (
+                            <div className="mt-2 text-xs text-muted-foreground">
+                              {tPayment('status') || "Status"}: {tPayment('pending') || "Pending Payment"}
+                            </div>
+                          ) : null}
                           <div className="mt-2">
-                            <Button 
-                              size="sm" 
-                              variant="outline"
-                              onClick={() => window.location.href = `/properties/${application.propertyId}`}
-                            >
-                              {tCommon('viewDetails') || tCommon('view')}
-                            </Button>
+                            <div className="flex items-center justify-end gap-2">
+                              {((application.status || '').toUpperCase() === 'APPROVED' || (application.status || '').toUpperCase() === 'AGENT_APPROVED') ? (
+                                <Button 
+                                  size="sm"
+                                  onClick={() => window.location.href = `/dashboard/tenant/payments`}
+                                >
+                                  {tPayment('title') || "Pay"}
+                                </Button>
+                              ) : null}
+                              {((application.status || '').toUpperCase() === 'REJECTED') ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => router.push(`/dashboard/tenant/apply?propertyId=${application.propertyId}`)}
+                                >
+                                  {isChina ? "重新申请" : "Reapply"}
+                                </Button>
+                              ) : null}
+                              <Button 
+                                size="sm" 
+                                variant="outline"
+                                onClick={() => window.location.href = `/properties/${application.propertyId}`}
+                              >
+                                {tCommon('viewDetails') || tCommon('view')}
+                              </Button>
+                            </div>
                           </div>
                         </div>
                       </div>

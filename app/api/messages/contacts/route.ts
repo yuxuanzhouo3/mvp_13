@@ -56,9 +56,7 @@ export async function GET(request: NextRequest) {
           name: true,
           email: true,
           userType: true,
-          avatar: true,
-          landlordProfile: { select: { representedById: true } },
-          tenantProfile: { select: { representedById: true } }
+          avatar: true
         }
       }))
 
@@ -70,7 +68,6 @@ export async function GET(request: NextRequest) {
       }
 
       const contactsMap = new Map()
-      const userType = (currentUser.userType || '').toUpperCase()
 
       const allMyMessages = (await runWithRetry(() => prisma.message.findMany({
         where: {
@@ -129,28 +126,7 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      if (userType === 'LANDLORD') {
-        // 1. Fetch Agent if represented
-        if (currentUser.landlordProfile?.representedById) {
-           const agent = await runWithRetry(() => prisma.user.findUnique({
-             where: { id: currentUser.landlordProfile!.representedById },
-             select: { id: true, name: true, email: true, userType: true, avatar: true }
-           }))
-           if (agent && !contactsMap.has(agent.id)) {
-             contactsMap.set(agent.id, {
-               id: agent.id,
-               name: agent.name,
-               email: agent.email,
-               role: agent.userType,
-               avatar: agent.avatar,
-               lastMessage: "",
-               time: null,
-               unread: 0
-             })
-           }
-        }
-
-        // 2. Fetch Tenants from Properties -> Applications
+      if (currentUser.userType === 'LANDLORD') {
         const properties = await runWithRetry(() => prisma.property.findMany({
           where: { landlordId: user.id },
           select: { id: true, title: true, landlordId: true }
@@ -182,28 +158,7 @@ export async function GET(request: NextRequest) {
             }
           }
         }
-      } else if (userType === 'TENANT') {
-        // 1. Fetch Agent if represented
-        if (currentUser.tenantProfile?.representedById) {
-           const agent = await runWithRetry(() => prisma.user.findUnique({
-             where: { id: currentUser.tenantProfile!.representedById },
-             select: { id: true, name: true, email: true, userType: true, avatar: true }
-           }))
-           if (agent && !contactsMap.has(agent.id)) {
-             contactsMap.set(agent.id, {
-               id: agent.id,
-               name: agent.name,
-               email: agent.email,
-               role: agent.userType,
-               avatar: agent.avatar,
-               lastMessage: "",
-               time: null,
-               unread: 0
-             })
-           }
-        }
-
-        // 2. Fetch Landlords from Applications
+      } else if (currentUser.userType === 'TENANT') {
         const applications = await withPrismaRetry(() => prisma.application.findMany({
           where: { tenantId: user.id },
           select: { propertyId: true }
@@ -263,7 +218,7 @@ export async function GET(request: NextRequest) {
             }
           }
         }
-      } else if (userType === 'AGENT') {
+      } else if (currentUser.userType === 'AGENT') {
         const allUsers = await runWithRetry(() => prisma.user.findMany({
           where: {
             userType: { in: ['LANDLORD', 'TENANT'] },
@@ -286,7 +241,6 @@ export async function GET(request: NextRequest) {
           }
         }
       }
-
 
       if (contactsMap.size === 0) {
         const otherUsers = await runWithRetry(() => prisma.user.findMany({

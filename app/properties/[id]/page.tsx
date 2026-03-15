@@ -481,12 +481,7 @@ export default function PropertyDetailPage() {
                     
                     const targetUser = property.agent || property.landlord
                     if (targetUser) {
-                      const normalizedType = String(userType || '').toUpperCase()
-                      const dashboardType = normalizedType === 'LANDLORD'
-                        ? 'landlord'
-                        : normalizedType === 'AGENT'
-                          ? 'agent'
-                          : 'tenant'
+                      const dashboardType = userType === 'AGENT' ? 'agent' : 'tenant'
                       router.push(`/dashboard/${dashboardType}/messages?userId=${targetUser.id}`)
                     }
                   }}

@@ -37,10 +37,6 @@ export function AIChat({ userType }: AIChatProps) {
   const [selectedTenant, setSelectedTenant] = useState<any>(null)
   const router = useRouter()
 
-  const cleanText = (text: string) => {
-    return text?.replace(/^(property\.|dashboard\.|common\.|application\.|payment\.)/i, '') || text
-  }
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!query.trim()) {
@@ -191,14 +187,12 @@ export function AIChat({ userType }: AIChatProps) {
       {results && (
         <Card>
           <CardHeader>
-            <CardTitle>{cleanText(t('searchResultTitle') || "Search Results")}</CardTitle>
-            <CardDescription>{cleanText(results.message)}</CardDescription>
+            <CardTitle>{t('searchResultTitle') || "Search Results"}</CardTitle>
+            <CardDescription>{results.message}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {results.results && results.results.some((r: any) => r.properties && r.properties.length > 0) ? (
-              results.results.map((result: any, index: number) => {
-                if (!result.properties || result.properties.length === 0) return null;
-                return (
+            {results.results && results.results.length > 0 ? (
+              results.results.map((result: any, index: number) => (
                 <div key={index} className="space-y-4">
                   <div className="flex items-center justify-between">
                     <h3 className="font-semibold">{result.platform}</h3>
@@ -207,32 +201,59 @@ export function AIChat({ userType }: AIChatProps) {
                     </span>
                   </div>
                   
-                  {/* Property Cards Grid */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {result.properties.map((property: any, pIndex: number) => (
-                      <PropertyCard 
-                        key={property.id || pIndex} 
-                        property={{
-                          id: property.id,
-                          title: property.title,
-                          location: `${property.city || ''} ${property.state || ''}`.trim(),
-                          price: property.price,
-                          beds: property.bedrooms,
-                          baths: property.bathrooms,
-                          sqft: property.sqft,
-                          image: property.images?.[0] || '/placeholder.svg',
-                          status: property.status
-                        }}
-                      />
-                    ))}
-                  </div>
+                  {/* 显示房源结果 (租客搜索) */}
+                  {result.properties && result.properties.length > 0 && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {result.properties.slice(0, 6).map((property: any) => (
+                        <PropertyCard
+                          key={property.id}
+                          property={{
+                            id: property.id,
+                            title: property.title,
+                            location: `${property.city}, ${property.state}`,
+                            price: property.price,
+                            beds: property.bedrooms,
+                            baths: property.bathrooms,
+                            sqft: property.sqft || 0,
+                            image: property.image || "/placeholder.svg",
+                          }}
+                        />
+                      ))}
+                    </div>
+                  )}
+
+                  {/* 显示租客结果 (房东搜索) */}
+                  {result.tenants && result.tenants.length > 0 && (
+                    <div className="space-y-2">
+                      {result.tenants.slice(0, 5).map((tenant: any, idx: number) => (
+                        <Card key={idx}>
+                          <CardContent className="p-4">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <h4 className="font-semibold">{tenant.name || `Tenant ${idx + 1}`}</h4>
+                                <p className="text-sm text-muted-foreground">{tenant.email}</p>
+                                {tenant.monthlyIncome && (
+                                  <p className="text-sm">{t('monthlyIncome')}: {currencySymbol}{tenant.monthlyIncome.toLocaleString()}</p>
+                                )}
+                                {tenant.creditScore && (
+                                  <p className="text-sm">{t('creditScore')}: {tenant.creditScore}</p>
+                                )}
+                              </div>
+                              <Button size="sm" variant="outline" onClick={() => setSelectedTenant(tenant)}>
+                                {t('viewDetails')}
+                              </Button>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  )}
                 </div>
-                )
-              })
+              ))
             ) : (
-              <div className="text-center py-8 text-muted-foreground">
-                {t('noPropertiesFound') || "No properties found matching your criteria."}
-              </div>
+              <p className="text-muted-foreground text-center py-8">
+                {tSearch('noPropertiesFound') || "No search results found. Please try a different query."}
+              </p>
             )}
           </CardContent>
         </Card>

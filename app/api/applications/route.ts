@@ -97,31 +97,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Ensure user exists in DB before creating application (for global region)
-    if (region === 'global') {
-      try {
-        const dbUser = await runWithRetry(() => prisma.user.findUnique({ where: { id: user.id } }))
-        if (!dbUser) {
-          console.log('User not found in DB, attempting to sync:', user.id)
-          // Try to sync user from auth data
-          await runWithRetry(() => prisma.user.create({
-            data: {
-              id: user.id,
-              email: user.email,
-              name: user.name || user.email.split('@')[0],
-              userType: user.userType || 'TENANT',
-              password: 'placeholder-password-managed-by-supabase', // Placeholder for Supabase auth users
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            }
-          }))
-        }
-      } catch (userError) {
-        console.warn('Failed to check/sync user:', userError)
-        // Continue and let the foreign key constraint fail if necessary
-      }
-    }
-
     // 检查是否已经申请过
     const allApplications = region === 'global'
       ? await runWithRetry(() => prisma.application.findMany({
@@ -142,8 +117,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const finalDepositAmount = depositAmount ? parseFloat(depositAmount) : (property.deposit || 0)
-
     const application = region === 'global'
       ? await runWithRetry(() => prisma.application.create({
           data: {
@@ -151,7 +124,7 @@ export async function POST(request: NextRequest) {
             propertyId,
             monthlyIncome: monthlyIncome ? parseFloat(monthlyIncome) : null,
             creditScore: creditScore ? parseInt(creditScore) : null,
-            depositAmount: finalDepositAmount,
+            depositAmount: depositAmount ? parseFloat(depositAmount) : property.deposit,
             message,
             status: 'PENDING',
             appliedDate: new Date(),
@@ -162,7 +135,7 @@ export async function POST(request: NextRequest) {
           propertyId,
           monthlyIncome: monthlyIncome ? parseFloat(monthlyIncome) : null,
           creditScore: creditScore ? parseInt(creditScore) : null,
-          depositAmount: finalDepositAmount,
+          depositAmount: depositAmount ? parseFloat(depositAmount) : property.deposit,
           message,
           status: 'PENDING',
           appliedDate: new Date(),
@@ -286,8 +259,6 @@ export async function GET(request: NextRequest) {
     }
     const isPrisma = region === 'global' && !useSupabaseRest
 
-    const hintedUserId = String(request.headers.get('x-user-id') || '').trim()
-    const hintedUserEmail = String(request.headers.get('x-user-email') || '').trim()
     const authHeader = request.headers.get('authorization')
     const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : undefined
     const supabaseClient = createSupabaseServerClient(accessToken)
@@ -339,9 +310,6 @@ export async function GET(request: NextRequest) {
     }
     const resolvedUserId = dbUser?.id || user.id
     const agentIdSet = new Set([String(user.id), String(resolvedUserId)])
-    if (hintedUserId) {
-      agentIdSet.add(hintedUserId)
-    }
     let tokenUserId: string | null = null
     if (accessToken && supabaseClient) {
       try {
@@ -359,32 +327,7 @@ export async function GET(request: NextRequest) {
         }
       } catch {}
     }
-    const resolvedEmailForLookup = String(dbUser?.email || user.email || hintedUserEmail || '').trim()
-    if (!tokenUserId && resolvedEmailForLookup && supabaseAdmin) {
-      try {
-        const adminApi = (supabaseAdmin as any)?.auth?.admin || (supabaseAdmin as any)?.auth?.api
-        if (adminApi?.getUserByEmail) {
-          const result = await adminApi.getUserByEmail(resolvedEmailForLookup)
-          const adminUser = result?.data?.user
-          if (adminUser?.id) {
-            tokenUserId = String(adminUser.id)
-          }
-        } else if (adminApi?.listUsers) {
-          const listResult = await adminApi.listUsers()
-          const users = listResult?.data?.users || listResult?.data || []
-          const found = Array.isArray(users)
-            ? users.find((u: any) => String(u?.email || '').toLowerCase() === resolvedEmailForLookup.toLowerCase())
-            : null
-          if (found?.id) {
-            tokenUserId = String(found.id)
-          }
-        }
-      } catch {}
-    }
     const landlordIdSet = new Set<string>([String(resolvedUserId), String(user.id)])
-    if (hintedUserId) {
-      landlordIdSet.add(hintedUserId)
-    }
     if (tokenUserId) landlordIdSet.add(String(tokenUserId))
     const requestedUserType = String(userType || '').toUpperCase()
     const dbUserType = String(dbUser?.userType || '').toUpperCase()
@@ -459,8 +402,8 @@ export async function GET(request: NextRequest) {
           propertyIds = await fetchPropertyIdsByField(landlordField, landlordIds)
           if (propertyIds.length > 0) break
         }
-        if (propertyIds.length === 0 && resolvedEmailForLookup) {
-          propertyIds = await fetchPropertyIdsByEmail(resolvedEmailForLookup)
+        if (propertyIds.length === 0 && user.email) {
+          propertyIds = await fetchPropertyIdsByEmail(user.email)
         }
       } else if (effectiveUserType === 'AGENT') {
         for (const agentField of agentFields) {
@@ -494,8 +437,8 @@ export async function GET(request: NextRequest) {
             }
           }
         }
-        if (propertyIds.length === 0 && resolvedEmailForLookup) {
-          propertyIds = await fetchPropertyIdsByEmail(resolvedEmailForLookup)
+        if (propertyIds.length === 0 && user.email) {
+          propertyIds = await fetchPropertyIdsByEmail(user.email)
         }
       }
 
@@ -519,29 +462,26 @@ export async function GET(request: NextRequest) {
             }
             if (applications.length > 0) break
           }
-          if (applications.length === 0 && propertyIds.length === 0) {
+          if (applications.length === 0) {
             return NextResponse.json({ applications: [] })
           }
         }
-        
-        if (propertyIds.length > 0) {
-          for (const client of supabaseReaders) {
-            for (const tableName of applicationTables) {
-              for (const propertyField of propertyIdFields) {
-                let query = client
-                  .from(tableName)
-                  .select('*')
-                  .in(propertyField, propertyIds)
-                const { data, error } = await query
-                if (!error && data) {
-                  applications = data.map(normalizeApplication)
-                  break
-                }
+        for (const client of supabaseReaders) {
+          for (const tableName of applicationTables) {
+            for (const propertyField of propertyIdFields) {
+              let query = client
+                .from(tableName)
+                .select('*')
+                .in(propertyField, propertyIds)
+              const { data, error } = await query
+              if (!error && data) {
+                applications = data.map(normalizeApplication)
+                break
               }
-              if (applications.length > 0) break
             }
             if (applications.length > 0) break
           }
+          if (applications.length > 0) break
         }
       } else {
         for (const client of supabaseReaders) {
@@ -637,20 +577,10 @@ export async function GET(request: NextRequest) {
         baseWhere.tenantId = resolvedUserId
       } else if (effectiveUserType === 'LANDLORD') {
         const landlordIds = Array.from(landlordIdSet)
-        let landlordProperties = await runWithRetry(() => prisma.property.findMany({
+        const landlordProperties = await runWithRetry(() => prisma.property.findMany({
           where: { landlordId: landlordIds.length === 1 ? landlordIds[0] : { in: landlordIds } },
           select: { id: true }
         }))
-        if (landlordProperties.length === 0 && resolvedEmailForLookup) {
-          landlordProperties = await runWithRetry(() => prisma.property.findMany({
-            where: {
-              landlord: {
-                email: { equals: resolvedEmailForLookup, mode: 'insensitive' }
-              }
-            },
-            select: { id: true }
-          }))
-        }
         const propertyIds = landlordProperties.map((p) => p.id)
         if (propertyIds.length === 0) {
           forceEmpty = true
@@ -714,14 +644,14 @@ export async function GET(request: NextRequest) {
         applications = applications.filter((app: any) => String(getField(app, ['tenantId', 'tenant_id']) || '') === String(resolvedUserId))
       } else if (effectiveUserType === 'LANDLORD') {
         const properties = await effectiveDb.query('properties', {})
-        const normalizedEmail = resolvedEmailForLookup ? String(resolvedEmailForLookup).toLowerCase() : ''
+        const normalizedEmail = user?.email ? String(user.email).toLowerCase() : ''
         const propertyIds = new Set(
           properties
             .filter((p: any) => {
-              const ownerId = String(getField(p, ['landlordId', 'landlord_id', 'ownerId', 'owner_id', 'userId', 'user_id']) || p.landlord?.id || p.landlord?._id || '')
+              const ownerId = String(getField(p, ['landlordId', 'landlord_id', 'ownerId', 'owner_id', 'userId', 'user_id']) || '')
               if (ownerId && landlordIdSet.has(ownerId)) return true
               if (!normalizedEmail) return false
-              const ownerEmail = String(getField(p, ['landlordEmail', 'landlord_email', 'ownerEmail', 'owner_email', 'userEmail', 'user_email']) || p.landlord?.email || '').toLowerCase()
+              const ownerEmail = String(getField(p, ['landlordEmail', 'landlord_email', 'ownerEmail', 'owner_email', 'userEmail', 'user_email']) || '').toLowerCase()
               return ownerEmail && ownerEmail === normalizedEmail
             })
             .map((p: any) => String(getField(p, ['id']) || ''))
@@ -730,10 +660,10 @@ export async function GET(request: NextRequest) {
         applications = applications.filter((app: any) => {
           const pid = String(getField(app, ['propertyId', 'property_id']) || '')
           if (pid && propertyIds.has(pid)) return true
-          const appLandlordId = String(getField(app, ['landlordId', 'landlord_id', 'ownerId', 'owner_id', 'userId', 'user_id']) || app.landlord?.id || app.landlord?._id || '')
+          const appLandlordId = String(getField(app, ['landlordId', 'landlord_id', 'ownerId', 'owner_id', 'userId', 'user_id']) || '')
           if (appLandlordId && landlordIdSet.has(appLandlordId)) return true
           if (!normalizedEmail) return false
-          const appEmail = String(getField(app, ['landlordEmail', 'landlord_email', 'ownerEmail', 'owner_email', 'userEmail', 'user_email']) || app.landlord?.email || '').toLowerCase()
+          const appEmail = String(getField(app, ['landlordEmail', 'landlord_email', 'ownerEmail', 'owner_email', 'userEmail', 'user_email']) || '').toLowerCase()
           return appEmail && appEmail === normalizedEmail
         })
       } else if (effectiveUserType === 'AGENT') {

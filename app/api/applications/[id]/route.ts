@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createNotification } from '@/lib/notification-service'
 import { getCurrentUser } from '@/lib/auth-adapter'
 import { getDatabaseAdapter } from '@/lib/db-adapter'
 import { trackEvent } from '@/lib/analytics'
@@ -401,17 +400,18 @@ export async function PATCH(
 
       // 6. Notify Tenant to Pay (Create Notification)
       try {
-        await createNotification({
+        await db.create('notifications', {
           userId: tenant.id,
           type: 'SYSTEM',
           title: notificationTitle,
           message: notificationMessage,
+          isRead: false,
           link: paymentUrl || `/dashboard/tenant/payments?leaseId=${lease.id}`,
-          metadata: {
+          metadata: JSON.stringify({
              leaseId: lease.id,
              paymentId: paymentId,
              actionUrl: paymentUrl || `/dashboard/tenant/payments?leaseId=${lease.id}`
-          }
+          })
         })
         console.log('Notification created successfully for tenant:', tenant.id)
       } catch (notifErr: any) {

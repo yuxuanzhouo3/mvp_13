@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-adapter'
 import { getDatabaseAdapter } from '@/lib/db-adapter'
 import { createSupabaseServerClient, supabaseAdmin } from '@/lib/supabase'
-import { prisma } from '@/lib/db'
 
 /**
  * Get all properties (for agents to browse and manage)
@@ -41,52 +40,6 @@ export async function GET(request: NextRequest) {
       String(getField(obj, ['userType', 'user_type', 'type', 'role']) || '').toUpperCase()
     const propertyAgentFields = ['agentId', 'agent_id', 'listingAgentId', 'listing_agent_id', 'brokerId', 'broker_id']
     const propertyLandlordFields = ['landlordId', 'landlord_id', 'ownerId', 'owner_id', 'userId', 'user_id']
-    const normalizeProperty = (p: any) => {
-      const addressObject =
-        p?.addressInfo ?? p?.addressDetail ?? p?.addressDetails ?? p?.address_details
-      const locationObject = p?.location ?? p?.geo ?? p?.mapLocation
-      const addressValue =
-        getField(p, ['address', 'addressLine', 'address_line', 'street', 'streetAddress', 'street_address']) ??
-        getField(addressObject, ['address', 'detail', 'detailAddress', 'fullAddress', 'full_address']) ??
-        (typeof p?.location === 'string' ? p.location : undefined)
-      const cityValue =
-        getField(p, ['city', 'cityName', 'city_name', 'city_cn', 'district', 'region']) ??
-        getField(locationObject, ['city']) ??
-        getField(addressObject, ['city']) ??
-        getField(p?.address, ['city'])
-      const stateValue =
-        getField(p, ['state', 'stateName', 'state_name', 'province', 'provinceName', 'province_name']) ??
-        getField(locationObject, ['state']) ??
-        getField(addressObject, ['state']) ??
-        getField(p?.address, ['state'])
-      return {
-        ...p,
-        id: getField(p, ['id', '_id', 'propertyId', 'property_id']),
-        landlordId: getField(p, propertyLandlordFields),
-        agentId: getField(p, propertyAgentFields),
-        title: getField(p, ['title', 'name', 'propertyName', 'property_name', 'buildingName', 'communityName']),
-        description: getField(p, ['description', 'desc', 'details']),
-        address: addressValue,
-        city: cityValue,
-        state: stateValue,
-        zipCode: getField(p, ['zipCode', 'zip_code', 'postalCode', 'postal_code']),
-        country: getField(p, ['country', 'countryName', 'country_name']),
-        price: getField(p, ['price', 'rent', 'monthlyRent', 'monthly_rent', 'amount']),
-        deposit: getField(p, ['deposit', 'securityDeposit', 'security_deposit']),
-        bedrooms: getField(p, ['bedrooms', 'beds', 'bedrooms_count', 'bedroom_count']),
-        bathrooms: getField(p, ['bathrooms', 'baths', 'bathrooms_count', 'bathroom_count']),
-        sqft: getField(p, ['sqft', 'squareFeet', 'square_feet', 'area']),
-        propertyType: getField(p, ['propertyType', 'property_type', 'type', 'category']),
-        status: getField(p, ['status', 'listingStatus', 'listing_status']),
-        images: getField(p, ['images', 'image', 'image_urls', 'photos', 'photoUrls', 'photo_urls']),
-        amenities: getField(p, ['amenities', 'features', 'facilities']),
-        petFriendly: getField(p, ['petFriendly', 'pet_friendly', 'isPetFriendly', 'is_pet_friendly']),
-        availableFrom: getField(p, ['availableFrom', 'available_from', 'availableDate', 'available_date']),
-        leaseDuration: getField(p, ['leaseDuration', 'lease_duration', 'leaseTerm', 'lease_term']),
-        createdAt: getField(p, ['createdAt', 'created_at', 'createTime', 'create_time']),
-        updatedAt: getField(p, ['updatedAt', 'updated_at', 'updateTime', 'update_time']),
-      }
-    }
     let agentId = user.id
     if (user.email) {
       try {
@@ -180,37 +133,12 @@ export async function GET(request: NextRequest) {
     let allUsers: any[] = []
     let allProperties: any[] = []
     try {
-      allUsers = await prisma.user.findMany({
-        orderBy: { createdAt: 'desc' },
-        include: {
-          landlordProfile: true,
-          tenantProfile: true
-        }
-      })
-      allProperties = await prisma.property.findMany({
-        orderBy: { createdAt: 'desc' }
-      })
+      allUsers = await db.query('users', {}, { orderBy: { createdAt: 'desc' } })
+      allProperties = await db.query('properties', {}, { orderBy: { createdAt: 'desc' } })
     } catch (error) {
-      try {
-        allUsers = await db.query('users', {}, { orderBy: { createdAt: 'desc' } })
-        allProperties = await db.query('properties', {}, { orderBy: { createdAt: 'desc' } })
-        if (allUsers.length > 0 && !allUsers[0].landlordProfile) {
-          const landlordProfiles = await db.query('landlordProfiles')
-          const tenantProfiles = await db.query('tenantProfiles')
-          const landlordMap = new Map(landlordProfiles.map((p: any) => [String(p.userId || p.user_id), p]))
-          const tenantMap = new Map(tenantProfiles.map((p: any) => [String(p.userId || p.user_id), p]))
-          allUsers = allUsers.map((u: any) => ({
-            ...u,
-            landlordProfile: u.landlordProfile || landlordMap.get(String(u.id)),
-            tenantProfile: u.tenantProfile || tenantMap.get(String(u.id)),
-          }))
-        }
-      } catch {
-        allUsers = await fetchUsersFromSupabase()
-        allProperties = await fetchPropertiesFromSupabase()
-      }
+      allUsers = await fetchUsersFromSupabase()
+      allProperties = await fetchPropertiesFromSupabase()
     }
-    allProperties = allProperties.map(normalizeProperty)
     const representedLandlords = allUsers.filter((u: any) => {
       const type = getUserType(u)
       if (type !== 'LANDLORD') return false
@@ -220,15 +148,15 @@ export async function GET(request: NextRequest) {
     const landlordIds = new Set(representedLandlords.map((l: any) => String(getField(l, ['id', 'userId', 'user_id']) || l.id)))
 
     const properties = allProperties.filter((p: any) => {
-      const pid = String((p.agentId ?? getField(p, propertyAgentFields)) || '')
-      const lid = String((p.landlordId ?? getField(p, propertyLandlordFields)) || '')
+      const pid = String(getField(p, propertyAgentFields) || '')
+      const lid = String(getField(p, propertyLandlordFields) || '')
       return agentIdSet.has(pid) || landlordIds.has(lid)
     })
     
     // 为每个房源添加房东信息
     const propertiesWithLandlord = await Promise.all(
       properties.map(async (property: any) => {
-        const landlordId = property.landlordId ?? getField(property, propertyLandlordFields)
+        const landlordId = getField(property, propertyLandlordFields)
         let landlord = landlordId ? allUsers.find((u: any) => String(getField(u, ['id', 'userId', 'user_id']) || '') === String(landlordId)) : null
         if (!landlord && landlordId) {
           try {

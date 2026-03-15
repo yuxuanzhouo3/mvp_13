@@ -20,38 +20,17 @@ export default function TenantsPage() {
   const [tenants, setTenants] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const currencySymbol = getCurrencySymbol()
-  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 8000) => {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
-    try {
-      return await fetch(url, {
-        ...options,
-        signal: controller.signal,
-        cache: "no-store",
-      })
-    } finally {
-      clearTimeout(timeoutId)
-    }
-  }
 
   useEffect(() => {
     fetchTenants()
   }, [])
 
-  const cleanText = (text: string) => {
-    if (!text) return ''
-    return text.replace(/^(dashboard\.|property\.|common\.|application\.|payment\.)/i, '')
-  }
-
   const fetchTenants = async () => {
     try {
       const token = localStorage.getItem("auth-token")
-      if (!token) {
-        router.replace("/auth/login")
-        return
-      }
+      if (!token) return
 
-      const response = await fetchWithTimeout("/api/landlord/tenants", {
+      const response = await fetch("/api/landlord/tenants", {
         headers: { Authorization: `Bearer ${token}` },
       })
 
@@ -111,7 +90,7 @@ export default function TenantsPage() {
                     {tenant.propertyName && (
                       <div className="flex items-center text-sm">
                         <Home className="h-4 w-4 mr-1" />
-                        {cleanText(tenant.propertyName)}
+                        {tenant.propertyName}
                       </div>
                     )}
                     {tenant.leaseStart && tenant.leaseEnd && (
@@ -125,23 +104,13 @@ export default function TenantsPage() {
                       </div>
                     )}
                     <Badge variant={tenant.source === 'lease' ? 'default' : 'secondary'} className="mt-1">
-                      {tenant.source === 'lease' ? t('activeLease') : cleanText(t('approved'))}
+                      {tenant.source === 'lease' ? t('activeLease') : t('approved')}
                     </Badge>
                   </div>
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => {
-                      if (tenant.id) {
-                        router.push(`/dashboard/landlord/messages?userId=${tenant.id}`)
-                      } else {
-                        toast({
-                          title: tCommon('error'),
-                          description: "Invalid tenant ID",
-                          variant: "destructive",
-                        })
-                      }
-                    }}
+                    onClick={() => router.push(`/dashboard/landlord/messages?userId=${tenant.id}`)}
                   >
                     <MessageSquare className="h-4 w-4 mr-1" />
                     {t('messages')}

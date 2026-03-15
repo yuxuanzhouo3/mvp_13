@@ -1,8 +1,7 @@
 "use client"
 
-import { useState, useEffect, Suspense } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import { useSearchParams } from "next/navigation"
 import { useTranslations } from 'next-intl'
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -15,10 +14,8 @@ import { TenantApplications } from "@/components/dashboard/tenant-applications"
 import { MessageCenter } from "@/components/dashboard/message-center"
 import { useToast } from "@/hooks/use-toast"
 
-function AgentDashboardContent() {
+export default function AgentDashboard() {
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const initialUserId = searchParams.get('userId')
   const { toast } = useToast()
   const t = useTranslations('dashboard')
   const tCommon = useTranslations('common')
@@ -104,7 +101,7 @@ function AgentDashboardContent() {
         }
       }
 
-      await fetchDashboardData(token, user)
+      await fetchDashboardData(token)
     }
 
     bootstrap()
@@ -121,18 +118,9 @@ function AgentDashboardContent() {
       .replace(/(\d+)\s*months?\s*ago/g, '$1 个月前')
   }
 
-  const cleanText = (text: string) => {
-    if (!text) return ''
-    return text.replace(/^(dashboard\.|property\.|common\.|application\.|payment\.)/i, '')
-  }
-
   const localizeStatus = (status?: string) => {
-    let s = (status || '').toLowerCase()
-    // Remove prefixes if present
-    s = s.replace(/^(dashboard\.|property\.|common\.|application\.|payment\.)/i, '')
-    
-    if (process.env.NEXT_PUBLIC_APP_REGION !== 'china') return cleanText(status || '')
-    
+    const s = (status || '').toLowerCase()
+    if (process.env.NEXT_PUBLIC_APP_REGION !== 'china') return status || ''
     switch (s) {
       case 'success':
         return tCommon('success')
@@ -145,96 +133,72 @@ function AgentDashboardContent() {
       case 'failed':
         return t('failed') || '失败'
       default:
-        return cleanText(status || '')
+        return status || ''
     }
   }
 
-  const fetchWithTimeout = async (url: string, options?: RequestInit, timeoutMs = 12000) => {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+  const fetchDashboardData = async (providedToken?: string) => {
     try {
-      return await fetch(url, { ...(options || {}), signal: controller.signal })
-    } finally {
-      clearTimeout(timeoutId)
-    }
-  }
-
-  const fetchDashboardData = async (providedToken: string, currentUser: any) => {
-    try {
-      const token = providedToken
-      const user = currentUser
-      if (!token || !user) {
+      const token = providedToken || localStorage.getItem("auth-token")
+      if (!token) {
         router.replace("/auth/login")
         return
       }
 
-      const [propertiesResult, landlordResult, tenantResult, messagesResult, pendingAppsResult] = await Promise.allSettled([
-        fetchWithTimeout(`/api/agent/properties`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetchWithTimeout(`/api/agent/landlords`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetchWithTimeout(`/api/agent/tenants`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetchWithTimeout("/api/messages/unread-count", { headers: { Authorization: `Bearer ${token}` } }),
-        fetchWithTimeout(`/api/applications?status=PENDING&agentId=${user.id}`, { headers: { Authorization: `Bearer ${token}` } }),
+      const [propertiesRes, landlordRes, tenantRes, messagesRes, pendingAppsRes] = await Promise.all([
+        fetch("/api/agent/properties", { headers: { Authorization: `Bearer ${token}` } }),
+        fetch("/api/agent/landlords", { headers: { Authorization: `Bearer ${token}` } }),
+        fetch("/api/agent/tenants", { headers: { Authorization: `Bearer ${token}` } }),
+        fetch("/api/messages/unread-count", { headers: { Authorization: `Bearer ${token}` } }),
+        fetch("/api/applications?userType=agent&status=PENDING", { headers: { Authorization: `Bearer ${token}` } }),
       ])
-      const propertiesRes = propertiesResult.status === 'fulfilled' ? propertiesResult.value : null
-      const landlordRes = landlordResult.status === 'fulfilled' ? landlordResult.value : null
-      const tenantRes = tenantResult.status === 'fulfilled' ? tenantResult.value : null
-      const messagesRes = messagesResult.status === 'fulfilled' ? messagesResult.value : null
-      const pendingAppsRes = pendingAppsResult.status === 'fulfilled' ? pendingAppsResult.value : null
 
-      const unauthorized = [propertiesRes, landlordRes, tenantRes, messagesRes, pendingAppsRes].filter(
-        (res) => res?.status === 401 || res?.status === 403
+      const unauthorized = [propertiesRes, landlordRes, tenantRes, messagesRes, pendingAppsRes].some(
+        (res) => res.status === 401 || res.status === 403
       )
-      // Only logout if multiple requests fail with 401, indicating invalid token
-      if (unauthorized.length >= 3) {
+      if (unauthorized) {
         handleUnauthorized()
         return
       }
 
-      if (propertiesRes?.ok) {
+      if (propertiesRes.ok) {
         const data = await propertiesRes.json()
-        const propertiesList = Array.isArray(data) ? data : data.properties || []
-        setProperties(propertiesList)
-        setStats(prev => ({ ...prev, totalProperties: propertiesList.length }))
+        setProperties(data.properties || [])
+        setStats(prev => ({ ...prev, totalProperties: data.properties?.length || 0 }))
       }
 
-      if (landlordRes?.ok) {
+      if (landlordRes.ok) {
         const data = await landlordRes.json()
-        setLandlords(Array.isArray(data) ? data : data.landlords || [])
-        setStats(prev => ({ ...prev, totalLandlords: (Array.isArray(data) ? data : data.landlords || []).length }))
+        setLandlords(data.landlords || [])
+        setStats(prev => ({ ...prev, totalLandlords: data.landlords?.length || 0 }))
       }
 
-      if (tenantRes?.ok) {
+      if (tenantRes.ok) {
         const data = await tenantRes.json()
-        setTenants(Array.isArray(data) ? data : data.tenants || [])
-        setStats(prev => ({ ...prev, totalTenants: (Array.isArray(data) ? data : data.tenants || []).length }))
+        setTenants(data.tenants || [])
+        setStats(prev => ({ ...prev, totalTenants: data.tenants?.length || 0 }))
       }
 
-      if (messagesRes?.ok) {
+      if (messagesRes.ok) {
         const data = await messagesRes.json()
         setStats(prev => ({ ...prev, unreadMessages: data.count || 0 }))
       }
       
-      if (pendingAppsRes?.ok) {
+      if (pendingAppsRes.ok) {
         const data = await pendingAppsRes.json()
-        const apps = Array.isArray(data) ? data : data.applications || []
-        setStats(prev => ({ ...prev, pendingDeals: apps.length }))
+        setStats(prev => ({ ...prev, pendingDeals: data.applications?.length || 0 }))
       }
 
-      const activityResult = await Promise.allSettled([
-        fetchWithTimeout("/api/agent/activity", {
-          headers: { Authorization: `Bearer ${token}` },
-        }),
-      ])
-      const activityRes = activityResult[0].status === 'fulfilled' ? activityResult[0].value : null
-      if (activityRes) {
-        if (activityRes.status === 401 || activityRes.status === 403) {
-          handleUnauthorized()
-          return
-        }
-        if (activityRes.ok) {
-          const data = await activityRes.json()
-          setRecentActivity(data.activities || [])
-        }
+      const activityRes = await fetch("/api/agent/activity", {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (activityRes.status === 401 || activityRes.status === 403) {
+        handleUnauthorized()
+        return
+      }
+      if (activityRes.ok) {
+        const data = await activityRes.json()
+        setRecentActivity(data.activities || [])
       }
 
     } catch (error) {
@@ -250,17 +214,17 @@ function AgentDashboardContent() {
         {/* Header */}
         <div className="flex justify-between items-center">
           <div>
-            <h1 className="text-3xl font-bold">{cleanText(t('welcomeBackAgent', { name: userName }) || `${t('welcome')}, ${userName}!`)}</h1>
-            <p className="text-muted-foreground">{cleanText(t('manageEfficiently') || "Manage your properties, landlords, and tenants efficiently.")}</p>
+            <h1 className="text-3xl font-bold">{t('welcomeBackAgent', { name: userName }) || `${t('welcome')}, ${userName}!`}</h1>
+            <p className="text-muted-foreground">{t('manageEfficiently') || "Manage your properties, landlords, and tenants efficiently."}</p>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="outline" onClick={() => router.push("/dashboard/agent/tenants")}>
               <UserPlus className="h-4 w-4 mr-2" />
-              {cleanText(t('inviteTenant') || "Invite Tenant")}
+              {t('inviteTenant') || "Invite Tenant"}
             </Button>
             <Button variant="outline" onClick={() => router.push("/dashboard/agent/landlords")}>
               <UserPlus className="h-4 w-4 mr-2" />
-              {cleanText(t('inviteLandlord') || "Invite Landlord")}
+              {t('inviteLandlord') || "Invite Landlord"}
             </Button>
           </div>
         </div>
@@ -271,9 +235,9 @@ function AgentDashboardContent() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">{cleanText(t('totalProperties'))}</p>
+                  <p className="text-sm font-medium text-muted-foreground">{t('totalProperties')}</p>
                   <p className="text-2xl font-bold">{stats.totalProperties}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{cleanText(t('propertiesUnderManagement') || "Properties under management")}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{t('propertiesUnderManagement') || "Properties under management"}</p>
                 </div>
                 <Building className="h-8 w-8 text-primary" />
               </div>
@@ -283,9 +247,9 @@ function AgentDashboardContent() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">{cleanText(t('landlords'))}</p>
+                  <p className="text-sm font-medium text-muted-foreground">{t('landlords')}</p>
                   <p className="text-2xl font-bold">{stats.totalLandlords}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{cleanText(t('partnerLandlords') || "Partner landlords")}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{t('partnerLandlords') || "Partner landlords"}</p>
                 </div>
                 <Users className="h-8 w-8 text-primary" />
               </div>
@@ -295,9 +259,9 @@ function AgentDashboardContent() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">{cleanText(t('tenantsServed') || "Tenants Served")}</p>
+                  <p className="text-sm font-medium text-muted-foreground">{t('tenantsServed') || "Tenants Served"}</p>
                   <p className="text-2xl font-bold">{stats.totalTenants}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{cleanText(t('activeTenantRelationships') || "Active tenant relationships")}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{t('activeTenantRelationships') || "Active tenant relationships"}</p>
                 </div>
                 <Users className="h-8 w-8 text-primary" />
               </div>
@@ -307,9 +271,9 @@ function AgentDashboardContent() {
             <CardContent className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">{cleanText(t('unreadMessages') || "Unread Messages")}</p>
+                  <p className="text-sm font-medium text-muted-foreground">{t('unreadMessages') || "Unread Messages"}</p>
                   <p className="text-2xl font-bold">{stats.unreadMessages}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{cleanText(t('newMessages') || "New messages")}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{t('newMessages') || "New messages"}</p>
                 </div>
                 <MessageSquare className="h-8 w-8 text-primary" />
               </div>
@@ -320,8 +284,8 @@ function AgentDashboardContent() {
         {/* Recent Activity */}
         <Card>
           <CardHeader>
-            <CardTitle>{cleanText(t('recentActivity'))}</CardTitle>
-            <CardDescription>{cleanText(t('latestUpdatesFromNetwork') || "Latest updates from your network")}</CardDescription>
+            <CardTitle>{t('recentActivity')}</CardTitle>
+            <CardDescription>{t('latestUpdatesFromNetwork') || "Latest updates from your network"}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
@@ -341,7 +305,7 @@ function AgentDashboardContent() {
                   </div>
                 ))
               ) : (
-                <div className="text-center py-8 text-muted-foreground">{cleanText(t('noRecentActivity') || "No recent activity")}</div>
+                <div className="text-center py-8 text-muted-foreground">{t('noRecentActivity') || "No recent activity"}</div>
               )}
             </div>
           </CardContent>
@@ -350,11 +314,11 @@ function AgentDashboardContent() {
         {/* Main Content Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList>
-            <TabsTrigger value="properties">{cleanText(t('properties'))}</TabsTrigger>
-            <TabsTrigger value="applications">{cleanText(t('applications') || "Applications")}</TabsTrigger>
-            <TabsTrigger value="landlords">{cleanText(t('landlords'))}</TabsTrigger>
-            <TabsTrigger value="tenants">{cleanText(t('tenants'))}</TabsTrigger>
-            <TabsTrigger value="messages">{cleanText(t('messages'))}</TabsTrigger>
+            <TabsTrigger value="properties">{t('properties')}</TabsTrigger>
+            <TabsTrigger value="applications">{t('applications') || "Applications"}</TabsTrigger>
+            <TabsTrigger value="landlords">{t('landlords')}</TabsTrigger>
+            <TabsTrigger value="tenants">{t('tenants')}</TabsTrigger>
+            <TabsTrigger value="messages">{t('messages')}</TabsTrigger>
           </TabsList>
 
           <TabsContent value="properties">
@@ -362,18 +326,18 @@ function AgentDashboardContent() {
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <div>
-                    <CardTitle>{cleanText(t('managedProperties') || "Managed Properties")}</CardTitle>
-                    <CardDescription>{cleanText(t('propertiesUnderManagement') || "Properties under your management")}</CardDescription>
+                    <CardTitle>{t('managedProperties') || "Managed Properties"}</CardTitle>
+                    <CardDescription>{t('propertiesUnderManagement') || "Properties under your management"}</CardDescription>
                   </div>
                   <Button onClick={() => router.push("/dashboard/agent/add-property")}>
                     <Building className="h-4 w-4 mr-2" />
-                    {cleanText(t('addProperty') || "Add Property")}
+                    {t('addProperty') || "Add Property"}
                   </Button>
                 </div>
               </CardHeader>
               <CardContent>
                 {loading ? (
-                  <div className="text-center py-8 text-muted-foreground">{cleanText(tCommon('loading'))}</div>
+                  <div className="text-center py-8 text-muted-foreground">{tCommon('loading')}</div>
                 ) : properties.length > 0 ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     {properties.map((property: any) => (
@@ -381,7 +345,7 @@ function AgentDashboardContent() {
                         key={property.id}
                         property={{
                           id: property.id,
-                          title: cleanText(property.title),
+                          title: property.title,
                           location: `${property.city}, ${property.state}`,
                           price: property.price,
                           beds: property.bedrooms,
@@ -390,7 +354,7 @@ function AgentDashboardContent() {
                           image: typeof property.images === 'string'
                             ? (JSON.parse(property.images)?.[0] || '/placeholder.svg')
                             : (property.images?.[0] || '/placeholder.svg'),
-                          status: localizeStatus(property.status),
+                          status: property.status?.toLowerCase() || 'available',
                         }}
                         showSaveButton={false}
                       />
@@ -398,7 +362,7 @@ function AgentDashboardContent() {
                   </div>
                 ) : (
                   <div className="text-center py-8 text-muted-foreground">
-                    {cleanText(t('noPropertiesYet') || "No properties yet. Start by connecting with landlords.")}
+                    {t('noPropertiesYet') || "No properties yet. Start by connecting with landlords."}
                   </div>
                 )}
               </CardContent>
@@ -413,12 +377,12 @@ function AgentDashboardContent() {
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle>{cleanText(t('partnerLandlords') || "Partner Landlords")}</CardTitle>
-                  <CardDescription>{cleanText(t('landlordsYouWorkWith') || "Landlords you work with")}</CardDescription>
+                  <CardTitle>{t('partnerLandlords') || "Partner Landlords"}</CardTitle>
+                  <CardDescription>{t('landlordsYouWorkWith') || "Landlords you work with"}</CardDescription>
                 </div>
                 {landlords.length > 4 && (
                   <Button variant="outline" onClick={() => router.push("/dashboard/agent/landlords")}>
-                    {cleanText(tCommon('view') || "View All")}
+                    {tCommon('view') || "View All"}
                   </Button>
                 )}
               </CardHeader>
@@ -441,20 +405,20 @@ function AgentDashboardContent() {
                           variant="outline"
                           onClick={() => router.push(`/dashboard/agent/messages?userId=${landlord.id}`)}
                         >
-                          {cleanText(t('messages'))}
+                          {t('messages')}
                         </Button>
                       </div>
                     ))}
                   </div>
                 ) : (
                   <div className="text-center py-8 text-muted-foreground">
-                    {cleanText(t('noLandlordsYet') || "No landlords yet")}
+                    {t('noLandlordsYet') || "No landlords yet"}
                   </div>
                 )}
                 {landlords.length > 0 && landlords.length <= 4 && (
                   <div className="mt-4 text-center">
                     <Button variant="outline" onClick={() => router.push("/dashboard/agent/landlords")}>
-                      {cleanText(t('viewAllLandlords') || "View All Landlords")}
+                      {t('viewAllLandlords') || "View All Landlords"}
                     </Button>
                   </div>
                 )}
@@ -466,12 +430,12 @@ function AgentDashboardContent() {
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
                 <div>
-                  <CardTitle>{cleanText(t('tenantClients') || "Tenant Clients")}</CardTitle>
-                  <CardDescription>{cleanText(t('tenantsYouHelping') || "Tenants you're helping find homes")}</CardDescription>
+                  <CardTitle>{t('tenantClients') || "Tenant Clients"}</CardTitle>
+                  <CardDescription>{t('tenantsYouHelping') || "Tenants you're helping find homes"}</CardDescription>
                 </div>
                 {tenants.length > 4 && (
                   <Button variant="outline" onClick={() => router.push("/dashboard/agent/tenants")}>
-                    {cleanText(tCommon('view') || "View All")}
+                    {tCommon('view') || "View All"}
                   </Button>
                 )}
               </CardHeader>
@@ -494,20 +458,20 @@ function AgentDashboardContent() {
                           variant="outline"
                           onClick={() => router.push(`/dashboard/agent/messages?userId=${tenant.id}`)}
                         >
-                          {cleanText(t('messages'))}
+                          {t('messages')}
                         </Button>
                       </div>
                     ))}
                   </div>
                 ) : (
                   <div className="text-center py-8 text-muted-foreground">
-                    {cleanText(t('noTenantsYet') || "No tenants yet")}
+                    {t('noTenantsYet') || "No tenants yet"}
                   </div>
                 )}
                 {tenants.length > 0 && tenants.length <= 4 && (
                   <div className="mt-4 text-center">
                     <Button variant="outline" onClick={() => router.push("/dashboard/agent/tenants")}>
-                      {cleanText(t('viewAllTenants') || "View All Tenants")}
+                      {t('viewAllTenants') || "View All Tenants"}
                     </Button>
                   </div>
                 )}
@@ -521,13 +485,5 @@ function AgentDashboardContent() {
         </Tabs>
       </div>
     </DashboardLayout>
-  )
-}
-
-export default function AgentDashboard() {
-  return (
-    <Suspense fallback={<div className="flex items-center justify-center min-h-screen">Loading...</div>}>
-      <AgentDashboardContent />
-    </Suspense>
   )
 }

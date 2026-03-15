@@ -23,18 +23,11 @@ export async function GET(request: NextRequest) {
   }
 }
 
-import { getCurrentUser } from '@/lib/auth-adapter'
-
 /**
- * Create a new testimonial (any authenticated user can create)
+ * Create a new testimonial (admin only)
  */
 export async function POST(request: NextRequest) {
   try {
-    const user = await getCurrentUser(request)
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
     const body = await request.json()
     const { name, role, content, rating, avatar } = body
 
@@ -52,11 +45,11 @@ export async function POST(request: NextRequest) {
       name,
       role,
       content,
-      rating: parseInt(String(rating)),
+      rating: parseInt(rating),
       avatar: avatar || null,
       isActive: true,
       createdAt: new Date(),
-      userId: user.id // Optionally link to user
+      updatedAt: new Date(),
     })
 
     return NextResponse.json({ testimonial })

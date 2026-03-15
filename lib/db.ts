@@ -16,58 +16,31 @@ const globalForPrisma = globalThis as unknown as {
   prismaDirect: PrismaClient | undefined
 }
 
-function normalizePrismaUrl(rawUrl?: string): string | undefined {
-  if (!rawUrl) return rawUrl
-  try {
-    const url = new URL(rawUrl)
-    const isSupabasePooler = url.hostname.includes('pooler.supabase.com') && url.port === '6543'
-    if (!isSupabasePooler) return rawUrl
+// 主库：使用 DATABASE_URL（多为 PgBouncer pooler）
+export const prisma = globalForPrisma.prisma ?? new PrismaClient({
+  log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
+  datasources: {
+    db: {
+      url: process.env.DATABASE_URL,
+    },
+  },
+})
 
-    if (!url.searchParams.has('pgbouncer')) {
-      url.searchParams.set('pgbouncer', 'true')
-    }
-    // Remove forced connection_limit=1 to respect .env settings
-    // if (!url.searchParams.has('connection_limit')) {
-    //   url.searchParams.set('connection_limit', '1')
-    // }
-    if (!url.searchParams.has('pool_timeout')) {
-      url.searchParams.set('pool_timeout', '30')
-    }
-
-    return url.toString()
-  } catch {
-    return rawUrl
-  }
-}
-
-const normalizedDatabaseUrl = normalizePrismaUrl(process.env.DATABASE_URL)
-
+// 直连：用于登录等，绕过 PgBouncer「check out timeout」
+// 优先用 DIRECT_URL；若未配置且 DATABASE_URL 为 Supabase pooler，则自动推导直连
 function getDirectUrl(): string | null {
   const env = process.env.DIRECT_URL
-  if (env) {
-    const normalizedEnv = normalizePrismaUrl(env) || env
-    try {
-      const url = new URL(normalizedEnv)
-      const isSupabasePooler = url.hostname.includes('pooler.supabase.com') && url.port === '6543'
+  if (env) return env
 
-      // 如果 DIRECT_URL 已经是直连地址（非 pooler），直接使用它
-      if (!isSupabasePooler) {
-        return normalizedEnv
-      }
-
-      // 如果 DIRECT_URL 仍然指向 pooler，则视为误配置
-      // 后续会尝试基于 DATABASE_URL 自动推导真正的直连地址
-    } catch {
-      // 如果无法解析 URL，则直接返回原始值，避免意外中断
-      return normalizedEnv
-    }
-  }
-
-  if (process.env.NEXT_PUBLIC_APP_REGION === 'china') {
+  // 强制禁用自动推导直连 URL，避免无效连接尝试和超时等待
+  // 目前即使是国际版，在部分网络环境下 5432 也可能不可达，且会导致长达 10s+ 的等待
+  // 因此暂时全量禁用自动推导直连，除非显式配置 DIRECT_URL
+  const disableAutoDirect = true
+  if (process.env.NEXT_PUBLIC_APP_REGION === 'china' || disableAutoDirect) {
     return null
   }
 
-  const u = normalizedDatabaseUrl
+  const u = process.env.DATABASE_URL
   if (!u) return null
   try {
     const url = new URL(u)
@@ -85,19 +58,7 @@ function getDirectUrl(): string | null {
   }
 }
 const directUrl = getDirectUrl()
-
-const primaryDatabaseUrl = normalizedDatabaseUrl
-
-export const prisma = globalForPrisma.prisma ?? new PrismaClient({
-  log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
-  datasources: {
-    db: {
-      url: primaryDatabaseUrl,
-    },
-  },
-})
-
-export const prismaDirect: PrismaClient | null = directUrl && directUrl !== primaryDatabaseUrl
+export const prismaDirect: PrismaClient | null = directUrl
   ? (globalForPrisma.prismaDirect ?? new PrismaClient({
       log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
       datasources: { db: { url: directUrl } },
@@ -126,7 +87,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 export async function withPrismaRetry<T>(
   operation: () => Promise<T>,
   maxRetries: number = 3,
-  timeoutMs: number = 20000
+  timeoutMs: number = 20000 // 默认20秒超时，给数据库连接更多时间
 ): Promise<T> {
   let lastError: any
   
@@ -164,7 +125,7 @@ export async function withPrismaRetry<T>(
         try {
           await withTimeout(
             prisma.$connect(),
-            15000
+            15000 // 重连 15s 超时，海外 DB 冷启动较慢
           )
         } catch (connectError) {
           console.warn('[Prisma] Reconnect failed:', connectError)

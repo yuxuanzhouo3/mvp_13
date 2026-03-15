@@ -9,33 +9,6 @@ type Props = {
   params: Promise<{ id: string }>
 }
 
-const normalizeId = (value: any) => String(value ?? '').trim()
-
-const getObjectId = (obj: any, keys: string[]) => {
-  for (const key of keys) {
-    const value = obj?.[key]
-    if (value !== undefined && value !== null && value !== '') {
-      return normalizeId(value)
-    }
-  }
-  return ''
-}
-
-const resolveUserIdCandidates = async (db: any, user: { id: string; email?: string | null }) => {
-  const idSet = new Set<string>()
-  const directId = normalizeId(user?.id)
-  if (directId) idSet.add(directId)
-  const email = String(user?.email || '').trim()
-  try {
-    const dbUser =
-      (directId ? await db.findUserById(directId).catch(() => null) : null) ||
-      (email ? await db.findUserByEmail(email).catch(() => null) : null)
-    const dbId = normalizeId(dbUser?.id)
-    if (dbId) idSet.add(dbId)
-  } catch {}
-  return idSet
-}
-
 const isConnectionError = (error: any) => {
   const msg = String(error?.message || '').toLowerCase()
   return msg.includes('server has closed the connection') ||
@@ -303,7 +276,7 @@ export async function PATCH(
   request: NextRequest,
   props: Props
 ) {
-  const params = await props.params
+  const params = await props.params; // await params
   try {
     const user = await getCurrentUser(request)
     if (!user) {
@@ -323,18 +296,14 @@ export async function PATCH(
       )
     }
 
-    const actorIdSet = await resolveUserIdCandidates(db, user)
-    const propertyLandlordId = getObjectId(property, ['landlordId', 'landlord_id', 'ownerId', 'owner_id', 'userId', 'user_id'])
-    const propertyAgentId = getObjectId(property, ['agentId', 'agent_id'])
-
-    const isLandlord = propertyLandlordId ? actorIdSet.has(propertyLandlordId) : false
-    let isAgent = propertyAgentId ? actorIdSet.has(propertyAgentId) : false
+    // 权限检查：房东、关联中介或代理中介
+    const isLandlord = property.landlordId === user.id
+    let isAgent = property.agentId === user.id
 
     if (!isLandlord && !isAgent && user.userType === 'AGENT') {
         try {
-           const landlord = propertyLandlordId ? await db.findUserById(propertyLandlordId) : null
-           const representedById = normalizeId(landlord?.representedById)
-           if (representedById && actorIdSet.has(representedById)) {
+           const landlord = await db.findUserById(property.landlordId)
+           if (landlord && landlord.representedById === user.id) {
                isAgent = true
            }
         } catch (err) {
@@ -369,7 +338,7 @@ export async function DELETE(
   request: NextRequest,
   props: Props
 ) {
-  const params = await props.params
+  const params = await props.params; // await params
   try {
     const user = await getCurrentUser(request)
     if (!user) {
@@ -389,18 +358,14 @@ export async function DELETE(
       )
     }
 
-    const actorIdSet = await resolveUserIdCandidates(db, user)
-    const propertyLandlordId = getObjectId(property, ['landlordId', 'landlord_id', 'ownerId', 'owner_id', 'userId', 'user_id'])
-    const propertyAgentId = getObjectId(property, ['agentId', 'agent_id'])
-
-    const isLandlord = propertyLandlordId ? actorIdSet.has(propertyLandlordId) : false
-    let isAgent = propertyAgentId ? actorIdSet.has(propertyAgentId) : false
+    // 权限检查：房东、关联中介或代理中介
+    const isLandlord = property.landlordId === user.id
+    let isAgent = property.agentId === user.id
 
     if (!isLandlord && !isAgent && user.userType === 'AGENT') {
         try {
-           const landlord = propertyLandlordId ? await db.findUserById(propertyLandlordId) : null
-           const representedById = normalizeId(landlord?.representedById)
-           if (representedById && actorIdSet.has(representedById)) {
+           const landlord = await db.findUserById(property.landlordId)
+           if (landlord && landlord.representedById === user.id) {
                isAgent = true
            }
         } catch (err) {

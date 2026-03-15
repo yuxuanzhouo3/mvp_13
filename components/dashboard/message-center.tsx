@@ -8,7 +8,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
-import { MessageSquare, Send, Phone, Video, RefreshCw } from "lucide-react"
+import { Plus, MessageSquare, Send, Phone, Video, RefreshCw, UserPlus } from "lucide-react"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { useToast } from "@/hooks/use-toast"
 
 interface Message {
@@ -40,13 +42,18 @@ interface CurrentUser {
   userType: string
 }
 
-function MessageCenterContent() {
+interface MessageCenterProps {
+  initialUserId?: string | null
+}
+
+function MessageCenterContent({ initialUserId }: MessageCenterProps) {
   const searchParams = useSearchParams()
   const { toast } = useToast()
   const t = useTranslations('dashboard')
   const tMessage = useTranslations('message')
   const tCommon = useTranslations('common')
   const [conversations, setConversations] = useState<Conversation[]>([])
+  const [contacts, setContacts] = useState<any[]>([]) // Store raw contacts
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null)
   const [messages, setMessages] = useState<Message[]>([])
   const [messageInput, setMessageInput] = useState("")
@@ -54,9 +61,58 @@ function MessageCenterContent() {
   const [sending, setSending] = useState(false)
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [isNewChatOpen, setIsNewChatOpen] = useState(false)
   
   const isFetchingRef = useRef(false)
+  const selectedConversationRef = useRef<string | null>(null)
   const messagesContainerRef = useRef<HTMLDivElement>(null)
+  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 8000) => {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        cache: "no-store",
+      })
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  }
+  const parseTokenHints = (token: string) => {
+    try {
+      const payloadBase64 = token.split(".")[1]
+      if (!payloadBase64) return { userId: "", email: "" }
+      const normalized = payloadBase64.replace(/-/g, "+").replace(/_/g, "/")
+      const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4)
+      const decoded = JSON.parse(atob(padded))
+      const userId = decoded?.userId || decoded?.sub || decoded?.id || decoded?.uid || decoded?.user_id || ""
+      const email = decoded?.email || decoded?.userEmail || decoded?.preferred_username || ""
+      return { userId: String(userId || ""), email: String(email || "") }
+    } catch {
+      return { userId: "", email: "" }
+    }
+  }
+  const getAuthHeaders = (token: string) => {
+    const headers: Record<string, string> = { Authorization: `Bearer ${token}` }
+    const userStr = localStorage.getItem("user")
+    let parsedUser: any = null
+    if (userStr) {
+      try {
+        parsedUser = JSON.parse(userStr)
+      } catch {
+        localStorage.removeItem("user")
+      }
+    }
+    const tokenHints = parseTokenHints(token)
+    const hintedId = parsedUser?.id || parsedUser?.userId || parsedUser?._id
+    const hintedEmail = parsedUser?.email
+    if (hintedId) headers["x-user-id"] = String(hintedId)
+    if (hintedEmail) headers["x-user-email"] = String(hintedEmail)
+    if (!headers["x-user-id"] && tokenHints.userId) headers["x-user-id"] = tokenHints.userId
+    if (!headers["x-user-email"] && tokenHints.email) headers["x-user-email"] = tokenHints.email
+    return headers
+  }
 
   // Scroll to bottom
   const scrollToBottom = useCallback(() => {
@@ -82,7 +138,7 @@ function MessageCenterContent() {
 
   // Handle URL params for auto-selecting conversation
   useEffect(() => {
-    const userId = searchParams.get('userId')
+    const userId = initialUserId || searchParams.get('userId')
     if (userId && !loading) {
       // Wait for conversations to load, then check
       if (conversations.length > 0) {
@@ -110,7 +166,7 @@ function MessageCenterContent() {
         return () => clearTimeout(timer)
       }
     }
-  }, [searchParams, loading, conversations])
+  }, [searchParams, loading, conversations, initialUserId])
 
   // Polling for new messages and conversations - without auto scroll
   useEffect(() => {
@@ -133,11 +189,11 @@ function MessageCenterContent() {
       if (!token) return
 
       const [conversationsRes, contactsRes] = await Promise.all([
-        fetch("/api/messages/conversations", {
-          headers: { Authorization: `Bearer ${token}` },
+        fetchWithTimeout("/api/messages/conversations", {
+          headers: getAuthHeaders(token),
         }),
-        fetch("/api/messages/contacts", {
-          headers: { Authorization: `Bearer ${token}` },
+        fetchWithTimeout("/api/messages/contacts", {
+          headers: getAuthHeaders(token),
         })
       ])
 
@@ -158,9 +214,10 @@ function MessageCenterContent() {
 
       if (contactsRes.ok) {
         const contactsData = await contactsRes.json()
-        const contacts = contactsData.contacts || []
+        const fetchedContacts = contactsData.contacts || []
+        setContacts(fetchedContacts) // Update contacts state
         
-        contacts.forEach((contact: any) => {
+        fetchedContacts.forEach((contact: any) => {
           if (!conversationIds.has(contact.id)) {
             allConversations.push({
               id: contact.id,
@@ -220,11 +277,11 @@ function MessageCenterContent() {
       console.log("Fetching conversations...")
 
       const [conversationsRes, contactsRes] = await Promise.all([
-        fetch("/api/messages/conversations", {
-          headers: { Authorization: `Bearer ${token}` },
+        fetchWithTimeout("/api/messages/conversations", {
+          headers: getAuthHeaders(token),
         }),
-        fetch("/api/messages/contacts", {
-          headers: { Authorization: `Bearer ${token}` },
+        fetchWithTimeout("/api/messages/contacts", {
+          headers: getAuthHeaders(token),
         })
       ])
 
@@ -247,10 +304,10 @@ function MessageCenterContent() {
 
       if (contactsRes.ok) {
         const contactsData = await contactsRes.json()
-        console.log("Contacts data:", contactsData)
-        const contacts = contactsData.contacts || []
+        const fetchedContacts = contactsData.contacts || []
+        setContacts(fetchedContacts) // Update contacts state
         
-        contacts.forEach((contact: any) => {
+        fetchedContacts.forEach((contact: any) => {
           if (!conversationIds.has(contact.id)) {
             allConversations.push({
               id: contact.id,
@@ -273,6 +330,7 @@ function MessageCenterContent() {
       
       // 更新对话列表，确保未读数正确显示
       setConversations(prev => {
+        // Start with API results
         const updated = allConversations.map(newConv => {
           const existing = prev.find(p => p.id === newConv.id)
           // 如果对话已存在且当前被选中，保持选中状态并更新未读数
@@ -282,11 +340,11 @@ function MessageCenterContent() {
           return existing || newConv
         })
         
-        // 添加新的对话
-        allConversations.forEach(newConv => {
-          if (!updated.find(u => u.id === newConv.id)) {
-            updated.push(newConv)
-          }
+        // Preserve local conversations that are not in API (e.g. newly created empty conversations)
+        prev.forEach(prevConv => {
+            if (!updated.find(u => u.id === prevConv.id)) {
+                updated.push(prevConv)
+            }
         })
         
         return updated
@@ -294,7 +352,10 @@ function MessageCenterContent() {
       
       // Auto-select first conversation if none selected
       if (allConversations.length > 0 && !selectedConversation) {
-        handleSelectConversation(allConversations[0])
+        // Use setTimeout to avoid state update conflicts during render cycle if any
+        setTimeout(() => {
+             handleSelectConversation(allConversations[0])
+        }, 0)
       }
     } catch (error) {
       console.error("Failed to fetch conversations:", error)
@@ -316,9 +377,15 @@ function MessageCenterContent() {
 
       console.log("Loading messages for partner:", partnerId)
 
-      const response = await fetch(`/api/messages?partnerId=${partnerId}`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const response = await fetchWithTimeout(`/api/messages?partnerId=${partnerId}`, {
+        headers: getAuthHeaders(token),
       })
+
+      // Check if we are still on the same conversation
+      if (partnerId !== selectedConversationRef.current) {
+        console.log("Conversation changed, discarding messages for:", partnerId)
+        return
+      }
 
       if (response.ok) {
         const data = await response.json()
@@ -353,9 +420,18 @@ function MessageCenterContent() {
       })
       return
     }
+    
     setSelectedConversation(conversation)
+    selectedConversationRef.current = conversation.id
     setMessages([])
-    loadMessages(conversation.id, true) // Scroll to bottom on initial load
+    
+    // Force reset fetching state to allow immediate load
+    isFetchingRef.current = false
+    
+    // Use setTimeout to ensure state updates propagate and avoid race conditions
+    setTimeout(() => {
+        loadMessages(conversation.id, true) // Scroll to bottom on initial load
+    }, 10)
   }
 
   const handleSendMessage = async () => {
@@ -464,7 +540,7 @@ function MessageCenterContent() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          ...getAuthHeaders(token),
         },
         body: JSON.stringify(requestBody),
       })
@@ -531,7 +607,7 @@ function MessageCenterContent() {
       console.log("Fetching user for conversation:", userId)
 
       const response = await fetch(`/api/auth/user/${userId}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: getAuthHeaders(token),
       })
 
       if (response.ok) {
@@ -568,12 +644,14 @@ function MessageCenterContent() {
           const existing = prev.find(c => c.id === newConv.id)
           if (existing) {
             console.log("Conversation already exists, selecting it")
-            handleSelectConversation(existing)
+            // Side effect moved out
+            setTimeout(() => handleSelectConversation(existing), 0)
             return prev
           }
           console.log("Adding new conversation to list")
           const updated = [newConv, ...prev]
-          handleSelectConversation(newConv)
+          // Side effect moved out
+          setTimeout(() => handleSelectConversation(newConv), 0)
           return updated
         })
       } else {
@@ -614,6 +692,28 @@ function MessageCenterContent() {
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   }
 
+  const handleStartNewChat = (contact: any) => {
+    setIsNewChatOpen(false)
+    const existingConv = conversations.find(c => c.id === contact.id)
+    if (existingConv) {
+      handleSelectConversation(existingConv)
+    } else {
+      const newConv: Conversation = {
+        id: contact.id,
+        name: contact.name || contact.email,
+        email: contact.email,
+        avatar: contact.avatar,
+        role: contact.role,
+        lastMessage: "",
+        time: new Date(),
+        unread: 0,
+        property: contact.property
+      }
+      setConversations(prev => [newConv, ...prev])
+      handleSelectConversation(newConv)
+    }
+  }
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[600px]">
       {/* Conversations List */}
@@ -624,14 +724,56 @@ function MessageCenterContent() {
               <MessageSquare className="h-5 w-5" />
               <span>{t('messages')}</span>
             </CardTitle>
-            <Button 
-              size="sm" 
-              variant="ghost" 
-              onClick={handleRefresh}
-              disabled={refreshing}
-            >
-              <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-            </Button>
+            <div className="flex items-center gap-1">
+              <Dialog open={isNewChatOpen} onOpenChange={setIsNewChatOpen}>
+                <DialogTrigger asChild>
+                  <Button size="sm" variant="ghost" title={t('newMessage') || "New Message"}>
+                    <UserPlus className="h-4 w-4" />
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>{t('selectContact') || "Select Contact"}</DialogTitle>
+                  </DialogHeader>
+                  <ScrollArea className="h-[300px] pr-4">
+                    {contacts.length > 0 ? (
+                      <div className="space-y-2">
+                        {contacts.map((contact) => (
+                          <div
+                            key={contact.id}
+                            className="flex items-center space-x-3 p-3 hover:bg-muted rounded-lg cursor-pointer transition-colors"
+                            onClick={() => handleStartNewChat(contact)}
+                          >
+                            <Avatar className="h-10 w-10">
+                              <AvatarImage src={contact.avatar || "/placeholder-user.jpg"} alt={contact.name} />
+                              <AvatarFallback>
+                                {contact.name?.charAt(0) || "?"}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div>
+                              <div className="font-medium">{contact.name || contact.email}</div>
+                              <div className="text-sm text-muted-foreground">{contact.role}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-center py-8 text-muted-foreground">
+                        {t('noContactsFound') || "No contacts found"}
+                      </div>
+                    )}
+                  </ScrollArea>
+                </DialogContent>
+              </Dialog>
+              <Button 
+                size="sm" 
+                variant="ghost" 
+                onClick={handleRefresh}
+                disabled={refreshing}
+              >
+                <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+              </Button>
+            </div>
           </div>
           <CardDescription>
             {currentUser ? (t('loggedInAs') || `Logged in as: ${currentUser.name}`) : (t('yourConversations') || 'Your conversations')}
@@ -779,10 +921,10 @@ function MessageCenterContent() {
   )
 }
 
-export function MessageCenter() {
+export function MessageCenter({ initialUserId }: MessageCenterProps) {
   return (
     <Suspense fallback={<div />}>
-      <MessageCenterContent />
+      <MessageCenterContent initialUserId={initialUserId} />
     </Suspense>
   )
 }

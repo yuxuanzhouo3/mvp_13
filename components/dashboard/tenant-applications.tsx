@@ -19,31 +19,84 @@ export function TenantApplications({ userType = 'landlord' }: TenantApplications
   const router = useRouter()
   const { toast } = useToast()
   const t = useTranslations('dashboard')
-  const tApplication = useTranslations('application')
   const tCommon = useTranslations('common')
+  const tApplication = useTranslations('application')
   const tPayment = useTranslations('payment')
   const currencySymbol = getCurrencySymbol()
   const [applications, setApplications] = useState<any[]>([])
   const [payments, setPayments] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 9000) => {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  }
+  const parseTokenHints = (token: string) => {
+    try {
+      const payloadBase64 = token.split(".")[1]
+      if (!payloadBase64) return { userId: "", email: "" }
+      const normalized = payloadBase64.replace(/-/g, "+").replace(/_/g, "/")
+      const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4)
+      const decoded = JSON.parse(atob(padded))
+      const userId = decoded?.userId || decoded?.sub || decoded?.id || decoded?.uid || decoded?.user_id || ""
+      const email = decoded?.email || decoded?.userEmail || decoded?.preferred_username || ""
+      return { userId: String(userId || ""), email: String(email || "") }
+    } catch {
+      return { userId: "", email: "" }
+    }
+  }
+  const getAuthHeaders = (token: string) => {
+    const headers: Record<string, string> = { Authorization: `Bearer ${token}` }
+    const userStr = localStorage.getItem("user")
+    let parsedUser: any = null
+    if (userStr) {
+      try {
+        parsedUser = JSON.parse(userStr)
+      } catch {
+        localStorage.removeItem("user")
+      }
+    }
+    const tokenHints = parseTokenHints(token)
+    const hintedId = parsedUser?.id || parsedUser?.userId || parsedUser?._id
+    const hintedEmail = parsedUser?.email
+    if (hintedId) headers["x-user-id"] = String(hintedId)
+    if (hintedEmail) headers["x-user-email"] = String(hintedEmail)
+    if (!headers["x-user-id"] && tokenHints.userId) headers["x-user-id"] = tokenHints.userId
+    if (!headers["x-user-email"] && tokenHints.email) headers["x-user-email"] = tokenHints.email
+    return headers
+  }
+
+  const cleanText = (text: string) => {
+    if (!text) return ''
+    return text.replace(/^(dashboard\.|property\.|common\.|application\.|payment\.)/i, '')
+  }
 
   const renderStatus = (status?: string) => {
-    const s = (status || '').toUpperCase()
+    let s = (status || '').toUpperCase()
+    s = s.replace(/^(DASHBOARD\.|PROPERTY\.|COMMON\.|APPLICATION\.|PAYMENT\.)/i, '')
+    
     switch (s) {
       case 'APPROVED':
-        return tApplication('approved')
+        return cleanText(tApplication('approved'))
       case 'PENDING':
-        return tApplication('pending')
+        return cleanText(tApplication('pending'))
       case 'REJECTED':
-        return tApplication('rejected')
+        return cleanText(tApplication('rejected'))
       case 'WITHDRAWN':
-        return tApplication('withdrawn')
+        return cleanText(tApplication('withdrawn'))
       case 'UNDER_REVIEW':
-        return tApplication('underReview')
+        return cleanText(tApplication('underReview'))
       case 'AGENT_APPROVED':
-        return tApplication('approved') || "Approved"
+        return cleanText(tApplication('agentApproved') || "Agent Approved")
       default:
-        return tApplication('status')
+        return cleanText(status || '')
     }
   }
 
@@ -73,10 +126,15 @@ export function TenantApplications({ userType = 'landlord' }: TenantApplications
   const fetchApplications = async () => {
     try {
       const token = localStorage.getItem("auth-token")
-      if (!token) return
+      if (!token) {
+        setLoading(false)
+        return
+      }
 
-      const response = await fetch(`/api/applications?userType=${userType}`, {
-        headers: { Authorization: `Bearer ${token}` },
+      const response = await fetchWithTimeout(`/api/applications?userType=${userType}`, {
+        headers: getAuthHeaders(token),
+        credentials: "include",
+        cache: "no-store",
       })
 
       if (response.ok) {
@@ -111,8 +169,9 @@ export function TenantApplications({ userType = 'landlord' }: TenantApplications
       const token = localStorage.getItem("auth-token")
       if (!token) return
 
-      const response = await fetch("/api/payments", {
-        headers: { Authorization: `Bearer ${token}` },
+      const response = await fetchWithTimeout(`/api/payments?userType=${userType}`, {
+        headers: getAuthHeaders(token),
+        credentials: "include",
         cache: 'no-store'
       })
 
@@ -143,8 +202,8 @@ export function TenantApplications({ userType = 'landlord' }: TenantApplications
         toast({
           title: tCommon('success'),
           description: userType === 'agent'
-            ? (tApplication('agentApproved') || "Application approved by agent")
-            : (tApplication('approved') || "The application has been approved successfully"),
+            ? (t('agentApproved') || "Application approved by agent")
+            : (t('approved') || "The application has been approved successfully"),
         })
         fetchApplications()
       } else {
@@ -225,11 +284,11 @@ export function TenantApplications({ userType = 'landlord' }: TenantApplications
     return (
       <Card>
         <CardHeader>
-          <CardTitle>{t('tenantApplications')}</CardTitle>
-          <CardDescription>{t('reviewAndManageApplications')}</CardDescription>
+          <CardTitle>{cleanText(t('tenantApplications'))}</CardTitle>
+          <CardDescription>{cleanText(t('reviewAndManageApplications'))}</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="text-center py-8 text-muted-foreground">{tCommon('loading')}</div>
+          <div className="text-center py-8 text-muted-foreground">{cleanText(tCommon('loading'))}</div>
         </CardContent>
       </Card>
     )
@@ -237,8 +296,8 @@ export function TenantApplications({ userType = 'landlord' }: TenantApplications
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{t('tenantApplications')}</CardTitle>
-        <CardDescription>{t('reviewAndManageApplications')}</CardDescription>
+        <CardTitle>{cleanText(t('tenantApplications'))}</CardTitle>
+        <CardDescription>{cleanText(t('reviewAndManageApplications'))}</CardDescription>
       </CardHeader>
       <CardContent>
         {uniqueApplications.length > 0 ? (
@@ -267,22 +326,22 @@ export function TenantApplications({ userType = 'landlord' }: TenantApplications
                   </div>
                   <div className="text-right">
                     <Badge
-                    variant={
-                      application.status === "APPROVED" || application.status === "AGENT_APPROVED"
-                        ? "default"
-                        : application.status === "PENDING"
-                          ? "secondary"
-                          : "outline"
-                    }
+                      variant={
+                        (application.status || '').toUpperCase() === "APPROVED" || (application.status || '').toUpperCase() === "AGENT_APPROVED"
+                          ? "default"
+                          : (application.status || '').toUpperCase() === "PENDING"
+                            ? "secondary"
+                            : "outline"
+                      }
                     >
                       {renderStatus(application.status)}
                     </Badge>
                     {((application.status || '').toUpperCase() === 'APPROVED' || (application.status || '').toUpperCase() === 'AGENT_APPROVED') ? (
                       <div className="mt-2 text-xs text-muted-foreground">
-                        {tPayment('status') || "Status"}: {(() => {
+                        {cleanText(tPayment('status') || "Status")}: {(() => {
                           const status = getPaymentStatus(application)
-                          if (status === 'COMPLETED' || status === 'PAID') return tPayment('completed') || "Paid"
-                          return tPayment('pending') || "Pending Payment"
+                          if (status === 'COMPLETED' || status === 'PAID') return cleanText(tPayment('completed') || "Paid")
+                          return cleanText(tPayment('pending') || "Pending Payment")
                         })()}
                       </div>
                     ) : null}
@@ -291,28 +350,28 @@ export function TenantApplications({ userType = 'landlord' }: TenantApplications
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                   <div className="space-y-1">
-                    <p className="text-sm font-medium">{t('property')}</p>
-                    <p className="text-sm text-muted-foreground">{application.property?.title || "Property"}</p>
+                    <p className="text-sm font-medium">{cleanText(t('property'))}</p>
+                    <p className="text-sm text-muted-foreground">{cleanText(application.property?.title) || "Property"}</p>
                   </div>
                   <div className="space-y-1">
-                    <p className="text-sm font-medium">{t('appliedOn')}</p>
+                    <p className="text-sm font-medium">{cleanText(t('appliedOn'))}</p>
                     <p className="text-sm text-muted-foreground">
                       {new Date(application.appliedDate || application.createdAt).toLocaleDateString()}
                     </p>
                   </div>
                   <div className="space-y-1">
-                    <p className="text-sm font-medium">{t('deposit')}</p>
+                    <p className="text-sm font-medium">{cleanText(t('deposit'))}</p>
                     <p className="text-sm text-muted-foreground">{currencySymbol}{(application.depositAmount || 0).toLocaleString()}</p>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                   <div className="space-y-1">
-                    <p className="text-sm font-medium">{t('monthlyIncome')}</p>
+                    <p className="text-sm font-medium">{cleanText(t('monthlyIncome'))}</p>
                     <p className="text-sm text-muted-foreground">{currencySymbol}{(application.monthlyIncome || application.tenant?.tenantProfile?.monthlyIncome || 0).toLocaleString()}</p>
                   </div>
                   <div className="space-y-1">
-                    <p className="text-sm font-medium">{t('creditScore')}</p>
+                    <p className="text-sm font-medium">{cleanText(t('creditScore'))}</p>
                     <p className="text-sm text-muted-foreground">{application.creditScore || application.tenant?.tenantProfile?.creditScore || "N/A"}</p>
                   </div>
                 </div>
@@ -321,18 +380,18 @@ export function TenantApplications({ userType = 'landlord' }: TenantApplications
                   <Button 
                     size="sm" 
                     variant="outline"
-                    onClick={() => router.push(`/properties/${application.propertyId}`)}
+                    onClick={() => router.push(`/properties/${application.propertyId || application.property?.id}`)}
                   >
                     <Eye className="mr-2 h-4 w-4" />
-                    {tCommon('viewDetails') || tCommon('view')}
+                    {cleanText(tCommon('viewDetails') || tCommon('view'))}
                   </Button>
                   <Button 
                     size="sm" 
                     variant="outline"
-                    onClick={() => router.push(`/dashboard/${userType}/messages?userId=${application.tenantId}`)}
+                    onClick={() => router.push(`/dashboard/${userType}/messages?userId=${application.tenantId || application.tenant?.id}`)}
                   >
                     <MessageSquare className="mr-2 h-4 w-4" />
-                    {t('messages')}
+                    {cleanText(t('messages'))}
                   </Button>
                   {canReview(application) && (
                     <>
@@ -342,7 +401,7 @@ export function TenantApplications({ userType = 'landlord' }: TenantApplications
                         onClick={() => handleApprove(application.id)}
                       >
                         <Check className="mr-2 h-4 w-4" />
-                        {tApplication('approve')}
+                        {cleanText(tApplication('approve'))}
                       </Button>
                       <Button 
                         size="sm" 
@@ -350,16 +409,16 @@ export function TenantApplications({ userType = 'landlord' }: TenantApplications
                         onClick={() => handleDecline(application.id)}
                       >
                         <X className="mr-2 h-4 w-4" />
-                        {tApplication('reject')}
+                        {cleanText(tApplication('reject'))}
                       </Button>
                     </>
                   )}
                   {userType === 'landlord' && application.status === 'AGENT_APPROVED' && (
                     <span className="text-sm text-muted-foreground self-center">
-                      {tApplication('agentApproved') || "Agent Approved"} · {(() => {
+                      {cleanText(tApplication('agentApproved') || "Agent Approved")} · {(() => {
                         const status = getPaymentStatus(application)
-                        if (status === 'COMPLETED' || status === 'PAID') return tPayment('completed') || "Paid"
-                        return tPayment('pending') || "Pending Payment"
+                        if (status === 'COMPLETED' || status === 'PAID') return cleanText(tPayment('completed') || "Paid")
+                        return cleanText(tPayment('pending') || "Pending Payment")
                       })()}
                     </span>
                   )}
@@ -368,7 +427,7 @@ export function TenantApplications({ userType = 'landlord' }: TenantApplications
             ))}
           </div>
         ) : (
-          <div className="text-center py-8 text-muted-foreground">{t('noApplicationsFound')}</div>
+          <div className="text-center py-8 text-muted-foreground">{cleanText(t('noApplicationsFound'))}</div>
         )}
       </CardContent>
     </Card>

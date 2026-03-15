@@ -19,6 +19,8 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url)
     const partnerId = searchParams.get('partnerId') || searchParams.get('userId')
+    const hintedUserId = String(request.headers.get('x-user-id') || '').trim()
+    const hintedUserEmail = String(request.headers.get('x-user-email') || '').trim().toLowerCase()
 
     console.log('GET /api/messages:', { 
       currentUserId: user.id, 
@@ -27,13 +29,21 @@ export async function GET(request: NextRequest) {
     })
 
     const db = getDatabaseAdapter()
+    const userIdSet = new Set<string>([String(user.id)])
+    if (hintedUserId) userIdSet.add(hintedUserId)
+    if (user.email || hintedUserEmail) {
+      try {
+        const dbUser = await db.findUserByEmail(user.email || hintedUserEmail)
+        if (dbUser?.id) userIdSet.add(String(dbUser.id))
+      } catch {}
+    }
     let messages = await db.query('messages', {})
 
     if (partnerId) {
       // Get messages between current user and partner
       messages = messages.filter((m: any) => 
-        (m.senderId === user.id && m.receiverId === partnerId) ||
-        (m.senderId === partnerId && m.receiverId === user.id)
+        (userIdSet.has(String(m.senderId || m.sender_id || '')) && String(m.receiverId || m.receiver_id || '') === String(partnerId)) ||
+        (String(m.senderId || m.sender_id || '') === String(partnerId) && userIdSet.has(String(m.receiverId || m.receiver_id || '')))
       )
 
       // Mark received messages as read
@@ -42,12 +52,12 @@ export async function GET(request: NextRequest) {
         const msgSenderId = String(m.senderId || m.sender_id || '')
         const msgReceiverId = String(m.receiverId || m.receiver_id || '')
         const partnerIdStr = String(partnerId || '')
-        const userIdStr = String(user.id || '')
+        const userIdArr = Array.from(userIdSet)
         
         const isUnread = m.isRead === false || m.isRead === null || m.isRead === undefined || m.is_read === false
         
         return msgSenderId === partnerIdStr && 
-               msgReceiverId === userIdStr && 
+               userIdArr.includes(msgReceiverId) && 
                isUnread
       })
       
@@ -76,7 +86,8 @@ export async function GET(request: NextRequest) {
     } else {
       // Get all messages for current user
       messages = messages.filter((m: any) => 
-        m.senderId === user.id || m.receiverId === user.id
+        userIdSet.has(String(m.senderId || m.sender_id || '')) ||
+        userIdSet.has(String(m.receiverId || m.receiver_id || ''))
       )
     }
 

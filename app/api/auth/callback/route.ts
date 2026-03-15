@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import jwt from 'jsonwebtoken'
-import { supabaseAdmin } from '@/lib/supabase'
+import { supabase } from '@/lib/supabase'
 import { getDatabaseAdapter, getAppRegion } from '@/lib/db-adapter'
 import { trackEvent } from '@/lib/analytics'
 
@@ -28,11 +28,29 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(new URL('/auth/login?error=no_code', request.url))
     }
 
-    // 使用 code 换取 session
-    const { data, error: exchangeError } = await supabaseAdmin.auth.exchangeCodeForSession(code)
+    if (!supabase) {
+      return NextResponse.redirect(new URL('/auth/login?error=oauth_not_configured', request.url))
+    }
+
+    const authClient = supabase.auth as any
+    const pkceVerifier = request.cookies.get('sb-pkce-verifier')?.value
+    if (pkceVerifier && authClient?.storageKey) {
+      await authClient.storage.setItem(`${authClient.storageKey}-code-verifier`, pkceVerifier)
+    }
+
+    const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code)
 
     if (exchangeError || !data.user || !data.session) {
-      return NextResponse.redirect(new URL('/auth/login?error=exchange_failed', request.url))
+      console.error('OAuth exchange failed:', exchangeError)
+      const failedRedirect = NextResponse.redirect(new URL('/auth/login?error=exchange_failed', request.url))
+      failedRedirect.cookies.set('sb-pkce-verifier', '', {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        path: '/api/auth/callback',
+        maxAge: 0,
+      })
+      return failedRedirect
     }
 
     const supabaseUser = data.user
@@ -86,7 +104,15 @@ export async function GET(request: NextRequest) {
     const redirectUrl = new URL('/auth/login', request.url)
     redirectUrl.searchParams.set('token', jwtToken)
 
-    return NextResponse.redirect(redirectUrl)
+    const successRedirect = NextResponse.redirect(redirectUrl)
+    successRedirect.cookies.set('sb-pkce-verifier', '', {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      path: '/api/auth/callback',
+      maxAge: 0,
+    })
+    return successRedirect
   } catch (error: any) {
     console.error('OAuth callback error:', error)
     return NextResponse.redirect(new URL('/auth/login?error=callback_failed', request.url))

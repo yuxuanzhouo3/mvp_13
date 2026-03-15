@@ -16,6 +16,10 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    const { searchParams } = new URL(request.url)
+    const requestedUserType = String(searchParams.get('userType') || '').toUpperCase()
+    const hintedUserId = String(request.headers.get('x-user-id') || '').trim()
+    const hintedUserEmail = String(request.headers.get('x-user-email') || '').trim().toLowerCase()
     const db = getDatabaseAdapter()
     let dbUser = null
     try {
@@ -26,7 +30,17 @@ export async function GET(request: NextRequest) {
         dbUser = await db.findUserByEmail(user.email)
       } catch {}
     }
-    const resolvedUserId = dbUser?.id || user.id
+    if (!dbUser && hintedUserId) {
+      try {
+        dbUser = await db.findUserById(hintedUserId)
+      } catch {}
+    }
+    if (!dbUser && hintedUserEmail) {
+      try {
+        dbUser = await db.findUserByEmail(hintedUserEmail)
+      } catch {}
+    }
+    const resolvedUserId = dbUser?.id || hintedUserId || user.id
     let tokenUserId: string | null = null
     const authHeader = request.headers.get('authorization')
     if (authHeader && authHeader.startsWith('Bearer ') && supabaseAdmin) {
@@ -98,11 +112,14 @@ export async function GET(request: NextRequest) {
     }
     leases = leases.map(normalizeLease)
     
-    if (dbUser?.userType === 'TENANT') {
+    const effectiveUserType = requestedUserType || String(dbUser?.userType || user.userType || '').toUpperCase()
+    if (effectiveUserType === 'TENANT') {
       leases = leases.filter((l: any) => String(l.tenantId || '') === String(resolvedUserId))
-    } else if (dbUser?.userType === 'LANDLORD') {
+    } else if (effectiveUserType === 'LANDLORD') {
       const landlordIdSet = new Set([String(resolvedUserId), String(user.id)])
       if (tokenUserId) landlordIdSet.add(String(tokenUserId))
+      if (hintedUserId) landlordIdSet.add(String(hintedUserId))
+      const normalizedEmail = String(dbUser?.email || user.email || hintedUserEmail || '').toLowerCase()
       let properties: any[] = []
       try {
         properties = await db.query('properties', {})
@@ -114,11 +131,33 @@ export async function GET(request: NextRequest) {
       }
       const propertyIds = new Set(
         properties
-          .filter((p: any) => landlordIdSet.has(String((p as any).landlordId ?? (p as any).landlord_id ?? '')))
-          .map((p: any) => p.id || p._id)
+          .filter((p: any) => {
+            const ownerId = String(
+              (p as any).landlordId ??
+              (p as any).landlord_id ??
+              (p as any).ownerId ??
+              (p as any).owner_id ??
+              (p as any).userId ??
+              (p as any).user_id ??
+              ''
+            )
+            if (ownerId && landlordIdSet.has(ownerId)) return true
+            if (!normalizedEmail) return false
+            const ownerEmail = String(
+              (p as any).landlordEmail ??
+              (p as any).landlord_email ??
+              (p as any).ownerEmail ??
+              (p as any).owner_email ??
+              (p as any).userEmail ??
+              (p as any).user_email ??
+              ''
+            ).toLowerCase()
+            return ownerEmail && ownerEmail === normalizedEmail
+          })
+          .map((p: any) => String(p.id || p._id || ''))
           .filter(Boolean)
       )
-      leases = leases.filter((l: any) => l.propertyId && propertyIds.has(l.propertyId))
+      leases = leases.filter((l: any) => l.propertyId && propertyIds.has(String(l.propertyId)))
     }
 
     // 排序

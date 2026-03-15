@@ -8,6 +8,13 @@ import { createSupabaseServerClient, supabaseAdmin } from '@/lib/supabase'
  */
 export async function GET(request: NextRequest) {
   try {
+    const timeoutMarker = Symbol('unread-timeout')
+    const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof timeoutMarker> => {
+      return await Promise.race([
+        promise,
+        new Promise<typeof timeoutMarker>((resolve) => setTimeout(() => resolve(timeoutMarker), timeoutMs))
+      ])
+    }
     const user = await getCurrentUser(request)
     if (!user) {
       return NextResponse.json(
@@ -24,7 +31,8 @@ export async function GET(request: NextRequest) {
     let userId = user.id
     if (user.email) {
       try {
-        const dbUser = await db.findUserByEmail(user.email)
+        const dbUserResult = await withTimeout(db.findUserByEmail(user.email), 1200)
+        const dbUser = dbUserResult === timeoutMarker ? null : dbUserResult
         if (dbUser?.id) userId = dbUser.id
       } catch (e) {
         userId = user.id
@@ -32,8 +40,8 @@ export async function GET(request: NextRequest) {
     }
     if (accessToken && supabaseClient) {
       try {
-        const { data } = await supabaseClient.auth.getUser(accessToken)
-        if (data?.user?.id) userId = data.user.id
+        const tokenResult = await withTimeout(supabaseClient.auth.getUser(accessToken), 1200)
+        if (tokenResult !== timeoutMarker && (tokenResult as any)?.data?.user?.id) userId = (tokenResult as any).data.user.id
       } catch {}
     }
     if (user.email && supabaseReaders.length > 0) {
@@ -54,31 +62,47 @@ export async function GET(request: NextRequest) {
       }
     }
     const userIdSet = new Set([String(user.id), String(userId)])
-    let allMessages: any[] = []
+    let count = 0
+    const idList = Array.from(userIdSet).filter(Boolean)
     try {
-      allMessages = await db.query('messages', {})
-    } catch (error) {
-      if (supabaseReaders.length > 0) {
-        const messageTables = ['Message', 'message', 'messages']
-        for (const client of supabaseReaders) {
-          for (const tableName of messageTables) {
-            const { data, error } = await client
-              .from(tableName)
-              .select('*')
-            if (!error && data) {
-              allMessages = data || []
-              break
-            }
+      const [byCamelResult, bySnakeResult] = await Promise.all([
+        withTimeout(db.query('messages', { receiverId: idList.length === 1 ? idList[0] : { in: idList }, isRead: false }), 2500),
+        withTimeout(db.query('messages', { receiver_id: idList.length === 1 ? idList[0] : { in: idList }, is_read: false }), 2500),
+      ])
+      const byCamel = byCamelResult === timeoutMarker ? [] : (Array.isArray(byCamelResult) ? byCamelResult : [])
+      const bySnake = bySnakeResult === timeoutMarker ? [] : (Array.isArray(bySnakeResult) ? bySnakeResult : [])
+      const seen = new Set<string>()
+      ;[...byCamel, ...bySnake].forEach((msg: any) => {
+        const key = String(msg.id || msg._id || `${msg.senderId || msg.sender_id}_${msg.receiverId || msg.receiver_id}_${msg.createdAt || msg.created_at || ''}`)
+        if (!seen.has(key)) seen.add(key)
+      })
+      count = seen.size
+    } catch {}
+
+    if (count === 0 && supabaseReaders.length > 0) {
+      const messageTables = ['Message', 'messages', 'message']
+      const adminClients = supabaseReaders.map((client) => client as any)
+      for (const client of adminClients) {
+        for (const tableName of messageTables) {
+          const byCamel = await withTimeout(
+            client.from(tableName).select('id', { count: 'exact', head: true }).in('receiverId', idList).eq('isRead', false),
+            1500
+          )
+          if (byCamel !== timeoutMarker && !(byCamel as any)?.error && typeof (byCamel as any)?.count === 'number') {
+            count += Number((byCamel as any).count || 0)
           }
-          if (allMessages.length > 0) break
+          const bySnake = await withTimeout(
+            client.from(tableName).select('id', { count: 'exact', head: true }).in('receiver_id', idList).eq('is_read', false),
+            1500
+          )
+          if (bySnake !== timeoutMarker && !(bySnake as any)?.error && typeof (bySnake as any)?.count === 'number') {
+            count += Number((bySnake as any).count || 0)
+          }
+          if (count > 0) break
         }
+        if (count > 0) break
       }
     }
-    const count = allMessages.filter((m: any) => {
-      const receiver = String(m.receiverId || m.receiver_id || '')
-      const isUnread = m.isRead === false || m.isRead === null || m.isRead === undefined || m.is_read === false
-      return userIdSet.has(receiver) && isUnread
-    }).length
 
     return NextResponse.json({ count })
   } catch (error: any) {

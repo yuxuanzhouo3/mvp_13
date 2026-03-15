@@ -13,6 +13,10 @@ export async function POST(request: NextRequest) {
   try {
     const region = getAppRegion()
     const db = getDatabaseAdapter()
+    const authHeader = request.headers.get('authorization')
+    const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : undefined
+    const supabaseWriter = createSupabaseServerClient(accessToken) || supabaseAdmin
+    const propertyTables = ['Property', 'property', 'properties']
 
     const isConnectionError = (error: any) => {
       const msg = String(error?.message || '').toLowerCase()
@@ -20,24 +24,75 @@ export async function POST(request: NextRequest) {
         msg.includes('connection') ||
         msg.includes('timeout') ||
         msg.includes('pool') ||
-        msg.includes('maxclients')
+        msg.includes('maxclients') ||
+        msg.includes('check out') ||
+        msg.includes('connector') ||
+        msg.includes('querying the database') ||
+        msg.includes('closed')
+    }
+
+    const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_, reject) => {
+          setTimeout(() => reject(new Error(`Operation timeout after ${timeoutMs}ms`)), timeoutMs)
+        }),
+      ])
+    }
+    const withTimeoutValue = async <T,>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> => {
+      return await Promise.race([
+        promise,
+        new Promise<T>((resolve) => {
+          setTimeout(() => resolve(fallback), timeoutMs)
+        }),
+      ])
+    }
+    const safeDbCall = async <T,>(promiseFactory: () => Promise<T>, timeoutMs = 5000): Promise<T | null> => {
+      try {
+        return await withTimeoutValue(promiseFactory(), timeoutMs, null as T | null)
+      } catch {
+        return null
+      }
     }
 
     const runWithRetry = async <T,>(fn: () => Promise<T>): Promise<T> => {
-      try {
-        return await fn()
-      } catch (error: any) {
-        if (!isConnectionError(error)) {
-          throw error
+      let lastError: any = null
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          return await withTimeout(fn(), 12000)
+        } catch (error: any) {
+          lastError = error
+          if (!isConnectionError(error) || attempt === 1) {
+            throw error
+          }
+          try {
+            await prisma.$disconnect()
+          } catch {}
+          try {
+            await withTimeout(prisma.$connect(), 6000)
+          } catch {}
         }
-        try {
-          await prisma.$disconnect()
-        } catch {}
-        try {
-          await prisma.$connect()
-        } catch {}
-        return await fn()
       }
+      throw lastError
+    }
+    const createPropertyViaSupabase = async (payload: any) => {
+      if (!supabaseWriter) return null
+      let lastError: any = null
+      for (const tableName of propertyTables) {
+        const { data, error } = await supabaseWriter
+          .from(tableName)
+          .insert(payload)
+          .select('*')
+          .limit(1)
+        if (!error && data && data.length > 0) {
+          return data[0]
+        }
+        lastError = error
+      }
+      if (lastError) {
+        throw lastError
+      }
+      return null
     }
 
     let user = await getCurrentUser(request)
@@ -71,9 +126,11 @@ export async function POST(request: NextRequest) {
 
         // 尝试从数据库获取用户信息
         try {
-          const legacyDbUser =
-            (await db.findUserById(legacyAuth.userId)) ||
-            (legacyAuth.email ? await db.findUserByEmail(legacyAuth.email) : null)
+          const legacyById = await safeDbCall(() => db.findUserById(legacyAuth.userId), 5000)
+          const legacyByEmail = !legacyById && legacyAuth.email
+            ? await safeDbCall(() => db.findUserByEmail(legacyAuth.email), 5000)
+            : null
+          const legacyDbUser = legacyById || legacyByEmail
           if (legacyDbUser) {
             user = {
               id: legacyDbUser.id,
@@ -122,14 +179,24 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    const normalizeId = (value: any) => String(value ?? '').trim()
+
     // 验证用户类型，如果数据库不可用，使用 user 对象中的 userType
     let dbUser = null
     let userType = user.userType
+    const actorIdSet = new Set<string>()
+    const rawUserId = normalizeId(user.id)
+    if (rawUserId) actorIdSet.add(rawUserId)
     try {
-      dbUser = (await db.findUserById(user.id)) ||
-        (user.email ? await db.findUserByEmail(user.email) : null)
+      const dbUserById = await safeDbCall(() => db.findUserById(user.id), 5000)
+      const dbUserByEmail = !dbUserById && user.email
+        ? await safeDbCall(() => db.findUserByEmail(user.email), 5000)
+        : null
+      dbUser = dbUserById || dbUserByEmail
       if (dbUser) {
         userType = dbUser.userType
+        const dbUserId = normalizeId(dbUser.id)
+        if (dbUserId) actorIdSet.add(dbUserId)
       }
     } catch (dbError: any) {
       console.warn('Database query failed, using user object userType:', dbError.message)
@@ -147,7 +214,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     
     // 确定房源归属
-    let targetLandlordId = user.id
+    let targetLandlordId = dbUser?.id || user.id
     let agentId = null
 
     if (userType === 'AGENT') {
@@ -159,7 +226,7 @@ export async function POST(request: NextRequest) {
       }
       
       // 验证代理关系
-      const landlord = await db.findUserById(body.landlordId)
+      const landlord = await safeDbCall(() => db.findUserById(body.landlordId), 5000)
       if (!landlord) {
         return NextResponse.json(
           { error: 'Landlord not found - 未找到指定房东' },
@@ -170,17 +237,36 @@ export async function POST(request: NextRequest) {
       // 检查该房东是否由当前中介代理
       // 兼容直接字段和 Profile 字段
       let isRepresented = false
-      if (landlord.representedById === user.id) {
+      const representedById = normalizeId(landlord.representedById)
+      if (representedById && actorIdSet.has(representedById)) {
         isRepresented = true
       } else {
         // 尝试查询 Profile (针对 Supabase/Global 情况)
         try {
-          const profiles = await db.query('landlordProfiles', { userId: landlord.id })
-          if (profiles && profiles.length > 0 && profiles[0].representedById === user.id) {
+          const profiles = await withTimeoutValue(db.query('landlordProfiles', { userId: landlord.id }), 5000, [])
+          const profileRepId = normalizeId(profiles?.[0]?.representedById)
+          if (profileRepId && actorIdSet.has(profileRepId)) {
             isRepresented = true
           }
         } catch (err) {
           console.warn('Failed to check landlord profile for representation:', err)
+        }
+      }
+
+      // 宽松检查：如果该中介之前已经为该房东发布过房源，也允许继续发布
+      if (!isRepresented) {
+        try {
+          // 检查是否存在该房东和该中介关联的现有房源
+          const existingProps = await safeDbCall(() => db.query('properties', { 
+            landlordId: landlord.id,
+            agentId: dbUser?.id || user.id 
+          }), 5000)
+          
+          if (existingProps && existingProps.length > 0) {
+            isRepresented = true
+          }
+        } catch (err) {
+          console.warn('Failed to check existing properties for permission:', err)
         }
       }
       
@@ -195,7 +281,7 @@ export async function POST(request: NextRequest) {
       }
       
       targetLandlordId = landlord.id
-      agentId = user.id
+      agentId = dbUser?.id || user.id
     }
 
     const {
@@ -365,6 +451,17 @@ export async function POST(request: NextRequest) {
         lower.includes('max clients reached') ||
         lower.includes('pool_size')
       ) {
+        try {
+          const fallbackPayload = {
+            ...sanitizedPropertyData,
+            images: Array.isArray(sanitizedPropertyData.images) ? sanitizedPropertyData.images : [],
+            amenities: Array.isArray(sanitizedPropertyData.amenities) ? sanitizedPropertyData.amenities : [],
+          }
+          const inserted = await withTimeout(createPropertyViaSupabase(fallbackPayload), 10000)
+          if (inserted) {
+            return NextResponse.json({ property: inserted })
+          }
+        } catch {}
         return NextResponse.json(
           { error: '数据库连接失败，请稍后重试', details: 'Database connection pool exhausted' },
           { status: 503 }
@@ -465,6 +562,7 @@ export async function GET(request: NextRequest) {
     let user = await getCurrentUser(request)
     const { searchParams } = new URL(request.url)
     const landlordId = searchParams.get('landlordId')
+    const agentId = searchParams.get('agentId')
     const page = parseInt(searchParams.get('page') || '1')
     const limit = parseInt(searchParams.get('limit') || '20')
     const region = getAppRegion()
@@ -476,24 +574,41 @@ export async function GET(request: NextRequest) {
         msg.includes('connection') ||
         msg.includes('timeout') ||
         msg.includes('pool') ||
-        msg.includes('maxclients')
+        msg.includes('maxclients') ||
+        msg.includes('check out') ||
+        msg.includes('connector') ||
+        msg.includes('querying the database') ||
+        msg.includes('closed')
+    }
+
+    const withTimeout = async <T,>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
+      return await Promise.race([
+        promise,
+        new Promise<T>((_, reject) => {
+          setTimeout(() => reject(new Error(`Operation timeout after ${timeoutMs}ms`)), timeoutMs)
+        }),
+      ])
     }
 
     const runWithRetry = async <T,>(fn: () => Promise<T>): Promise<T> => {
-      try {
-        return await fn()
-      } catch (error: any) {
-        if (!isConnectionError(error)) {
-          throw error
+      let lastError: any = null
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          return await withTimeout(fn(), 10000)
+        } catch (error: any) {
+          lastError = error
+          if (!isConnectionError(error) || attempt === 1) {
+            throw error
+          }
+          try {
+            await prisma.$disconnect()
+          } catch {}
+          try {
+            await withTimeout(prisma.$connect(), 5000)
+          } catch {}
         }
-        try {
-          await prisma.$disconnect()
-        } catch {}
-        try {
-          await prisma.$connect()
-        } catch {}
-        return await fn()
       }
+      throw lastError
     }
     
     if (!user) {
@@ -540,8 +655,11 @@ export async function GET(request: NextRequest) {
     }
 
     const filters: any = {}
+    let landlordIds: string[] = []
     let resolvedUserId: string | null = null
     let tokenUserId: string | null = null
+    const hintedUserId = String(request.headers.get('x-user-id') || '').trim()
+    const hintedUserEmail = String(request.headers.get('x-user-email') || '').trim().toLowerCase()
     const authHeader = request.headers.get('authorization')
     const accessToken = authHeader?.startsWith('Bearer ') ? authHeader.substring(7) : undefined
     const supabaseClient = createSupabaseServerClient(accessToken)
@@ -562,11 +680,15 @@ export async function GET(request: NextRequest) {
         }
       } catch {}
     }
-    if (!tokenUserId && user?.email && supabaseAdmin) {
+    if (!tokenUserId && hintedUserId) {
+      tokenUserId = hintedUserId
+    }
+    const resolvedEmailForLookup = user?.email || hintedUserEmail
+    if (!tokenUserId && resolvedEmailForLookup && supabaseAdmin) {
       try {
         const adminApi = (supabaseAdmin as any)?.auth?.admin || (supabaseAdmin as any)?.auth?.api
         if (adminApi?.getUserByEmail) {
-          const result = await adminApi.getUserByEmail(user.email)
+          const result = await adminApi.getUserByEmail(resolvedEmailForLookup)
           const adminUser = result?.data?.user
           if (adminUser?.id) {
             tokenUserId = String(adminUser.id)
@@ -575,7 +697,7 @@ export async function GET(request: NextRequest) {
           const listResult = await adminApi.listUsers()
           const users = listResult?.data?.users || listResult?.data || []
           const found = Array.isArray(users)
-            ? users.find((u: any) => String(u?.email || '').toLowerCase() === user.email.toLowerCase())
+            ? users.find((u: any) => String(u?.email || '').toLowerCase() === resolvedEmailForLookup.toLowerCase())
             : null
           if (found?.id) {
             tokenUserId = String(found.id)
@@ -584,13 +706,42 @@ export async function GET(request: NextRequest) {
       } catch {}
     }
     
-    if (landlordId) {
-      filters.landlordId = landlordId
-      resolvedUserId = landlordId
+    if (agentId) {
+      filters.agentId = agentId
+    } else if (landlordId) {
+      const landlordIdSet = new Set<string>([String(landlordId)])
+      if (user?.id) landlordIdSet.add(String(user.id))
+      if (tokenUserId) landlordIdSet.add(String(tokenUserId))
+      if (hintedUserId) landlordIdSet.add(String(hintedUserId))
+      if (user?.email) {
+        try {
+          const byEmail = await db.findUserByEmail(user.email)
+          if (byEmail?.id) landlordIdSet.add(String(byEmail.id))
+        } catch {}
+      }
+      if (resolvedEmailForLookup && supabaseReaders.length > 0) {
+        const userTables = ['User', 'user', 'users', 'Profile', 'profile', 'profiles']
+        for (const client of supabaseReaders) {
+          for (const tableName of userTables) {
+            const { data, error } = await client
+              .from(tableName)
+              .select('id,email')
+              .ilike('email', resolvedEmailForLookup)
+              .limit(1)
+            if (!error && data && data.length > 0) {
+              landlordIdSet.add(String(data[0].id))
+              break
+            }
+          }
+          if (landlordIdSet.size > 1) break
+        }
+      }
+      landlordIds = Array.from(landlordIdSet).filter(Boolean)
+      filters.landlordId = landlordIds.length === 1 ? landlordIds[0] : { in: landlordIds }
+      resolvedUserId = landlordIds[0] || String(landlordId)
     } else if (user) {
       // 如果未指定landlordId，只返回当前用户的房源
       resolvedUserId = user.id
-      let landlordIds: string[] = []
       const landlordIdSet = new Set<string>()
       try {
         const dbUser =
@@ -633,6 +784,7 @@ export async function GET(request: NextRequest) {
       if (user?.id) landlordIdSet.add(String(user.id))
       if (resolvedUserId) landlordIdSet.add(String(resolvedUserId))
       if (tokenUserId) landlordIdSet.add(String(tokenUserId))
+      if (hintedUserId) landlordIdSet.add(String(hintedUserId))
       landlordIds = Array.from(landlordIdSet)
       if (landlordIds.length === 0 && tokenUserId) {
         landlordIds = [tokenUserId]
@@ -652,9 +804,11 @@ export async function GET(request: NextRequest) {
           }
         })
       }
-    } else if (tokenUserId) {
-      filters.landlordId = tokenUserId
-      resolvedUserId = tokenUserId
+    } else if (tokenUserId || hintedUserId) {
+      const fallbackUserId = tokenUserId || hintedUserId
+      filters.landlordId = fallbackUserId
+      resolvedUserId = fallbackUserId
+      landlordIds = [String(fallbackUserId)]
     } else {
       return NextResponse.json({
         properties: [],
@@ -696,34 +850,60 @@ export async function GET(request: NextRequest) {
       createdAt: true,
       updatedAt: true,
     }
-    const normalizeProperty = (p: any) => ({
-      id: p.id ?? p._id,
-      landlordId: p.landlordId ?? p.landlord_id,
-      title: p.title,
-      description: p.description,
-      address: p.address,
-      city: p.city,
-      state: p.state,
-      zipCode: p.zipCode ?? p.zip_code,
-      country: p.country,
-      latitude: p.latitude,
-      longitude: p.longitude,
-      price: p.price,
-      deposit: p.deposit,
-      bedrooms: p.bedrooms,
-      bathrooms: p.bathrooms,
-      sqft: p.sqft,
-      propertyType: p.propertyType ?? p.property_type,
-      status: p.status,
-      images: p.images ?? p.image ?? p.image_urls,
-      amenities: p.amenities,
-      petFriendly: p.petFriendly ?? p.pet_friendly,
-      availableFrom: p.availableFrom ?? p.available_from,
-      leaseDuration: p.leaseDuration ?? p.lease_duration,
-      createdAt: p.createdAt ?? p.created_at,
-      updatedAt: p.updatedAt ?? p.updated_at,
-    })
-    const normalizedEmail = user?.email?.toLowerCase()
+    const getField = (obj: any, keys: string[]) => {
+      for (const key of keys) {
+        const value = obj?.[key]
+        if (value !== undefined && value !== null && value !== '') return value
+      }
+      return undefined
+    }
+    const normalizeProperty = (p: any) => {
+      const addressObject =
+        p?.addressInfo ?? p?.addressDetail ?? p?.addressDetails ?? p?.address_details
+      const locationObject = p?.location ?? p?.geo ?? p?.mapLocation
+      const addressValue =
+        getField(p, ['address', 'addressLine', 'address_line', 'street', 'streetAddress', 'street_address']) ??
+        getField(addressObject, ['address', 'detail', 'detailAddress', 'fullAddress', 'full_address']) ??
+        (typeof p?.location === 'string' ? p.location : undefined)
+      const cityValue =
+        getField(p, ['city', 'cityName', 'city_name', 'city_cn', 'district', 'region']) ??
+        getField(locationObject, ['city']) ??
+        getField(addressObject, ['city']) ??
+        getField(p?.address, ['city'])
+      const stateValue =
+        getField(p, ['state', 'stateName', 'state_name', 'province', 'provinceName', 'province_name']) ??
+        getField(locationObject, ['state']) ??
+        getField(addressObject, ['state']) ??
+        getField(p?.address, ['state'])
+      return {
+        id: getField(p, ['id', '_id', 'propertyId', 'property_id']),
+        landlordId: getField(p, ['landlordId', 'landlord_id', 'ownerId', 'owner_id', 'userId', 'user_id', 'createdBy', 'created_by']),
+        title: getField(p, ['title', 'name', 'propertyName', 'property_name', 'buildingName', 'communityName']),
+        description: getField(p, ['description', 'desc', 'details']),
+        address: addressValue,
+        city: cityValue,
+        state: stateValue,
+        zipCode: getField(p, ['zipCode', 'zip_code', 'postalCode', 'postal_code']),
+        country: getField(p, ['country', 'countryName', 'country_name']),
+        latitude: getField(p, ['latitude', 'lat']),
+        longitude: getField(p, ['longitude', 'lng', 'lon']),
+        price: getField(p, ['price', 'rent', 'monthlyRent', 'monthly_rent', 'amount']),
+        deposit: getField(p, ['deposit', 'securityDeposit', 'security_deposit']),
+        bedrooms: getField(p, ['bedrooms', 'beds', 'bedrooms_count', 'bedroom_count']),
+        bathrooms: getField(p, ['bathrooms', 'baths', 'bathrooms_count', 'bathroom_count']),
+        sqft: getField(p, ['sqft', 'squareFeet', 'square_feet', 'area']),
+        propertyType: getField(p, ['propertyType', 'property_type', 'type', 'category']),
+        status: getField(p, ['status', 'listingStatus', 'listing_status']),
+        images: getField(p, ['images', 'image', 'image_urls', 'photos', 'photoUrls', 'photo_urls']),
+        amenities: getField(p, ['amenities', 'features', 'facilities']),
+        petFriendly: getField(p, ['petFriendly', 'pet_friendly', 'isPetFriendly', 'is_pet_friendly']),
+        availableFrom: getField(p, ['availableFrom', 'available_from', 'availableDate', 'available_date']),
+        leaseDuration: getField(p, ['leaseDuration', 'lease_duration', 'leaseTerm', 'lease_term']),
+        createdAt: getField(p, ['createdAt', 'created_at', 'createTime', 'create_time']),
+        updatedAt: getField(p, ['updatedAt', 'updated_at', 'updateTime', 'update_time']),
+      }
+    }
+    const normalizedEmail = (user?.email || hintedUserEmail)?.toLowerCase()
     const matchesLandlord = (row: any) => {
       const rawCandidates = [
         row?.landlordId,
@@ -934,21 +1114,41 @@ export async function GET(request: NextRequest) {
           skip: (page - 1) * limit,
           take: limit,
         }))
-      } catch (error: any) {
-        if (!isConnectionError(error)) {
-          throw error
+        if (properties.length === 0 && !landlordId && resolvedEmailForLookup) {
+          const emailWhere = {
+            landlord: {
+              email: {
+                equals: resolvedEmailForLookup,
+                mode: 'insensitive' as const,
+              },
+            },
+          }
+          total = await runWithRetry(() => prisma.property.count({ where: emailWhere }))
+          properties = await runWithRetry(() => prisma.property.findMany({
+            where: emailWhere,
+            select: propertySelect,
+            orderBy: { createdAt: 'desc' },
+            skip: (page - 1) * limit,
+            take: limit,
+          }))
         }
+      } catch (error: any) {
+        console.warn('Prisma properties query failed, switching to fallback source:', error)
         const supabaseResult = await fetchPropertiesFromSupabase()
         if (supabaseResult) {
           total = supabaseResult.total
           properties = supabaseResult.rows
         } else {
           const schemaResult = await fetchPropertiesFromSchemaScan()
-          if (!schemaResult) {
-            throw error
+          if (schemaResult) {
+            total = schemaResult.total
+            properties = schemaResult.rows
+          } else {
+            const memoryRows = await db.query('properties', {}, { orderBy: { createdAt: 'desc' } })
+            const matchedRows = (memoryRows || []).filter(matchesLandlord).map(normalizeProperty)
+            total = matchedRows.length
+            properties = matchedRows.slice((page - 1) * limit, (page - 1) * limit + limit)
           }
-          total = schemaResult.total
-          properties = schemaResult.rows
         }
       }
       if (properties.length === 0) {
@@ -984,7 +1184,8 @@ export async function GET(request: NextRequest) {
         if (user?.id) landlordIdSet.add(String(user.id))
         if (resolvedUserId) landlordIdSet.add(String(resolvedUserId))
         if (tokenUserId) landlordIdSet.add(String(tokenUserId))
-        const normalizedEmail = user?.email?.toLowerCase()
+        if (hintedUserId) landlordIdSet.add(String(hintedUserId))
+        const normalizedEmail = (user?.email || hintedUserEmail)?.toLowerCase()
         const matches = fallbackProperties.filter((p: any) => {
           const ownerId = String(
             p.landlordId ||
@@ -1020,7 +1221,10 @@ export async function GET(request: NextRequest) {
     // 为每个房源添加房东信息（如果需要）
     const propertiesWithLandlord = await Promise.all(
       properties.map(async (property: any) => {
-        const landlord = await db.findUserById(property.landlordId)
+        let landlord = null
+        try {
+          landlord = await withTimeout(db.findUserById(property.landlordId), 3000)
+        } catch {}
         return {
           ...property,
           landlord: landlord ? {
@@ -1061,12 +1265,60 @@ export async function GET(request: NextRequest) {
         }
       })
     }
-    const normalizeProperty = (p: any) => ({
-      ...p,
-      landlordId: p.landlordId ?? p.landlord_id,
-      createdAt: p.createdAt ?? p.created_at,
-      updatedAt: p.updatedAt ?? p.updated_at,
-    })
+    const getField = (obj: any, keys: string[]) => {
+      for (const key of keys) {
+        const value = obj?.[key]
+        if (value !== undefined && value !== null && value !== '') return value
+      }
+      return undefined
+    }
+    const normalizeProperty = (p: any) => {
+      const addressObject =
+        p?.addressInfo ?? p?.addressDetail ?? p?.addressDetails ?? p?.address_details
+      const locationObject = p?.location ?? p?.geo ?? p?.mapLocation
+      const addressValue =
+        getField(p, ['address', 'addressLine', 'address_line', 'street', 'streetAddress', 'street_address']) ??
+        getField(addressObject, ['address', 'detail', 'detailAddress', 'fullAddress', 'full_address']) ??
+        (typeof p?.location === 'string' ? p.location : undefined)
+      const cityValue =
+        getField(p, ['city', 'cityName', 'city_name', 'city_cn', 'district', 'region']) ??
+        getField(locationObject, ['city']) ??
+        getField(addressObject, ['city']) ??
+        getField(p?.address, ['city'])
+      const stateValue =
+        getField(p, ['state', 'stateName', 'state_name', 'province', 'provinceName', 'province_name']) ??
+        getField(locationObject, ['state']) ??
+        getField(addressObject, ['state']) ??
+        getField(p?.address, ['state'])
+      return {
+        ...p,
+        id: getField(p, ['id', '_id', 'propertyId', 'property_id']),
+        landlordId: getField(p, ['landlordId', 'landlord_id', 'ownerId', 'owner_id', 'userId', 'user_id', 'createdBy', 'created_by']),
+        title: getField(p, ['title', 'name', 'propertyName', 'property_name', 'buildingName', 'communityName']),
+        description: getField(p, ['description', 'desc', 'details']),
+        address: addressValue,
+        city: cityValue,
+        state: stateValue,
+        zipCode: getField(p, ['zipCode', 'zip_code', 'postalCode', 'postal_code']),
+        country: getField(p, ['country', 'countryName', 'country_name']),
+        latitude: getField(p, ['latitude', 'lat']),
+        longitude: getField(p, ['longitude', 'lng', 'lon']),
+        price: getField(p, ['price', 'rent', 'monthlyRent', 'monthly_rent', 'amount']),
+        deposit: getField(p, ['deposit', 'securityDeposit', 'security_deposit']),
+        bedrooms: getField(p, ['bedrooms', 'beds', 'bedrooms_count', 'bedroom_count']),
+        bathrooms: getField(p, ['bathrooms', 'baths', 'bathrooms_count', 'bathroom_count']),
+        sqft: getField(p, ['sqft', 'squareFeet', 'square_feet', 'area']),
+        propertyType: getField(p, ['propertyType', 'property_type', 'type', 'category']),
+        status: getField(p, ['status', 'listingStatus', 'listing_status']),
+        images: getField(p, ['images', 'image', 'image_urls', 'photos', 'photoUrls', 'photo_urls']),
+        amenities: getField(p, ['amenities', 'features', 'facilities']),
+        petFriendly: getField(p, ['petFriendly', 'pet_friendly', 'isPetFriendly', 'is_pet_friendly']),
+        availableFrom: getField(p, ['availableFrom', 'available_from', 'availableDate', 'available_date']),
+        leaseDuration: getField(p, ['leaseDuration', 'lease_duration', 'leaseTerm', 'lease_term']),
+        createdAt: getField(p, ['createdAt', 'created_at', 'createTime', 'create_time']),
+        updatedAt: getField(p, ['updatedAt', 'updated_at', 'updateTime', 'update_time']),
+      }
+    }
     const propertyTables = ['Property', 'property', 'properties']
     const userTables = ['User', 'user', 'users']
     const selectFrom = async (

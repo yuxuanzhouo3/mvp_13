@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createNotification } from '@/lib/notification-service'
 
 /**
  * 支付宝返回页面 - 使用HTML页面进行重定向，避免redirect问题
@@ -74,38 +75,21 @@ export async function GET(request: NextRequest) {
               if (payment.propertyId) {
                 const property = await db.findById('properties', payment.propertyId)
                 if (property && property.landlordId) {
-                  // 检查是否已经发送过通知
-                  const existingNotifs = await db.query('notifications', {
+                  const isChina = process.env.NEXT_PUBLIC_APP_REGION === 'china'
+                  await createNotification({
                     userId: property.landlordId,
-                    type: 'PAYMENT_RECEIVED'
+                    type: 'PAYMENT_RECEIVED',
+                    title: isChina ? '收到房租支付' : 'Rent Payment Received',
+                    message: isChina 
+                      ? `租客已支付租金，资金已进入托管账户。`
+                      : `Tenant has paid rent, funds are now in escrow.`,
+                    link: `/dashboard/landlord`,
+                    metadata: {
+                      paymentId: paymentId,
+                      propertyId: property.id
+                    }
                   })
-                  
-                  // 简单的去重逻辑：如果最近1分钟内有相同支付ID的通知
-                  const isDuplicate = existingNotifs.some((n: any) => {
-                    const meta = typeof n.metadata === 'string' ? JSON.parse(n.metadata) : n.metadata
-                    return meta?.paymentId === paymentId && 
-                           (new Date().getTime() - new Date(n.createdAt).getTime() < 60000)
-                  })
-
-                  if (!isDuplicate) {
-                    const isChina = process.env.NEXT_PUBLIC_APP_REGION === 'china'
-                    await db.create('notifications', {
-                      userId: property.landlordId,
-                      type: 'PAYMENT_RECEIVED',
-                      title: isChina ? '收到房租支付' : 'Rent Payment Received',
-                      message: isChina 
-                        ? `租客已支付租金，资金已进入托管账户。`
-                        : `Tenant has paid rent, funds are now in escrow.`,
-                      isRead: false,
-                      link: `/dashboard/landlord`,
-                      metadata: JSON.stringify({
-                        paymentId: paymentId,
-                        propertyId: property.id,
-                        type: 'PAYMENT_RECEIVED'
-                      })
-                    })
-                    console.log('Notification sent to landlord in return-page')
-                  }
+                  console.log('Notification sent to landlord in return-page')
                 }
               }
             } catch (notifErr) {

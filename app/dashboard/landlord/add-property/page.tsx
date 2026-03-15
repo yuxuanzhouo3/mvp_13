@@ -270,14 +270,22 @@ export default function AddPropertyPage() {
         payload.landlordId = formData.landlordId
       }
 
-      const response = await fetch("/api/properties", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-      })
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), 60000)
+      let response: Response
+      try {
+        response = await fetch("/api/properties", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        })
+      } finally {
+        clearTimeout(timeoutId)
+      }
 
       const data = await response.json()
       if (response.ok) {
@@ -293,7 +301,9 @@ export default function AddPropertyPage() {
     } catch (error: any) {
       toast({
         title: tCommon('error'),
-        description: error.message,
+        description: error?.name === 'AbortError'
+          ? (t('requestTimeout') || "Request timed out, please retry")
+          : error.message,
         variant: "destructive",
       })
     } finally {

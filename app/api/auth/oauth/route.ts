@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { loginWithOAuth } from '@/lib/auth-adapter'
 import { getAppRegion } from '@/lib/db-adapter'
+import { supabase } from '@/lib/supabase'
 
 /**
  * OAuth 登录（仅国际版支持）
@@ -27,9 +28,24 @@ export async function GET(request: NextRequest) {
     }
 
     // 获取 OAuth 登录 URL
-    const result = await loginWithOAuth(provider)
+    const result = await loginWithOAuth(provider, new URL(request.url).origin)
 
-    return NextResponse.json({ url: result.url })
+    const response = NextResponse.json({ url: result.url })
+    const authClient = supabase?.auth as any
+    const storageKey = authClient?.storageKey ? `${authClient.storageKey}-code-verifier` : null
+    const codeVerifier = storageKey ? await authClient.storage.getItem(storageKey) : null
+
+    if (codeVerifier) {
+      response.cookies.set('sb-pkce-verifier', codeVerifier, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: process.env.NODE_ENV === 'production',
+        path: '/api/auth/callback',
+        maxAge: 60 * 10,
+      })
+    }
+
+    return response
   } catch (error: any) {
     console.error('OAuth login error:', error)
     return NextResponse.json(

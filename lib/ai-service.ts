@@ -7,7 +7,6 @@ export interface ParsedSearchCriteria {
   minPrice?: number
   maxDistance?: number // 公里数
   minBedrooms?: number
-  exactBedrooms?: number
   minBathrooms?: number
   city?: string
   state?: string
@@ -15,14 +14,14 @@ export interface ParsedSearchCriteria {
   petFriendly?: boolean
   amenities?: string[]
   propertyType?: string
-  query?: string
 }
 
 export interface ParsedTenantSearchCriteria extends ParsedSearchCriteria {
-  // 租客特定字段
+  query?: string
 }
 
 export interface ParsedLandlordSearchCriteria {
+  query?: string
   minRent?: number
   maxRent?: number
   minLeaseDuration?: number
@@ -40,32 +39,6 @@ export async function parseTenantQuery(query: string): Promise<ParsedTenantSearc
   // 为了演示，我们使用规则匹配，实际应该使用AI模型
   
   const criteria: ParsedTenantSearchCriteria = {}
-  const chineseNumberMap: Record<string, number> = {
-    一: 1,
-    二: 2,
-    两: 2,
-    三: 3,
-    四: 4,
-    五: 5,
-    六: 6,
-    七: 7,
-    八: 8,
-    九: 9,
-    十: 10
-  }
-  const parseChineseNumber = (value: string) => {
-    if (!value) return null
-    if (value === '十') return 10
-    if (value.includes('十')) {
-      const [tensChar, onesChar] = value.split('十')
-      const tens = tensChar ? chineseNumberMap[tensChar] : 1
-      const ones = onesChar ? chineseNumberMap[onesChar] : 0
-      if (!tens && tens !== 0) return null
-      if (onesChar && ones === undefined) return null
-      return tens * 10 + ones
-    }
-    return chineseNumberMap[value] ?? null
-  }
   
   // 价格范围提取 - 支持英文和中文
   const priceMatch = query.match(/(\d+)\s*[-~到至]\s*(\d+)\s*(?:美元|元|USD|\$|dollar)/i) ||
@@ -99,70 +72,17 @@ export async function parseTenantQuery(query: string): Promise<ParsedTenantSearc
   }
 
   // 城市提取 - 支持英文和中文
-  const cityMatch = query.match(/(?:in|at|located in|city of|城市|位于|在)\s*([\u4e00-\u9fa5]{2,}|[A-Za-z][A-Za-z\s]+?)(?:\s|$|,|\.)/i) ||
-    query.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:apartment|house|condo|studio|property)/i)
+  const cityMatch = query.match(/(?:in|at|located in|city of|城市|位于|在)\s+([A-Za-z][A-Za-z\s]+?)(?:\s|$|,|\.)/i) ||
+                    query.match(/([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:apartment|house|condo|studio|property)/i)
   if (cityMatch) {
     criteria.city = cityMatch[1].trim()
   }
-  const enLocationMatch = query.match(/(?:in|at|located in)\s*([A-Za-z][A-Za-z\s]+)\s*,\s*([A-Za-z]{2,})/i) ||
-    query.match(/([A-Za-z][A-Za-z\s]+)\s*,\s*([A-Za-z]{2,})/i)
-  if (enLocationMatch) {
-    criteria.city = enLocationMatch[1].trim()
-    criteria.state = enLocationMatch[2].trim()
-  }
-  const cnLocationMatch = query.match(/(?:在|位于|位於|城市|地区|地區|区域|區域|靠近|附近)\s*([\u4e00-\u9fa5]{2,}(?:省|市|自治区|特别行政区)?)\s*([\u4e00-\u9fa5]{2,}(?:市|区|县|旗))?/i) ||
-    query.match(/([\u4e00-\u9fa5]{2,}(?:省|市|自治区|特别行政区))\s*([\u4e00-\u9fa5]{2,}(?:市|区|县|旗))?/i)
-  if (cnLocationMatch) {
-    const cityValue = cnLocationMatch[1]?.trim()
-    const stateValue = cnLocationMatch[2]?.trim()
-    if (cityValue) criteria.city = cityValue
-    if (stateValue) criteria.state = stateValue
-  } else if (!criteria.city) {
-    const looseDistrict = query.match(/([\u4e00-\u9fa5]{2,}(?:区|县|旗))/i)
-    const stopwords = new Set(['附近', '以内', '以上', '以下', '左右', '价格', '租金', '预算', '公寓', '房源', '房子', '租房', '房屋'])
-    if (looseDistrict && !stopwords.has(looseDistrict[1])) {
-      criteria.state = looseDistrict[1]
-    }
-  }
-  if (!criteria.city) {
-    const cityCandidates = [
-      '上海', '北京', '广州', '深圳', '杭州', '南京', '苏州', '成都', '重庆', '天津',
-      '武汉', '西安', '郑州', '长沙', '厦门', '青岛', '宁波', '福州', '合肥', '昆明',
-      '沈阳', '大连', '哈尔滨'
-    ]
-    const hit = cityCandidates.find((name) => query.includes(name))
-    if (hit) {
-      criteria.city = hit
-    }
-  }
 
   // 房间数提取 - 支持英文和中文
-  const bedroomMatch = query.match(/(\d+)\s*(?:室|房|居|房间|bedroom|bed|bedrooms|br|beds)/i) ||
-    query.match(/(\d+)\s*bed/i)
+  const bedroomMatch = query.match(/(\d+)\s*(?:室|bedroom|bed|bedrooms|房间|br|beds)/i) ||
+                       query.match(/(\d+)\s*bed/i)
   if (bedroomMatch) {
-    const parsedValue = parseInt(bedroomMatch[1])
-    criteria.minBedrooms = parsedValue
-    const exactToken = query.match(/(\d+)\s*(?:室|卧|卧室|房|房间)/i)
-    if (exactToken && parseInt(exactToken[1]) === parsedValue) {
-      criteria.exactBedrooms = parsedValue
-    }
-  } else {
-    const cnBedroomMatch = query.match(/([一二两三四五六七八九十]{1,3})\s*(?:室|房|居|房间|居室)/i)
-    if (cnBedroomMatch) {
-      const parsed = parseChineseNumber(cnBedroomMatch[1])
-      if (parsed) {
-        criteria.minBedrooms = parsed
-        criteria.exactBedrooms = parsed
-      }
-    }
-    const cnBedroomAlias = query.match(/([一二两三四五六七八九十]{1,3})\s*(?:卧|卧室)/i)
-    if (cnBedroomAlias && !criteria.minBedrooms) {
-      const parsed = parseChineseNumber(cnBedroomAlias[1])
-      if (parsed) {
-        criteria.minBedrooms = parsed
-        criteria.exactBedrooms = parsed
-      }
-    }
+    criteria.minBedrooms = parseInt(bedroomMatch[1])
   }
 
   // 浴室数提取
@@ -174,32 +94,6 @@ export async function parseTenantQuery(query: string): Promise<ParsedTenantSearc
   // 宠物友好
   if (query.match(/宠物|pet|pets|pet friendly|pet-friendly/i)) {
     criteria.petFriendly = true
-  }
-
-  const propertyTypeMap: Record<string, string> = {
-    studio: 'studio',
-    'studio apartment': 'studio',
-    工作室: 'studio',
-    单间: 'studio',
-    一居: 'apartment',
-    两居: 'apartment',
-    三居: 'apartment',
-    公寓: 'apartment',
-    apartment: 'apartment',
-    condo: 'condo',
-    复式: 'condo',
-    house: 'house',
-    别墅: 'villa',
-    villa: 'villa',
-    联排: 'townhouse',
-    townhouse: 'townhouse'
-  }
-  const lowerQuery = query.toLowerCase()
-  const propertyTypeEntry = Object.entries(propertyTypeMap).find(([key]) =>
-    key.match(/^[a-z]/i) ? lowerQuery.includes(key.toLowerCase()) : query.includes(key)
-  )
-  if (propertyTypeEntry) {
-    criteria.propertyType = propertyTypeEntry[1]
   }
 
   // 如果有Mistral API Key，使用AI解析

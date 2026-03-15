@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { MapPin, Bed, Bath, Square, ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react"
 import Image from "next/image"
 import { useToast } from "@/hooks/use-toast"
-import { getCurrencySymbol } from "@/lib/utils"
+import { getCurrencySymbol, normalizeStringArray } from "@/lib/utils"
 
 export default function AgentPropertyDetailPage() {
   const params = useParams()
@@ -66,16 +66,8 @@ export default function AgentPropertyDetailPage() {
     }
   }
 
-  const images = property
-    ? typeof property.images === "string"
-      ? JSON.parse(property.images || "[]")
-      : (property.images || [])
-    : []
-  const amenities = property
-    ? typeof property.amenities === "string"
-      ? JSON.parse(property.amenities || "[]")
-      : (property.amenities || [])
-    : []
+  const images = normalizeStringArray(property?.images)
+  const amenities = normalizeStringArray(property?.amenities)
 
   const nextImage = () => {
     if (images.length > 1) {

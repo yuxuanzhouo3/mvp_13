@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-adapter'
-import { getDatabaseAdapter } from '@/lib/db-adapter'
+import { getDatabaseAdapter, getAppRegion } from '@/lib/db-adapter'
 import { createSupabaseServerClient, supabaseAdmin } from '@/lib/supabase'
+import { prisma } from '@/lib/db'
 
 /**
  * Get all landlords (for agents to connect with)
@@ -131,14 +132,54 @@ export async function GET(request: NextRequest) {
     }
     let allUsers: any[] = []
     let allProperties: any[] = []
-    try {
-      allUsers = await db.query('users', {}, {
-        orderBy: { createdAt: 'desc' }
-      })
-      allProperties = await db.query('properties', {}, { orderBy: { createdAt: 'desc' } })
-    } catch (error) {
-      allUsers = await fetchUsersFromSupabase()
-      allProperties = await fetchPropertiesFromSupabase()
+
+    // 优先使用 Prisma (Global Region) 以获取关联数据
+    if (getAppRegion() === 'global') {
+      try {
+        allUsers = await prisma.user.findMany({
+          orderBy: { createdAt: 'desc' },
+          include: {
+            landlordProfile: true,
+            tenantProfile: true
+          }
+        })
+        allProperties = await prisma.property.findMany({
+          orderBy: { createdAt: 'desc' }
+        })
+      } catch (e) {
+        console.error('Prisma query failed:', e)
+      }
+    }
+
+    if (allUsers.length === 0) {
+      try {
+        allUsers = await db.query('users', {}, {
+          orderBy: { createdAt: 'desc' }
+        })
+        allProperties = await db.query('properties', {}, { orderBy: { createdAt: 'desc' } })
+
+        // 补全 Profile 信息 (如果数据库适配器未返回)
+        if (allUsers.length > 0 && !allUsers[0].landlordProfile) {
+          try {
+            const landlordProfiles = await db.query('landlordProfiles')
+            const tenantProfiles = await db.query('tenantProfiles')
+            
+            const landlordMap = new Map(landlordProfiles.map((p: any) => [String(p.userId || p.user_id), p]))
+            const tenantMap = new Map(tenantProfiles.map((p: any) => [String(p.userId || p.user_id), p]))
+            
+            allUsers = allUsers.map(u => ({
+              ...u,
+              landlordProfile: u.landlordProfile || landlordMap.get(String(u.id)),
+              tenantProfile: u.tenantProfile || tenantMap.get(String(u.id))
+            }))
+          } catch (e) {
+            console.warn('Failed to attach profiles', e)
+          }
+        }
+      } catch (error) {
+        allUsers = await fetchUsersFromSupabase()
+        allProperties = await fetchPropertiesFromSupabase()
+      }
     }
     const agentPropertyLandlordIds = new Set(
       allProperties

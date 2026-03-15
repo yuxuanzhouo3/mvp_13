@@ -19,6 +19,10 @@ export function Header() {
     { name: tNav('howItWorks'), href: "/how-it-works" },
     { name: tNav('depositProtection'), href: "/deposit-protection" },
   ]
+  const handleLoginClick = () => {
+    if (isOpen) setIsOpen(false)
+  }
+
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="container flex h-16 items-center justify-between">
@@ -33,6 +37,7 @@ export function Header() {
             <Link 
               key={item.name} 
               href={item.href} 
+              prefetch={item.href.startsWith("/auth")}
               className="text-sm font-medium transition-colors hover:text-primary"
             >
               {item.name}
@@ -44,10 +49,10 @@ export function Header() {
           <ModeToggle />
           <div className="hidden md:flex items-center space-x-2">
             <Button variant="ghost" asChild>
-              <Link href="/auth/login">{t('login')}</Link>
+              <Link href="/auth/login" prefetch={false}>{t('login')}</Link>
             </Button>
             <Button asChild>
-              <Link href="/auth/signup">{t('signup')}</Link>
+              <Link href="/auth/signup" prefetch={false}>{t('signup')}</Link>
             </Button>
           </div>
 
@@ -64,6 +69,7 @@ export function Header() {
                   <Link
                     key={item.name}
                     href={item.href}
+                    prefetch={item.href.startsWith("/auth")}
                     className="text-lg font-medium transition-colors hover:text-primary"
                   >
                     {item.name}
@@ -71,10 +77,10 @@ export function Header() {
                 ))}
                 <div className="flex flex-col space-y-2 pt-4">
                   <Button variant="ghost" asChild>
-                    <Link href="/auth/login">{t('login')}</Link>
+                    <Link href="/auth/login" prefetch={false} onClick={handleLoginClick}>{t('login')}</Link>
                   </Button>
                   <Button asChild>
-                    <Link href="/auth/signup">{t('signup')}</Link>
+                    <Link href="/auth/signup" prefetch={false}>{t('signup')}</Link>
                   </Button>
                 </div>
               </nav>

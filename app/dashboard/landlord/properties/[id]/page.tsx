@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { MapPin, Bed, Bath, Square, Edit, ArrowLeft, X, Upload, ChevronLeft, ChevronRight } from "lucide-react"
 import Image from "next/image"
 import { useToast } from "@/hooks/use-toast"
-import { getCurrencySymbol } from "@/lib/utils"
+import { getCurrencySymbol, normalizeStringArray } from "@/lib/utils"
 
 export default function LandlordPropertyDetailPage() {
   const params = useParams()
@@ -32,6 +32,19 @@ export default function LandlordPropertyDetailPage() {
   const [currentImageIndex, setCurrentImageIndex] = useState(0)
   const currencySymbol = getCurrencySymbol()
   const [userType, setUserType] = useState<string>("landlord")
+  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 9000) => {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        cache: "no-store",
+      })
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  }
   const [formData, setFormData] = useState({
     title: "",
     description: "",
@@ -81,16 +94,14 @@ export default function LandlordPropertyDetailPage() {
         return
       }
 
-      const response = await fetch(`/api/properties/${params.id}`, {
+      const response = await fetchWithTimeout(`/api/properties/${params.id}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
 
       if (response.ok) {
         const data = await response.json()
         setProperty(data.property)
-        const propertyImages = typeof data.property.images === 'string' 
-          ? JSON.parse(data.property.images || '[]')
-          : (data.property.images || [])
+        const propertyImages = normalizeStringArray(data.property.images)
         setImages(propertyImages)
         setFormData({
           title: data.property.title,

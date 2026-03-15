@@ -8,22 +8,16 @@
  * - 所有方法返回统一的数据格式
  */
 
-import { prisma, prismaDirect, withPrismaRetry } from './db'
+import { prisma } from './db'
 import { db as cloudbaseDb } from './cloudbase'
-
-const withTimeoutMs = <T>(p: Promise<T>, ms: number): Promise<T> =>
-  Promise.race([
-    p,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Operation timeout after ${ms}ms`)), ms))
-  ])
 
 // 获取当前运行环境
 export function getAppRegion(): 'global' | 'china' {
-  const region = process.env.APP_REGION || process.env.NEXT_PUBLIC_APP_REGION
-  if (region === 'china') return 'china'
-  if (region === 'global') return 'global'
-  const hasCloudbaseSecrets = Boolean(process.env.CLOUDBASE_SECRET_ID && process.env.CLOUDBASE_SECRET_KEY)
-  return hasCloudbaseSecrets ? 'china' : 'global'
+  const rawRegion = (process.env.NEXT_PUBLIC_APP_REGION || 'global').trim().toLowerCase()
+  if (['china', 'cn', 'zh', 'domestic'].includes(rawRegion)) {
+    return 'china'
+  }
+  return 'global'
 }
 
 // 统一用户类型定义
@@ -75,154 +69,166 @@ export interface DatabaseAdapter {
 
 // Supabase (Prisma) 适配器实现
 export class SupabaseAdapter implements DatabaseAdapter {
-  async findUserByEmail(email: string): Promise<UnifiedUser | null> {
-    const normalizedEmail = email?.trim()
-    const whereEmail = normalizedEmail
-      ? { email: { equals: normalizedEmail, mode: 'insensitive' as const } }
-      : { email: normalizedEmail }
-    const query = () =>
-      prisma.user.findFirst({
-        where: whereEmail,
-        include: {
-          tenantProfile: true,
-          landlordProfile: true,
-        },
-      })
+  private isConnectionError(error: any): boolean {
+    const errorMsg = String(error?.message || '').toLowerCase()
+    return (
+      errorMsg.includes("can't reach database server") ||
+      errorMsg.includes('can\\u2019t reach database server') ||
+      errorMsg.includes('maxclients') ||
+      errorMsg.includes('max clients reached') ||
+      errorMsg.includes('pool_size') ||
+      errorMsg.includes("can't reach") ||
+      errorMsg.includes('connection') ||
+      errorMsg.includes('timeout') ||
+      errorMsg.includes('pooler') ||
+      errorMsg.includes('p1001') ||
+      errorMsg.includes('p1017') ||
+      errorMsg.includes('p1000') ||
+      error?.code === 'P1001' ||
+      error?.code === 'P1017' ||
+      error?.code === 'P1000'
+    )
+  }
+
+  private async executeWithReconnect<T>(operation: () => Promise<T>): Promise<T> {
     try {
-      // 优先直连，直连不可达时回退到 pooler（带重试）
-      if (prismaDirect) {
-        try {
-          const user = await withTimeoutMs(
-            prismaDirect.user.findFirst({
-              where: whereEmail,
-              include: {
-                tenantProfile: true,
-                landlordProfile: true,
-              },
-            }),
-            5000 // 缩短直连超时时间到 5s (原 18s)，快速失败
-          )
-          if (user) return this.mapPrismaUserToUnified(user)
-          return null
-        } catch (directErr: any) {
-          const msg = String(directErr?.message || '').toLowerCase()
-          const directUnreachable =
-            msg.includes("can't reach") ||
-            msg.includes('connection') ||
-            msg.includes('timeout') ||
-            msg.includes('econnrefused') ||
-            msg.includes('enotfound')
-          if (directUnreachable) {
-            console.warn('[SupabaseAdapter] Direct DB unreachable, falling back to pooler:', directErr?.message)
-            // 延长 Pooler 重试超时到 60s (原 20s)，适应国内网络
-            const user = await withPrismaRetry(query, 3, 60000)
-            if (!user) return null
-            return this.mapPrismaUserToUnified(user)
-          }
-          throw directErr
-        }
+      return await operation()
+    } catch (error: any) {
+      if (!this.isConnectionError(error)) {
+        throw error
       }
-      // 延长默认重试超时到 60s
-      const user = await withPrismaRetry(query, 3, 60000)
+      try {
+        await prisma.$disconnect()
+      } catch {}
+      return await operation()
+    }
+  }
+
+  async findUserByEmail(email: string): Promise<UnifiedUser | null> {
+    try {
+      const user = await this.executeWithReconnect(() =>
+        prisma.user.findUnique({
+          where: { email },
+          include: {
+            tenantProfile: true,
+            landlordProfile: true,
+          },
+        })
+      )
+      
       if (!user) return null
+      
       return this.mapPrismaUserToUnified(user)
     } catch (error: any) {
       const errorMsg = String(error?.message || '')
       const lower = errorMsg.toLowerCase()
-      console.error('[SupabaseAdapter] 查询用户失败:', { email, error: errorMsg, code: error?.code })
-      const isConnectionError =
+      
+      console.error('[SupabaseAdapter] 查询用户失败:', {
+        email,
+        error: errorMsg,
+        code: error?.code
+      })
+      
+      // 检查是否是连接问题
+      const isConnectionError = 
         lower.includes("can't reach database server") ||
         lower.includes('can\\u2019t reach database server') ||
         lower.includes('maxclients') ||
         lower.includes('max clients reached') ||
         lower.includes('pool_size') ||
-        lower.includes('check out') ||
         lower.includes("can't reach") ||
         lower.includes('connection') ||
         lower.includes('timeout') ||
         lower.includes('pooler') ||
-        lower.includes('pool') ||
-        lower.includes('P1001') ||
-        lower.includes('P1017') ||
-        lower.includes('P1000') ||
+        lower.includes('P1001') || // Prisma 连接错误代码
+        lower.includes('P1017') || // Prisma 连接关闭错误代码
+        lower.includes('P1000') || // Prisma 认证错误
+        lower.includes('P1001') || // Prisma 无法连接到数据库
         error?.code === 'P1001' ||
         error?.code === 'P1017' ||
         error?.code === 'P1000'
+      
       if (isConnectionError) {
-        throw new Error('Database connection failed, please try again later')
+        console.error('[SupabaseAdapter] 数据库连接错误详情:', {
+          error: errorMsg,
+          code: error?.code,
+          meta: error?.meta
+        })
+        
+        // 强制抛出详细错误，方便调试
+        // if (process.env.NODE_ENV === 'development') {
+          const maskedUrl = (process.env.DATABASE_URL || '').replace(/:[^:]*@/, ':****@')
+          
+          // 构建详细的调试信息
+          const debugInfo = `(URL: ${maskedUrl})`
+          const errorDetails = JSON.stringify({
+            name: error.name,
+            code: error.code,
+            meta: error.meta,
+            message: error.message,
+            stack: error.stack
+          }, null, 2)
+          
+          if (process.env.NODE_ENV === 'development' || true) { // 强制开启调试信息
+             throw new Error(`Database connection failed details: ${errorDetails} ${debugInfo}`)
+          }
+        // }
+        
+        // throw new Error('Database connection failed, please try again later')
       }
+      
+      // 其他错误重新抛出
       throw error
     }
   }
 
   async findUserById(id: string): Promise<UnifiedUser | null> {
-    const query = () =>
-      prisma.user.findUnique({
-        where: { id },
-        include: {
-          tenantProfile: true,
-          landlordProfile: true,
-        },
-      })
     try {
-      if (prismaDirect) {
-        try {
-          const user = await withTimeoutMs(
-            prismaDirect.user.findUnique({
-              where: { id },
-              include: {
-                tenantProfile: true,
-                landlordProfile: true,
-              },
-            }),
-            5000 // 缩短直连超时时间到 5s
-          )
-          if (user) return this.mapPrismaUserToUnified(user)
-          return null
-        } catch (directErr: any) {
-          const msg = String(directErr?.message || '').toLowerCase()
-          const directUnreachable =
-            msg.includes("can't reach") ||
-            msg.includes('connection') ||
-            msg.includes('timeout') ||
-            msg.includes('econnrefused') ||
-            msg.includes('enotfound')
-          if (directUnreachable) {
-            console.warn('[SupabaseAdapter] Direct DB unreachable, falling back to pooler:', directErr?.message)
-            // 延长 Pooler 重试超时到 60s
-            const user = await withPrismaRetry(query, 3, 60000)
-            if (!user) return null
-            return this.mapPrismaUserToUnified(user)
-          }
-          throw directErr
-        }
-      }
-      // 延长默认重试超时到 60s
-      const user = await withPrismaRetry(query, 3, 60000)
+      const user = await this.executeWithReconnect(() =>
+        prisma.user.findUnique({
+          where: { id },
+          include: {
+            tenantProfile: true,
+            landlordProfile: true,
+          },
+        })
+      )
+      
       if (!user) return null
+      
       return this.mapPrismaUserToUnified(user)
     } catch (error: any) {
       const errorMsg = String(error?.message || '')
       const lower = errorMsg.toLowerCase()
-      console.error('[SupabaseAdapter] 查询用户失败:', { id, error: errorMsg, code: error?.code })
-      const isConnectionError =
+      
+      console.error('[SupabaseAdapter] 查询用户失败:', {
+        id,
+        error: errorMsg,
+        code: error?.code
+      })
+      
+      // 检查是否是连接问题
+      if (
         lower.includes("can't reach database server") ||
         lower.includes('can\\u2019t reach database server') ||
         lower.includes('maxclients') ||
         lower.includes('max clients reached') ||
         lower.includes('pool_size') ||
-        lower.includes('check out') ||
         lower.includes("can't reach") ||
         lower.includes('connection') ||
         lower.includes('timeout') ||
         lower.includes('pooler') ||
-        lower.includes('pool') ||
         lower.includes('P1001') ||
-        lower.includes('P1017') ||
-        lower.includes('P1000')
-      if (isConnectionError) {
-        throw new Error('Database connection failed, please try again later')
+        lower.includes('P1017')
+      ) {
+        // 在开发环境下抛出详细错误
+        // if (process.env.NODE_ENV === 'development') {
+          const maskedUrl = (process.env.DATABASE_URL || '').replace(/:[^:]*@/, ':****@')
+          throw new Error(`Database connection failed: ${errorMsg} (URL: ${maskedUrl})`)
+        // }
+        // throw new Error('Database connection failed, please try again later')
       }
+      
       throw error
     }
   }
@@ -250,12 +256,16 @@ export class SupabaseAdapter implements DatabaseAdapter {
       monthlyQuota: 100,
       ...(data.userType === 'TENANT' && {
         tenantProfile: { 
-          create: {} 
+          create: {
+            // ...(data.representedById ? { representedById: data.representedById } : {})
+          } 
         }
       }),
       ...(data.userType === 'LANDLORD' && {
         landlordProfile: { 
-          create: {} 
+          create: {
+            // ...(data.representedById ? { representedById: data.representedById } : {})
+          } 
         }
       }),
     }
@@ -265,35 +275,21 @@ export class SupabaseAdapter implements DatabaseAdapter {
       userData.phone = data.phone.trim()
     }
     
-    // 使用 withPrismaRetry 增加重试机制，提高稳定性
-    const query = () => prisma.user.create({
+    const user = await prisma.user.create({
       data: userData,
       include: {
         tenantProfile: true,
         landlordProfile: true,
       },
     })
-
-    try {
-      const user = await withPrismaRetry(query, 3, 20000) // 20s 超时，重试 3 次
-      
-      // 如果有 representedById，单独更新（因为 Prisma Client 可能未包含该字段）
-      if (data.representedById) {
-        return this.updateUser(user.id, { representedById: data.representedById })
-      }
-      
-      return this.mapPrismaUserToUnified(user)
-    } catch (error: any) {
-      console.error('[SupabaseAdapter] 创建用户失败:', error)
-      throw error
-    }
+    
+    return this.mapPrismaUserToUnified(user)
   }
 
   async updateUser(id: string, data: Partial<UnifiedUser>): Promise<UnifiedUser> {
     const updateData: any = {}
     
     if (data.email !== undefined) updateData.email = data.email
-    if (data.password !== undefined) updateData.password = data.password
     if (data.name !== undefined) updateData.name = data.name
     if (data.phone !== undefined) updateData.phone = data.phone
     if (data.avatar !== undefined) updateData.avatar = data.avatar
@@ -304,111 +300,34 @@ export class SupabaseAdapter implements DatabaseAdapter {
     // Prisma 不直接在 User 表存储 representedById，需要更新关联的 Profile
     // 我们在 prisma.user.update 之后单独处理
     
-    const hasUserFieldUpdates = Object.keys(updateData).length > 0
-    const user = hasUserFieldUpdates
-      ? await prisma.user.update({
-          where: { id },
-          data: updateData,
-          include: {
-            tenantProfile: true,
-            landlordProfile: true,
-          },
-        })
-      : await prisma.user.findUnique({
-          where: { id },
-          include: {
-            tenantProfile: true,
-            landlordProfile: true,
-          },
-        })
-
-    if (!user) {
-      throw new Error(`User not found: ${id}`)
-    }
+    const user = await prisma.user.update({
+      where: { id },
+      data: updateData,
+      include: {
+        tenantProfile: true,
+        landlordProfile: true,
+      },
+    })
 
     // 处理 representedById 更新
-    // 使用 raw SQL 以绕过 Prisma Client 可能存在的字段缺失问题
-    if (data.representedById !== undefined) {
-      let tableName = user.userType === 'TENANT' ? 'TenantProfile' : 
-                        user.userType === 'LANDLORD' ? 'LandlordProfile' : null;
-      
-      if (tableName) {
-        try {
-            // Resolve correct table name case
-            const tables = await prisma.$queryRawUnsafe(
-                `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name ILIKE $1`,
-                tableName
-            ) as any[];
-            if (tables && tables.length > 0) {
-                tableName = tables[0].table_name;
-            }
-
-            // 检查记录是否存在
-            const checkSql = `SELECT 1 FROM "${tableName}" WHERE "userId" = $1`;
-            const exists = await prisma.$queryRawUnsafe(checkSql, id) as any[];
-            
-            if (exists && exists.length > 0) {
-                 await prisma.$executeRawUnsafe(
-                    `UPDATE "${tableName}" SET "representedById" = $1, "updatedAt" = NOW() WHERE "userId" = $2`,
-                    data.representedById,
-                    id
-                 );
-            } else {
-                 const newId = `${Date.now().toString(36)}${Math.random().toString(36).substr(2, 9)}`;
-                 // Insert
-                 if (tableName === 'TenantProfile') {
-                     await prisma.$executeRawUnsafe(
-                        `INSERT INTO "${tableName}" ("id", "userId", "representedById", "status", "createdAt", "updatedAt") VALUES ($1, $2, $3, 'SEARCHING', NOW(), NOW())`,
-                        newId, id, data.representedById
-                     );
-                 } else {
-                     await prisma.$executeRawUnsafe(
-                        `INSERT INTO "${tableName}" ("id", "userId", "representedById", "verified", "createdAt", "updatedAt") VALUES ($1, $2, $3, false, NOW(), NOW())`,
-                        newId, id, data.representedById
-                     );
-                 }
-            }
-        } catch (error: any) {
-            console.error(`Failed to update representedById for ${tableName}:`, error);
-            // Auto-migration: 如果列不存在，尝试添加列
-            if (error.message && error.message.toLowerCase().includes('does not exist') && error.message.toLowerCase().includes('representedbyid')) {
-                console.log(`Adding missing column representedById to ${tableName}...`);
-                try {
-                    await prisma.$executeRawUnsafe(`ALTER TABLE "${tableName}" ADD COLUMN "representedById" TEXT`);
-                    
-                    // Retry update/insert
-                    const checkSql = `SELECT 1 FROM "${tableName}" WHERE "userId" = $1`;
-                    const exists = await prisma.$queryRawUnsafe(checkSql, id) as any[];
-                    
-                    if (exists && exists.length > 0) {
-                         await prisma.$executeRawUnsafe(
-                            `UPDATE "${tableName}" SET "representedById" = $1, "updatedAt" = NOW() WHERE "userId" = $2`,
-                            data.representedById, id
-                         );
-                    } else {
-                         const newId = `${Date.now().toString(36)}${Math.random().toString(36).substr(2, 9)}`;
-                         if (tableName === 'TenantProfile') {
-                             await prisma.$executeRawUnsafe(
-                                `INSERT INTO "${tableName}" ("id", "userId", "representedById", "status", "createdAt", "updatedAt") VALUES ($1, $2, $3, 'SEARCHING', NOW(), NOW())`,
-                                newId, id, data.representedById
-                             );
-                         } else {
-                             await prisma.$executeRawUnsafe(
-                                `INSERT INTO "${tableName}" ("id", "userId", "representedById", "verified", "createdAt", "updatedAt") VALUES ($1, $2, $3, false, NOW(), NOW())`,
-                                newId, id, data.representedById
-                             );
-                         }
-                    }
-                } catch (retryError) {
-                    console.error('Retry failed:', retryError);
-                }
-            }
-        }
-      }
-      
-      // 重新获取包含最新 profile 的用户信息
-      return this.findUserById(id) as Promise<UnifiedUser>
-    }
+    // if (data.representedById !== undefined) {
+    //   if (user.userType === 'TENANT') {
+    //     await prisma.tenantProfile.upsert({
+    //       where: { userId: id },
+    //       update: { representedById: data.representedById },
+    //       create: { userId: id, representedById: data.representedById },
+    //     })
+    //   } else if (user.userType === 'LANDLORD') {
+    //     await prisma.landlordProfile.upsert({
+    //       where: { userId: id },
+    //       update: { representedById: data.representedById },
+    //       create: { userId: id, representedById: data.representedById },
+    //     })
+    //   }
+    //   
+    //   // 重新获取包含最新 profile 的用户信息
+    //   return this.findUserById(id) as Promise<UnifiedUser>
+    // }
     
     return this.mapPrismaUserToUnified(user)
   }
@@ -424,6 +343,7 @@ export class SupabaseAdapter implements DatabaseAdapter {
       'deposits': prisma.deposit,
       'disputes': prisma.dispute,
       'messages': prisma.message,
+      'testimonials': (prisma as any).testimonial,
       'savedProperties': prisma.savedProperty,
       'notifications': prisma.notification,
       'events': (prisma as any).event || null, // Events 表（如果已添加）
@@ -432,22 +352,6 @@ export class SupabaseAdapter implements DatabaseAdapter {
       'landlordProfiles': prisma.landlordProfile,
     }
     
-    const tableNameMap: Record<string, string> = {
-      users: 'User',
-      properties: 'Property',
-      applications: 'Application',
-      leases: 'Lease',
-      payments: 'Payment',
-      deposits: 'Deposit',
-      disputes: 'Dispute',
-      messages: 'Message',
-      savedProperties: 'SavedProperty',
-      notifications: 'Notification',
-      events: 'Event',
-      agentProfiles: 'AgentProfile',
-      tenantProfiles: 'TenantProfile',
-      landlordProfiles: 'LandlordProfile',
-    }
     const model = modelMap[collection]
     if (!model) {
       // 如果 Events 表不存在，使用原始 SQL 查询（降级方案）
@@ -484,19 +388,40 @@ export class SupabaseAdapter implements DatabaseAdapter {
       queryOptions.take = options.take
     }
     
-    // Default includes for users collection to ensure profile data is available
-    if (collection === 'users') {
-      queryOptions.include = {
-        tenantProfile: true,
-        landlordProfile: true
-        // agentProfile: true // Temporarily disabled as the table might not exist in some environments
+    try {
+      return await this.executeWithReconnect(
+        () => model.findMany(queryOptions) as Promise<T[]>
+      )
+    } catch (error: any) {
+      const errorMsg = String(error?.message || '')
+      const lower = errorMsg.toLowerCase()
+      const isColumnMissing =
+        lower.includes('does not exist') ||
+        lower.includes('unknown column') ||
+        lower.includes('unknown argument')
+      if (!isColumnMissing) {
+        throw error
       }
-    }
-
-    const runRawQuery = async () => {
+      const tableNameMap: Record<string, string> = {
+        users: 'User',
+        properties: 'Property',
+        applications: 'Application',
+        leases: 'Lease',
+        payments: 'Payment',
+        deposits: 'Deposit',
+        disputes: 'Dispute',
+        messages: 'Message',
+        testimonials: 'Testimonial',
+        savedProperties: 'SavedProperty',
+        notifications: 'Notification',
+        events: 'Event',
+        agentProfiles: 'AgentProfile',
+        tenantProfiles: 'TenantProfile',
+        landlordProfiles: 'LandlordProfile',
+      }
       const tableName = tableNameMap[collection]
       if (!tableName) {
-        throw new Error(`Collection ${collection} not found in Prisma schema`)
+        throw error
       }
       const columnsResult: any[] = await prisma.$queryRawUnsafe(
         `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1`,
@@ -513,7 +438,7 @@ export class SupabaseAdapter implements DatabaseAdapter {
         (fallbackColumns || []).map((col: any) => String(col.column_name))
       )
       const selectableColumns = Array.from(existingColumns)
-        .map((col) => `"${actualTableName}"."${col}"`) // Qualify column names
+        .map((col) => `"${col}"`)
         .join(', ')
       const normalizedFilters = filters ? this.normalizeFilters(filters) : {}
       const conditions: string[] = []
@@ -536,32 +461,32 @@ export class SupabaseAdapter implements DatabaseAdapter {
             value.gt !== undefined ||
             value.lt !== undefined
           if (value.gte !== undefined) {
-            conditions.push(`"${actualTableName}"."${key}" >= $${index}`)
+            conditions.push(`"${key}" >= $${index}`)
             values.push(value.gte)
             index += 1
           }
           if (value.lte !== undefined) {
-            conditions.push(`"${actualTableName}"."${key}" <= $${index}`)
+            conditions.push(`"${key}" <= $${index}`)
             values.push(value.lte)
             index += 1
           }
           if (value.gt !== undefined) {
-            conditions.push(`"${actualTableName}"."${key}" > $${index}`)
+            conditions.push(`"${key}" > $${index}`)
             values.push(value.gt)
             index += 1
           }
           if (value.lt !== undefined) {
-            conditions.push(`"${actualTableName}"."${key}" < $${index}`)
+            conditions.push(`"${key}" < $${index}`)
             values.push(value.lt)
             index += 1
           }
           if (!handled) {
-            conditions.push(`"${actualTableName}"."${key}" = $${index}`)
+            conditions.push(`"${key}" = $${index}`)
             values.push(value)
             index += 1
           }
         } else if (value !== undefined) {
-          conditions.push(`"${actualTableName}"."${key}" = $${index}`)
+          conditions.push(`"${key}" = $${index}`)
           values.push(value)
           index += 1
         }
@@ -572,10 +497,10 @@ export class SupabaseAdapter implements DatabaseAdapter {
         const [orderKey, orderValue] = Object.entries(queryOptions.orderBy)[0] as [string, any]
         if (existingColumns.has(orderKey)) {
           const direction = String(orderValue).toLowerCase() === 'asc' ? 'ASC' : 'DESC'
-          orderClause = `ORDER BY "${actualTableName}"."${orderKey}" ${direction}`
+          orderClause = `ORDER BY "${orderKey}" ${direction}`
         }
       } else if (existingColumns.has('createdAt')) {
-        orderClause = `ORDER BY "${actualTableName}"."createdAt" DESC`
+        orderClause = `ORDER BY "createdAt" DESC`
       }
       let limitClause = ''
       if (queryOptions.take !== undefined) {
@@ -589,77 +514,8 @@ export class SupabaseAdapter implements DatabaseAdapter {
         values.push(queryOptions.skip)
         index += 1
       }
-
-      // Special handling for 'users' collection to include profile data via LEFT JOIN
-      if (collection === 'users') {
-        const tenantTableRows = await prisma.$queryRawUnsafe(
-          `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name ILIKE $1`,
-          'tenantprofile'
-        ) as any[]
-        const landlordTableRows = await prisma.$queryRawUnsafe(
-          `SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name ILIKE $1`,
-          'landlordprofile'
-        ) as any[]
-        const tenantTableName = tenantTableRows?.[0]?.table_name
-        const landlordTableName = landlordTableRows?.[0]?.table_name
-        const tenantJoin = tenantTableName ? `LEFT JOIN "${tenantTableName}" tp ON "${actualTableName}"."id" = tp."userId"` : ''
-        const landlordJoin = landlordTableName ? `LEFT JOIN "${landlordTableName}" lp ON "${actualTableName}"."id" = lp."userId"` : ''
-        const tenantSelect = tenantTableName ? `tp."representedById" as "tenant_representedById"` : `NULL as "tenant_representedById"`
-        const landlordSelect = landlordTableName ? `lp."representedById" as "landlord_representedById"` : `NULL as "landlord_representedById"`
-        const sql = `
-          SELECT ${selectableColumns}, 
-                 ${tenantSelect},
-                 ${landlordSelect}
-          FROM "${actualTableName}"
-          ${tenantJoin}
-          ${landlordJoin}
-          ${whereClause} ${orderClause} ${limitClause} ${offsetClause}
-        `
-        const results = await prisma.$queryRawUnsafe(sql, ...values) as any[]
-        
-        return results.map(r => ({
-          ...r,
-          tenantProfile: { representedById: r.tenant_representedById },
-          landlordProfile: { representedById: r.landlord_representedById },
-          representedById: r.representedById ?? r.tenant_representedById ?? r.landlord_representedById
-        })) as unknown as T[]
-      }
-
       const sql = `SELECT ${selectableColumns} FROM "${actualTableName}" ${whereClause} ${orderClause} ${limitClause} ${offsetClause}`
       return prisma.$queryRawUnsafe(sql, ...values) as Promise<T[]>
-    }
-
-    try {
-      const results = await model.findMany(queryOptions) as T[]
-      if (collection === 'users' && results.length > 0) {
-        const hasRepId = results.some((r: any) =>
-          r?.representedById !== undefined ||
-          r?.tenantProfile?.representedById !== undefined ||
-          r?.landlordProfile?.representedById !== undefined
-        )
-        if (!hasRepId) {
-          return await runRawQuery()
-        }
-      }
-      if (collection === 'properties' && results.length > 0) {
-        const hasAgentId = results.some((r: any) => r?.agentId !== undefined || r?.agent_id !== undefined)
-        if (!hasAgentId) {
-          return await runRawQuery()
-        }
-      }
-      return results
-    } catch (error: any) {
-      console.warn(`[SupabaseAdapter] findMany failed for ${collection}, falling back to raw SQL:`, error.message)
-      const errorMsg = String(error?.message || '')
-      const lower = errorMsg.toLowerCase()
-      const isColumnMissing =
-        lower.includes('does not exist') ||
-        lower.includes('unknown column') ||
-        lower.includes('unknown argument')
-      if (!isColumnMissing) {
-        throw error
-      }
-      return await runRawQuery()
     }
   }
 
@@ -729,11 +585,11 @@ export class SupabaseAdapter implements DatabaseAdapter {
       'users': prisma.user,
       'properties': prisma.property,
       'applications': prisma.application,
-      'leases': prisma.lease,
       'payments': prisma.payment,
       'deposits': prisma.deposit,
       'disputes': prisma.dispute,
       'messages': prisma.message,
+      'testimonials': (prisma as any).testimonial,
       'savedProperties': prisma.savedProperty,
       'notifications': prisma.notification,
       'events': (prisma as any).event || null,
@@ -744,8 +600,66 @@ export class SupabaseAdapter implements DatabaseAdapter {
     
     const model = modelMap[collection]
     if (!model) return null
-    
-    return model.findUnique({ where: { id } }) as Promise<T | null>
+
+    try {
+      return await this.executeWithReconnect(
+        () => model.findUnique({ where: { id } }) as Promise<T | null>
+      )
+    } catch (error: any) {
+      const errorMsg = String(error?.message || '')
+      const lower = errorMsg.toLowerCase()
+      const isColumnMissing =
+        lower.includes('does not exist') ||
+        lower.includes('unknown column') ||
+        lower.includes('unknown argument')
+      if (!isColumnMissing) {
+        throw error
+      }
+
+      const tableNameMap: Record<string, string> = {
+        users: 'User',
+        properties: 'Property',
+        applications: 'Application',
+        leases: 'Lease',
+        payments: 'Payment',
+        deposits: 'Deposit',
+        disputes: 'Dispute',
+        messages: 'Message',
+        testimonials: 'Testimonial',
+        savedProperties: 'SavedProperty',
+        notifications: 'Notification',
+        events: 'Event',
+        agentProfiles: 'AgentProfile',
+        tenantProfiles: 'TenantProfile',
+        landlordProfiles: 'LandlordProfile',
+      }
+      const tableName = tableNameMap[collection]
+      if (!tableName) {
+        throw error
+      }
+
+      const columnsResult: any[] = await prisma.$queryRawUnsafe(
+        `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1`,
+        tableName
+      )
+      const fallbackColumns = columnsResult.length
+        ? columnsResult
+        : (await prisma.$queryRawUnsafe(
+            `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1`,
+            tableName.toLowerCase()
+          ) as any[])
+      const actualTableName = columnsResult.length ? tableName : tableName.toLowerCase()
+      const existingColumns = (fallbackColumns || []).map((col: any) => String(col.column_name))
+      if (existingColumns.length === 0) {
+        return null
+      }
+      const selectableColumns = existingColumns.map((col) => `"${col}"`).join(', ')
+      const rows = await prisma.$queryRawUnsafe(
+        `SELECT ${selectableColumns} FROM "${actualTableName}" WHERE "id" = $1 LIMIT 1`,
+        id
+      ) as any[]
+      return (rows?.[0] || null) as T | null
+    }
   }
 
   async create<T = any>(collection: string, data: any): Promise<T> {
@@ -758,6 +672,7 @@ export class SupabaseAdapter implements DatabaseAdapter {
       'deposits': prisma.deposit,
       'disputes': prisma.dispute,
       'messages': prisma.message,
+      'testimonials': (prisma as any).testimonial,
       'savedProperties': prisma.savedProperty,
       'notifications': prisma.notification,
       'events': (prisma as any).event || null, // Events 表（如果已添加）
@@ -789,7 +704,100 @@ export class SupabaseAdapter implements DatabaseAdapter {
       throw new Error(`Collection ${collection} not found in Prisma schema`)
     }
     
-    return model.create({ data }) as Promise<T>
+    try {
+      return await model.create({ data }) as Promise<T>
+    } catch (error: any) {
+      const errorMsg = String(error?.message || '')
+      const lower = errorMsg.toLowerCase()
+      const isColumnMissing =
+        lower.includes('does not exist') ||
+        lower.includes('unknown column') ||
+        lower.includes('unknown argument')
+      if (!isColumnMissing) {
+        throw error
+      }
+
+      const tableNameMap: Record<string, string> = {
+        users: 'User',
+        properties: 'Property',
+        applications: 'Application',
+        leases: 'Lease',
+        payments: 'Payment',
+        deposits: 'Deposit',
+        disputes: 'Dispute',
+        messages: 'Message',
+        testimonials: 'Testimonial',
+        savedProperties: 'SavedProperty',
+        notifications: 'Notification',
+        events: 'Event',
+        agentProfiles: 'AgentProfile',
+        tenantProfiles: 'TenantProfile',
+        landlordProfiles: 'LandlordProfile',
+      }
+      const tableName = tableNameMap[collection]
+      if (!tableName) {
+        throw error
+      }
+      const columnsResult: any[] = await prisma.$queryRawUnsafe(
+        `SELECT column_name, data_type, udt_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1`,
+        tableName
+      )
+      const fallbackColumns = columnsResult.length
+        ? columnsResult
+        : (await prisma.$queryRawUnsafe(
+            `SELECT column_name, data_type, udt_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = $1`,
+            tableName.toLowerCase()
+          ) as any[])
+      const actualTableName = columnsResult.length ? tableName : tableName.toLowerCase()
+      const existingColumns = new Set((fallbackColumns || []).map((col: any) => String(col.column_name)))
+      const columnTypeMap = new Map<string, string>(
+        (fallbackColumns || []).map((col: any) => [
+          String(col.column_name),
+          String(col.udt_name || col.data_type || '').toLowerCase()
+        ])
+      )
+      const insertData: Record<string, any> = { ...(data || {}) }
+      if (existingColumns.has('id') && (insertData.id === undefined || insertData.id === null || insertData.id === '')) {
+        const idType = columnTypeMap.get('id') || ''
+        insertData.id = idType === 'uuid'
+          ? (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`)
+          : `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
+      }
+      if (existingColumns.has('createdAt') && (insertData.createdAt === undefined || insertData.createdAt === null)) {
+        insertData.createdAt = new Date()
+      }
+      if (existingColumns.has('updatedAt') && (insertData.updatedAt === undefined || insertData.updatedAt === null)) {
+        insertData.updatedAt = new Date()
+      }
+      const entries = Object.entries(insertData).filter(([key, value]) => {
+        if (!existingColumns.has(key)) return false
+        if (value === undefined) return false
+        return true
+      })
+      if (entries.length === 0) {
+        throw error
+      }
+      const columns = entries.map(([key]) => `"${key}"`)
+      const values = entries.map(([key, value]) => {
+        const columnType = columnTypeMap.get(key) || ''
+        if (columnType === 'json' || columnType === 'jsonb') {
+          if (typeof value === 'string') return value
+          return JSON.stringify(value ?? null)
+        }
+        if (value instanceof Date) return value
+        if (value && typeof value === 'object') return JSON.stringify(value)
+        return value
+      })
+      const placeholders = entries.map(([key], index) => {
+        const columnType = columnTypeMap.get(key) || ''
+        if (columnType === 'json') return `$${index + 1}::json`
+        if (columnType === 'jsonb') return `$${index + 1}::jsonb`
+        return `$${index + 1}`
+      })
+      const sql = `INSERT INTO "${actualTableName}" (${columns.join(', ')}) VALUES (${placeholders.join(', ')}) RETURNING *`
+      const rows = await prisma.$queryRawUnsafe(sql, ...values) as any[]
+      return (Array.isArray(rows) ? rows[0] : rows) as T
+    }
   }
 
   async update<T = any>(collection: string, id: string, data: any): Promise<T> {
@@ -802,6 +810,7 @@ export class SupabaseAdapter implements DatabaseAdapter {
       'deposits': prisma.deposit,
       'disputes': prisma.dispute,
       'messages': prisma.message,
+      'testimonials': (prisma as any).testimonial,
       'savedProperties': prisma.savedProperty,
       'notifications': prisma.notification,
       'events': (prisma as any).event || null,
@@ -828,6 +837,7 @@ export class SupabaseAdapter implements DatabaseAdapter {
       'deposits': prisma.deposit,
       'disputes': prisma.dispute,
       'messages': prisma.message,
+      'testimonials': (prisma as any).testimonial,
       'savedProperties': prisma.savedProperty,
       'notifications': prisma.notification,
       'events': (prisma as any).event || null,
@@ -853,6 +863,7 @@ export class SupabaseAdapter implements DatabaseAdapter {
       'deposits': prisma.deposit,
       'disputes': prisma.dispute,
       'messages': prisma.message,
+      'testimonials': (prisma as any).testimonial,
       'savedProperties': prisma.savedProperty,
       'notifications': prisma.notification,
       'events': (prisma as any).event || null, // Events 表（如果已添加）
@@ -892,7 +903,7 @@ export class SupabaseAdapter implements DatabaseAdapter {
       subscriptionEndTime: user.premiumExpiry,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
-      representedById: user.tenantProfile?.representedById || user.landlordProfile?.representedById || null,
+      // representedById: user.tenantProfile?.representedById || user.landlordProfile?.representedById || null,
     }
   }
 }
@@ -973,7 +984,6 @@ export class CloudBaseAdapter implements DatabaseAdapter {
     }
     
     if (data.email !== undefined) updateData.email = data.email
-    if (data.password !== undefined) updateData.password = data.password
     if (data.name !== undefined) updateData.name = data.name
     if (data.phone !== undefined) updateData.phone = data.phone
     if (data.avatar !== undefined) updateData.avatar = data.avatar
@@ -1072,10 +1082,6 @@ export class CloudBaseAdapter implements DatabaseAdapter {
     if (!processedData.updatedAt) {
       processedData.updatedAt = new Date().toISOString()
     }
-
-    if (collection === 'payments' && processedData.transactionId == null) {
-      delete processedData.transactionId
-    }
     
     const result = await cloudbaseDb
       .collection(collection)
@@ -1142,8 +1148,6 @@ export class CloudBaseAdapter implements DatabaseAdapter {
       avatar: user.avatar,
       userType: user.userType,
       isPremium: user.isPremium || false,
-      payoutAccountId: user.payoutAccountId,
-      verified: user.verified,
       premiumExpiry: user.premiumExpiry ? new Date(user.premiumExpiry) : null,
       vipLevel: user.vipLevel || (user.isPremium ? 'PREMIUM' : 'FREE'),
       subscriptionEndTime: user.subscriptionEndTime ? new Date(user.subscriptionEndTime) : null,

@@ -21,6 +21,8 @@ export async function GET(request: NextRequest) {
 
     const region = process.env.NEXT_PUBLIC_APP_REGION || 'global'
     const db = getDatabaseAdapter()
+    const hintedUserId = String(request.headers.get('x-user-id') || '').trim()
+    const hintedUserEmail = String(request.headers.get('x-user-email') || '').trim().toLowerCase()
 
     const isConnectionError = (error: any) => {
       const msg = String(error?.message || '').toLowerCase()
@@ -49,16 +51,46 @@ export async function GET(request: NextRequest) {
     }
 
     if (region === 'global') {
-      const currentUser = await runWithRetry(() => prisma.user.findUnique({
+      let currentUser = await runWithRetry(() => prisma.user.findUnique({
         where: { id: user.id },
         select: {
           id: true,
           name: true,
           email: true,
           userType: true,
-          avatar: true
+          avatar: true,
+          landlordProfile: { select: { representedById: true } },
+          tenantProfile: { select: { representedById: true } }
         }
       }))
+      if (!currentUser && hintedUserId) {
+        currentUser = await runWithRetry(() => prisma.user.findUnique({
+          where: { id: hintedUserId },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            userType: true,
+            avatar: true,
+            landlordProfile: { select: { representedById: true } },
+            tenantProfile: { select: { representedById: true } }
+          }
+        }))
+      }
+      if (!currentUser && (user.email || hintedUserEmail)) {
+        currentUser = await runWithRetry(() => prisma.user.findUnique({
+          where: { email: String(user.email || hintedUserEmail) },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            userType: true,
+            avatar: true,
+            landlordProfile: { select: { representedById: true } },
+            tenantProfile: { select: { representedById: true } }
+          }
+        }))
+      }
 
       if (!currentUser) {
         return NextResponse.json(
@@ -68,12 +100,16 @@ export async function GET(request: NextRequest) {
       }
 
       const contactsMap = new Map()
+      const userType = (currentUser.userType || '').toUpperCase()
+      const userIdSet = new Set<string>([String(user.id), String(currentUser.id)])
+      if (hintedUserId) userIdSet.add(String(hintedUserId))
+      const userIds = Array.from(userIdSet)
 
       const allMyMessages = (await runWithRetry(() => prisma.message.findMany({
         where: {
           OR: [
-            { senderId: user.id },
-            { receiverId: user.id }
+            { senderId: { in: userIds } },
+            { receiverId: { in: userIds } }
           ]
         },
         select: {
@@ -92,7 +128,9 @@ export async function GET(request: NextRequest) {
 
       const lastMessageByPartner = new Map<string, any>()
       allMyMessages.forEach((msg: any) => {
-        const partnerId = msg.senderId === user.id ? msg.receiverId : msg.senderId
+        const senderId = String(msg.senderId || '')
+        const receiverId = String(msg.receiverId || '')
+        const partnerId = userIdSet.has(senderId) ? receiverId : senderId
         if (!lastMessageByPartner.has(partnerId)) {
           lastMessageByPartner.set(partnerId, msg)
         }
@@ -109,9 +147,11 @@ export async function GET(request: NextRequest) {
             avatar: true
           }
         }))
-        if (partner && partner.id !== user.id && !contactsMap.has(partner.id)) {
+        if (partner && !userIdSet.has(String(partner.id)) && !contactsMap.has(partner.id)) {
           const unreadMessages = allMyMessages.filter((m: any) =>
-            m.senderId === partnerId && m.receiverId === user.id && !m.isRead
+            String(m.senderId || '') === String(partnerId) &&
+            userIdSet.has(String(m.receiverId || '')) &&
+            !m.isRead
           )
           contactsMap.set(partner.id, {
             id: partner.id,
@@ -126,9 +166,30 @@ export async function GET(request: NextRequest) {
         }
       }
 
-      if (currentUser.userType === 'LANDLORD') {
+      if (userType === 'LANDLORD') {
+        // 1. Fetch Agent if represented
+        if (currentUser.landlordProfile?.representedById) {
+           const agent = await runWithRetry(() => prisma.user.findUnique({
+             where: { id: currentUser.landlordProfile!.representedById },
+             select: { id: true, name: true, email: true, userType: true, avatar: true }
+           }))
+           if (agent && !contactsMap.has(agent.id)) {
+             contactsMap.set(agent.id, {
+               id: agent.id,
+               name: agent.name,
+               email: agent.email,
+               role: agent.userType,
+               avatar: agent.avatar,
+               lastMessage: "",
+               time: null,
+               unread: 0
+             })
+           }
+        }
+
+        // 2. Fetch Tenants from Properties -> Applications
         const properties = await runWithRetry(() => prisma.property.findMany({
-          where: { landlordId: user.id },
+          where: { landlordId: { in: userIds } },
           select: { id: true, title: true, landlordId: true }
         }))
         const propertyIds = properties.map((p) => p.id)
@@ -158,9 +219,30 @@ export async function GET(request: NextRequest) {
             }
           }
         }
-      } else if (currentUser.userType === 'TENANT') {
+      } else if (userType === 'TENANT') {
+        // 1. Fetch Agent if represented
+        if (currentUser.tenantProfile?.representedById) {
+           const agent = await runWithRetry(() => prisma.user.findUnique({
+             where: { id: currentUser.tenantProfile!.representedById },
+             select: { id: true, name: true, email: true, userType: true, avatar: true }
+           }))
+           if (agent && !contactsMap.has(agent.id)) {
+             contactsMap.set(agent.id, {
+               id: agent.id,
+               name: agent.name,
+               email: agent.email,
+               role: agent.userType,
+               avatar: agent.avatar,
+               lastMessage: "",
+               time: null,
+               unread: 0
+             })
+           }
+        }
+
+        // 2. Fetch Landlords from Applications
         const applications = await withPrismaRetry(() => prisma.application.findMany({
-          where: { tenantId: user.id },
+          where: { tenantId: { in: userIds } },
           select: { propertyId: true }
         }))
         for (const app of applications) {
@@ -190,7 +272,7 @@ export async function GET(request: NextRequest) {
         }
 
         const savedProperties = await runWithRetry(() => prisma.savedProperty.findMany({
-          where: { userId: user.id },
+          where: { userId: { in: userIds } },
           select: { propertyId: true }
         }))
         for (const saved of savedProperties) {
@@ -218,7 +300,7 @@ export async function GET(request: NextRequest) {
             }
           }
         }
-      } else if (currentUser.userType === 'AGENT') {
+      } else if (userType === 'AGENT') {
         const allUsers = await runWithRetry(() => prisma.user.findMany({
           where: {
             userType: { in: ['LANDLORD', 'TENANT'] },
@@ -241,6 +323,7 @@ export async function GET(request: NextRequest) {
           }
         }
       }
+
 
       if (contactsMap.size === 0) {
         const otherUsers = await runWithRetry(() => prisma.user.findMany({

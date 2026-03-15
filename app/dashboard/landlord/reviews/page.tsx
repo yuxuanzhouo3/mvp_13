@@ -27,23 +27,80 @@ export default function ReviewsPage() {
     content: "",
     rating: 5,
   })
+  const cleanText = (text: string) => {
+    return text?.replace(/^(property\.|dashboard\.|common\.|application\.|payment\.)/i, '') || text
+  }
+  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 9000) => {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        cache: "no-store",
+      })
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  }
+  const parseTokenHints = (token: string) => {
+    try {
+      const payloadBase64 = token.split(".")[1]
+      if (!payloadBase64) return { userId: "", email: "" }
+      const normalized = payloadBase64.replace(/-/g, "+").replace(/_/g, "/")
+      const decoded = JSON.parse(atob(normalized))
+      const userId = decoded?.userId || decoded?.sub || decoded?.id || ""
+      const email = decoded?.email || decoded?.userEmail || ""
+      return { userId: String(userId || ""), email: String(email || "") }
+    } catch {
+      return { userId: "", email: "" }
+    }
+  }
+  const getAuthHeaders = (token?: string) => {
+    const headers: Record<string, string> = {}
+    if (token) headers.Authorization = `Bearer ${token}`
+    const userStr = localStorage.getItem("user")
+    let parsedUser: any = null
+    if (userStr) {
+      try {
+        parsedUser = JSON.parse(userStr)
+      } catch {
+        localStorage.removeItem("user")
+      }
+    }
+    const tokenHints = token ? parseTokenHints(token) : { userId: "", email: "" }
+    const hintedId = parsedUser?.id || parsedUser?.userId || parsedUser?._id
+    const hintedEmail = parsedUser?.email
+    if (hintedId) headers["x-user-id"] = String(hintedId)
+    if (hintedEmail) headers["x-user-email"] = String(hintedEmail)
+    if (!headers["x-user-id"] && tokenHints.userId) headers["x-user-id"] = tokenHints.userId
+    if (!headers["x-user-email"] && tokenHints.email) headers["x-user-email"] = tokenHints.email
+    return headers
+  }
 
   useEffect(() => {
     const userStr = localStorage.getItem("user")
     if (userStr) {
-      const userData = JSON.parse(userStr)
-      setFormData(prev => ({
-        ...prev,
-        name: userData.name || "",
-        role: "Landlord",
-      }))
+      try {
+        const userData = JSON.parse(userStr)
+        setFormData(prev => ({
+          ...prev,
+          name: userData.name || "",
+          role: "Landlord",
+        }))
+      } catch {
+        localStorage.removeItem("user")
+      }
     }
     fetchReviews()
   }, [])
 
   const fetchReviews = async () => {
     try {
-      const response = await fetch("/api/testimonials")
+      const token = localStorage.getItem("auth-token") || undefined
+      const response = await fetchWithTimeout("/api/testimonials?userType=landlord&scope=dashboard", {
+        headers: getAuthHeaders(token),
+      })
       if (response.ok) {
         const data = await response.json()
         setReviews(data.testimonials || [])
@@ -69,10 +126,12 @@ export default function ReviewsPage() {
 
     setSubmitting(true)
     try {
+      const token = localStorage.getItem("auth-token")
       const response = await fetch("/api/testimonials", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...getAuthHeaders(token || undefined),
         },
         body: JSON.stringify(formData),
       })
@@ -118,19 +177,19 @@ export default function ReviewsPage() {
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold">{t('reviews')}</h1>
-            <p className="text-muted-foreground">{t('shareExperience') || "Share your experience and read what others say"}</p>
+            <h1 className="text-3xl font-bold">{cleanText(t('reviews'))}</h1>
+            <p className="text-muted-foreground">{cleanText(t('shareExperience') || "Share your experience and read what others say")}</p>
           </div>
           <Button onClick={() => setShowForm(!showForm)}>
-            {showForm ? tCommon('cancel') : (t('writeReview') || "Write a Review")}
+            {showForm ? cleanText(tCommon('cancel')) : cleanText(t('writeReview') || "Write a Review")}
           </Button>
         </div>
 
         {showForm && (
           <Card>
             <CardHeader>
-              <CardTitle>{t('writeReview') || "Write Your Review"}</CardTitle>
-              <CardDescription>{t('shareExperienceWithRentGuard') || "Share your experience with RentGuard"}</CardDescription>
+              <CardTitle>{cleanText(t('writeReview') || "Write Your Review")}</CardTitle>
+              <CardDescription>{cleanText(t('shareExperienceWithRentGuard') || "Share your experience with RentGuard")}</CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={handleSubmit} className="space-y-4">

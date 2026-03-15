@@ -21,6 +21,53 @@ export default function AnalyticsPage() {
   })
   const [revenueData, setRevenueData] = useState<any[]>([])
   const [propertyStatusData, setPropertyStatusData] = useState<any[]>([])
+  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 9000) => {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        cache: "no-store",
+      })
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  }
+  const parseTokenHints = (token: string) => {
+    try {
+      const payloadBase64 = token.split(".")[1]
+      if (!payloadBase64) return { userId: "", email: "" }
+      const normalized = payloadBase64.replace(/-/g, "+").replace(/_/g, "/")
+      const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4)
+      const decoded = JSON.parse(atob(padded))
+      const userId = decoded?.userId || decoded?.sub || decoded?.id || decoded?.uid || decoded?.user_id || ""
+      const email = decoded?.email || decoded?.userEmail || decoded?.preferred_username || ""
+      return { userId: String(userId || ""), email: String(email || "") }
+    } catch {
+      return { userId: "", email: "" }
+    }
+  }
+  const getAuthHeaders = (token: string) => {
+    const headers: Record<string, string> = { Authorization: `Bearer ${token}` }
+    const userStr = localStorage.getItem("user")
+    let parsedUser: any = null
+    if (userStr) {
+      try {
+        parsedUser = JSON.parse(userStr)
+      } catch {
+        localStorage.removeItem("user")
+      }
+    }
+    const tokenHints = parseTokenHints(token)
+    const hintedId = parsedUser?.id || parsedUser?.userId || parsedUser?._id
+    const hintedEmail = parsedUser?.email
+    if (hintedId) headers["x-user-id"] = String(hintedId)
+    if (hintedEmail) headers["x-user-email"] = String(hintedEmail)
+    if (!headers["x-user-id"] && tokenHints.userId) headers["x-user-id"] = tokenHints.userId
+    if (!headers["x-user-email"] && tokenHints.email) headers["x-user-email"] = tokenHints.email
+    return headers
+  }
 
   useEffect(() => {
     fetchAnalyticsData()
@@ -41,11 +88,14 @@ export default function AnalyticsPage() {
   const fetchAnalyticsData = async () => {
     try {
       const token = localStorage.getItem("auth-token")
-      if (!token) return
+      if (!token) {
+        setAnalytics(prev => ({ ...prev, loading: false }))
+        return
+      }
 
       // Fetch properties
-      const propertiesRes = await fetch("/api/properties", {
-        headers: { Authorization: `Bearer ${token}` },
+      const propertiesRes = await fetchWithTimeout("/api/properties", {
+        headers: getAuthHeaders(token),
       })
       let totalProperties = 0
       if (propertiesRes.ok) {
@@ -70,8 +120,8 @@ export default function AnalyticsPage() {
       }
 
       // Fetch applications to get active tenants
-      const applicationsRes = await fetch("/api/applications?userType=landlord", {
-        headers: { Authorization: `Bearer ${token}` },
+      const applicationsRes = await fetchWithTimeout("/api/applications?userType=landlord", {
+        headers: getAuthHeaders(token),
       })
       let activeTenants = 0
       let cachedApplications: any[] = []
@@ -84,8 +134,8 @@ export default function AnalyticsPage() {
       // Fetch leases to calculate occupancy
       let occupiedProperties = 0
       try {
-        const leasesRes = await fetch("/api/leases", {
-          headers: { Authorization: `Bearer ${token}` },
+        const leasesRes = await fetchWithTimeout("/api/leases?userType=landlord", {
+          headers: getAuthHeaders(token),
         })
         if (leasesRes.ok) {
           const leasesData = await leasesRes.json()
@@ -105,8 +155,8 @@ export default function AnalyticsPage() {
       }
 
       // Fetch payments to calculate total revenue
-      const paymentsRes = await fetch("/api/payments", {
-        headers: { Authorization: `Bearer ${token}` },
+      const paymentsRes = await fetchWithTimeout("/api/payments?userType=landlord", {
+        headers: getAuthHeaders(token),
       })
       let totalRevenue = 0
       if (paymentsRes.ok) {

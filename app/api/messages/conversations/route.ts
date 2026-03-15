@@ -17,6 +17,8 @@ export async function GET(request: NextRequest) {
     }
 
     const db = getDatabaseAdapter()
+    const hintedUserId = String(request.headers.get('x-user-id') || '').trim()
+    const hintedUserEmail = String(request.headers.get('x-user-email') || '').trim().toLowerCase()
     const getField = (obj: any, keys: string[]) => {
       for (const key of keys) {
         if (obj && obj[key] !== undefined && obj[key] !== null) return obj[key]
@@ -24,9 +26,10 @@ export async function GET(request: NextRequest) {
       return undefined
     }
     const userIdSet = new Set<string>([String(user.id)])
-    if (user.email) {
+    if (hintedUserId) userIdSet.add(hintedUserId)
+    if (user.email || hintedUserEmail) {
       try {
-        const dbUser = await db.findUserByEmail(user.email)
+        const dbUser = await db.findUserByEmail(user.email || hintedUserEmail)
         if (dbUser?.id) userIdSet.add(String(dbUser.id))
       } catch {}
     }

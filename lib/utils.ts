@@ -41,3 +41,50 @@ export function getPropertyTypeLabel(propertyType?: string) {
   if (!label) return propertyType || ''
   return isChina ? label.zh : label.en
 }
+
+export function normalizeStringArray(value: unknown): string[] {
+  if (!value) return []
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => (typeof item === 'string' ? item.trim() : String(item || '').trim()))
+      .filter(Boolean)
+  }
+  if (typeof value === 'string') {
+    const raw = value.trim()
+    if (!raw) return []
+    try {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((item) => (typeof item === 'string' ? item.trim() : String(item || '').trim()))
+          .filter(Boolean)
+      }
+      if (parsed && typeof parsed === 'object') {
+        const nested = (parsed as any).images
+        if (Array.isArray(nested)) {
+          return nested
+            .map((item) => (typeof item === 'string' ? item.trim() : String(item || '').trim()))
+            .filter(Boolean)
+        }
+      }
+    } catch {}
+    const commaSeparated = raw.split(',').map((item) => item.trim()).filter(Boolean)
+    if (commaSeparated.length > 1) return commaSeparated
+    if (raw.startsWith('http') || raw.startsWith('data:') || raw.startsWith('/')) return [raw]
+    return []
+  }
+  if (typeof value === 'object') {
+    const nested = (value as any).images
+    if (Array.isArray(nested)) {
+      return nested
+        .map((item) => (typeof item === 'string' ? item.trim() : String(item || '').trim()))
+        .filter(Boolean)
+    }
+  }
+  return []
+}
+
+export function getPrimaryImage(value: unknown, fallback = '/placeholder.svg'): string {
+  const images = normalizeStringArray(value)
+  return images[0] || fallback
+}

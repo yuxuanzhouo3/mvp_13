@@ -30,6 +30,36 @@ export interface AuthResult {
   token: string
 }
 
+const authTimeoutMarker = Symbol('auth-timeout')
+const withAuthTimeout = async <T,>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof authTimeoutMarker> => {
+  return await Promise.race([
+    promise,
+    new Promise<typeof authTimeoutMarker>((resolve) => {
+      setTimeout(() => resolve(authTimeoutMarker), timeoutMs)
+    })
+  ])
+}
+
+const isDatabaseConnectionError = (error: unknown): boolean => {
+  const message = String((error as any)?.message || '').toLowerCase()
+  const code = String((error as any)?.code || '').toUpperCase()
+  return (
+    message.includes("can't reach database server") ||
+    message.includes('can\\u2019t reach database server') ||
+    message.includes('database connection failed') ||
+    message.includes('maxclients') ||
+    message.includes('max clients reached') ||
+    message.includes('pool_size') ||
+    message.includes('timed out') ||
+    message.includes('timeout') ||
+    message.includes('connection') ||
+    message.includes('p1001') ||
+    message.includes('p1017') ||
+    code === 'P1001' ||
+    code === 'P1017'
+  )
+}
+
 /**
  * 获取当前认证用户（统一接口）
  * 根据环境变量自动选择 Supabase Token 或 JWT Token 验证
@@ -38,10 +68,9 @@ export async function getCurrentUser(request: NextRequest): Promise<AuthUser | n
   const region = getAppRegion()
   
   if (region === 'global') {
-    // 国际版：允许 Supabase Token 或 JWT Token（用于 Supabase 限流时的降级登录/注册）
-    const supabaseUser = await getCurrentUserFromSupabase(request)
-    if (supabaseUser) return supabaseUser
-    return await getCurrentUserFromJWT(request)
+    const jwtUser = await getCurrentUserFromJWT(request)
+    if (jwtUser) return jwtUser
+    return await getCurrentUserFromSupabase(request)
   } else {
     return await getCurrentUserFromJWT(request)
   }
@@ -58,124 +87,101 @@ async function getCurrentUserFromSupabase(request: NextRequest): Promise<AuthUse
     }
 
     const token = authHeader.substring(7)
+    const parseTokenHints = (rawToken: string) => {
+      try {
+        const payloadBase64 = rawToken.split('.')[1]
+        if (!payloadBase64) {
+          return { userId: '', email: '', userType: '' }
+        }
+        const normalized = payloadBase64.replace(/-/g, '+').replace(/_/g, '/')
+        const padded = normalized + '='.repeat((4 - (normalized.length % 4)) % 4)
+        const decoded = JSON.parse(Buffer.from(padded, 'base64').toString('utf8'))
+        const userId = String(decoded?.sub || decoded?.userId || decoded?.id || '').trim()
+        const email = String(decoded?.email || decoded?.userEmail || '').trim()
+        const userType = String(decoded?.userType || decoded?.role || decoded?.type || '').trim()
+        return { userId, email, userType }
+      } catch {
+        return { userId: '', email: '', userType: '' }
+      }
+    }
     const client = supabaseAdmin || supabase
     if (!client) {
       return null
     }
-    const getField = (obj: any, keys: string[]) => {
-      for (const key of keys) {
-        const value = obj?.[key]
-        if (value !== undefined && value !== null && value !== '') return value
+    const authResult = await withAuthTimeout(client.auth.getUser(token), 5000)
+    if (authResult === authTimeoutMarker) {
+      const hints = parseTokenHints(token)
+      if (!hints.userId && !hints.email) {
+        return null
       }
-      return undefined
-    }
-
-    const { data: { user }, error } = await client.auth.getUser(token)
-    if (error || !user) {
-      return null
-    }
-
-    const db = getDatabaseAdapter()
-    let dbUser: UnifiedUser | null = null
-    let dbUserSource: 'db' | 'rest' | 'none' = 'none'
-    try {
-      dbUser =
-        (user.email ? await db.findUserByEmail(user.email) : null) ||
-        (await db.findUserById(user.id))
-      if (dbUser) {
-        dbUserSource = 'db'
-      }
-    } catch {}
-
-    if (!dbUser && supabaseAdmin) {
-      const userTables = ['User', 'user', 'users', 'profiles', 'profile', 'user_profiles', 'userProfiles']
-      for (const tableName of userTables) {
-        if (user.id) {
-          const { data, error } = await supabaseAdmin
-            .from(tableName)
-            .select('id,email,name,userType,user_type,type,role,isPremium,is_premium,vipLevel,vip_level')
-            .eq('id', user.id)
-            .limit(1)
-          if (!error && data && data.length > 0) {
-            const row = data[0]
-            dbUser = {
-              id: String(row.id),
-              email: row.email || user.email || '',
-              name: row.name || (row.email ? row.email.split('@')[0] : ''),
-              userType: String(getField(row, ['userType', 'user_type', 'type', 'role']) || 'TENANT'),
-              isPremium: Boolean(getField(row, ['isPremium', 'is_premium'])),
-              vipLevel: String(getField(row, ['vipLevel', 'vip_level']) || (getField(row, ['isPremium', 'is_premium']) ? 'PREMIUM' : 'FREE')),
-              createdAt: new Date(),
-              updatedAt: new Date()
-            }
-            dbUserSource = 'rest'
-            break
-          }
-        }
-        if (user.email) {
-          const { data, error } = await supabaseAdmin
-            .from(tableName)
-            .select('id,email,name,userType,user_type,type,role,isPremium,is_premium,vipLevel,vip_level')
-            .ilike('email', user.email)
-            .limit(1)
-          if (!error && data && data.length > 0) {
-            const row = data[0]
-            dbUser = {
-              id: String(row.id),
-              email: row.email || user.email || '',
-              name: row.name || (row.email ? row.email.split('@')[0] : ''),
-              userType: String(getField(row, ['userType', 'user_type', 'type', 'role']) || 'TENANT'),
-              isPremium: Boolean(getField(row, ['isPremium', 'is_premium'])),
-              vipLevel: String(getField(row, ['vipLevel', 'vip_level']) || (getField(row, ['isPremium', 'is_premium']) ? 'PREMIUM' : 'FREE')),
-              createdAt: new Date(),
-              updatedAt: new Date()
-            }
-            dbUserSource = 'rest'
-            break
-          }
-        }
-      }
-    }
-
-    if (!dbUser) {
       return {
-        id: user.id,
-        email: user.email || '',
-        name: (user.user_metadata as any)?.name || (user.email ? user.email.split('@')[0] : ''),
-        userType: (user.user_metadata as any)?.userType || (user.user_metadata as any)?.role || 'TENANT',
+        id: hints.userId,
+        email: hints.email,
+        name: hints.email ? hints.email.split('@')[0] : '',
+        userType: hints.userType || 'TENANT',
         isPremium: false,
         vipLevel: 'FREE',
       }
     }
-
-    const metadataUserType = (user.user_metadata as any)?.userType
-    const metadataName = (user.user_metadata as any)?.name
-    let effectiveUserType = dbUser.userType
-    let effectiveName = dbUser.name
-    if (dbUserSource === 'db') {
-      try {
-        const updates: any = {}
-        if (metadataUserType && metadataUserType !== dbUser.userType) {
-          updates.userType = metadataUserType
-          effectiveUserType = metadataUserType
-        }
-        if (metadataName && metadataName !== dbUser.name) {
-          updates.name = metadataName
-          effectiveName = metadataName
-        }
-        if (Object.keys(updates).length > 0) {
-          await db.updateUser(dbUser.id, updates)
-        }
-      } catch {}
+    const { data: { user }, error } = authResult as any
+    if (error || !user) {
+      return null
     }
 
+    try {
+      const db = getDatabaseAdapter()
+      const byEmail = user.email
+        ? await withAuthTimeout(db.findUserByEmail(String(user.email)), 6000)
+        : null
+      const byId = await withAuthTimeout(db.findUserById(String(user.id || '')), 6000)
+      let dbUser =
+        (byEmail && byEmail !== authTimeoutMarker ? byEmail : null) ||
+        (byId !== authTimeoutMarker ? byId : null)
+      if (!dbUser && user.email && supabaseAdmin) {
+        const tableCandidates = ['User', 'user', 'users']
+        for (const tableName of tableCandidates) {
+          const result = await withAuthTimeout(
+            (supabaseAdmin as any)
+              .from(tableName)
+              .select('id,email,name,userType,user_type,type,role,isPremium,is_premium')
+              .ilike('email', String(user.email))
+              .limit(1),
+            2500
+          )
+          if (result === authTimeoutMarker) continue
+          const row = (result as any)?.data?.[0]
+          if (row?.id) {
+            dbUser = {
+              id: row.id,
+              email: row.email || user.email || '',
+              name: row.name || (user.email ? String(user.email).split('@')[0] : ''),
+              userType: row.userType || row.user_type || row.type || row.role || 'TENANT',
+              isPremium: Boolean(row.isPremium ?? row.is_premium),
+              vipLevel: 'FREE',
+            } as any
+            break
+          }
+        }
+      }
+      if (dbUser) {
+        return {
+          id: dbUser.id,
+          email: dbUser.email,
+          name: dbUser.name,
+          userType: dbUser.userType,
+          isPremium: dbUser.isPremium,
+          vipLevel: dbUser.vipLevel || (dbUser.isPremium ? 'PREMIUM' : 'FREE'),
+        }
+      }
+    } catch {}
+
     return {
-      id: dbUser.id,
-      email: dbUser.email,
-      name: effectiveName,
-      userType: effectiveUserType,
-      isPremium: dbUser.isPremium,
-      vipLevel: dbUser.vipLevel || (dbUser.isPremium ? 'PREMIUM' : 'FREE'),
+      id: user.id,
+      email: user.email || '',
+      name: (user.user_metadata as any)?.name || (user.email ? user.email.split('@')[0] : ''),
+      userType: (user.user_metadata as any)?.userType || (user.user_metadata as any)?.role || 'TENANT',
+      isPremium: false,
+      vipLevel: 'FREE',
     }
   } catch (error) {
     console.error('Supabase auth error:', error)
@@ -200,9 +206,11 @@ async function getCurrentUserFromJWT(request: NextRequest): Promise<AuthUser | n
     ) as { userId: string; email: string; userType?: string; role?: string; name?: string }
 
     const db = getDatabaseAdapter()
-    let dbUser = await db.findUserById(decoded.userId)
+    const byId = await withAuthTimeout(db.findUserById(decoded.userId), 2500)
+    let dbUser = byId === authTimeoutMarker ? null : byId
     if (!dbUser && decoded.email) {
-      dbUser = await db.findUserByEmail(decoded.email)
+      const byEmail = await withAuthTimeout(db.findUserByEmail(decoded.email), 2500)
+      dbUser = byEmail === authTimeoutMarker ? null : byEmail
     }
     
     if (dbUser) {
@@ -213,56 +221,6 @@ async function getCurrentUserFromJWT(request: NextRequest): Promise<AuthUser | n
         userType: dbUser.userType,
         isPremium: dbUser.isPremium,
         vipLevel: dbUser.vipLevel || (dbUser.isPremium ? 'PREMIUM' : 'FREE'),
-      }
-    }
-
-    const getField = (obj: any, keys: string[]) => {
-      for (const key of keys) {
-        const value = obj?.[key]
-        if (value !== undefined && value !== null && value !== '') return value
-      }
-      return undefined
-    }
-
-    if (supabaseAdmin) {
-      const userTables = ['User', 'user', 'users', 'profiles', 'profile', 'user_profiles', 'userProfiles']
-      for (const tableName of userTables) {
-        if (decoded.userId) {
-          const { data, error } = await supabaseAdmin
-            .from(tableName)
-            .select('id,email,name,userType,user_type,type,role,isPremium,is_premium,vipLevel,vip_level')
-            .eq('id', decoded.userId)
-            .limit(1)
-          if (!error && data && data.length > 0) {
-            const row = data[0]
-            return {
-              id: String(row.id),
-              email: row.email || decoded.email || '',
-              name: row.name || (row.email ? row.email.split('@')[0] : decoded.name || ''),
-              userType: String(getField(row, ['userType', 'user_type', 'type', 'role']) || decoded.userType || decoded.role || 'TENANT'),
-              isPremium: Boolean(getField(row, ['isPremium', 'is_premium'])),
-              vipLevel: String(getField(row, ['vipLevel', 'vip_level']) || (getField(row, ['isPremium', 'is_premium']) ? 'PREMIUM' : 'FREE')),
-            }
-          }
-        }
-        if (decoded.email) {
-          const { data, error } = await supabaseAdmin
-            .from(tableName)
-            .select('id,email,name,userType,user_type,type,role,isPremium,is_premium,vipLevel,vip_level')
-            .ilike('email', decoded.email)
-            .limit(1)
-          if (!error && data && data.length > 0) {
-            const row = data[0]
-            return {
-              id: String(row.id),
-              email: row.email || decoded.email || '',
-              name: row.name || (row.email ? row.email.split('@')[0] : decoded.name || ''),
-              userType: String(getField(row, ['userType', 'user_type', 'type', 'role']) || decoded.userType || decoded.role || 'TENANT'),
-              isPremium: Boolean(getField(row, ['isPremium', 'is_premium'])),
-              vipLevel: String(getField(row, ['vipLevel', 'vip_level']) || (getField(row, ['isPremium', 'is_premium']) ? 'PREMIUM' : 'FREE')),
-            }
-          }
-        }
       }
     }
 
@@ -649,7 +607,7 @@ export async function loginWithSupabase(
       }
     }
   }
-  const finalData = authResult === timeoutMarker ? null : (authResult as any).data
+  const finalData = (authResult as any)?.data || null
   const finalUser = finalData?.user
   const finalSession = finalData?.session
   if (!finalUser || !finalSession?.access_token) {
@@ -1081,17 +1039,20 @@ export async function login(
     try {
       return await loginWithSupabase(email, password)
     } catch (error: any) {
-      // 如果 Supabase 登录失败，尝试从数据库查找用户
-      // 可能是用户通过 JWT 注册的，但 Supabase 中没有
       const db = getDatabaseAdapter()
-      const dbUser = await db.findUserByEmail(email)
-      
-      if (dbUser && dbUser.password) {
-        // 用户存在于数据库，使用 JWT 登录
-        return await loginWithJWT(email, password)
+      try {
+        const dbUserResult = await withAuthTimeout(db.findUserByEmail(email), 5000)
+        const dbUser = dbUserResult === authTimeoutMarker ? null : dbUserResult
+        if (dbUser && dbUser.password) {
+          return await loginWithJWT(email, password)
+        }
+        throw error
+      } catch (dbError: any) {
+        if (dbError === authTimeoutMarker || isDatabaseConnectionError(dbError)) {
+          throw error
+        }
+        throw dbError
       }
-      // 否则抛出原始错误
-      throw error
     }
   } else {
     return await loginWithJWT(email, password)
@@ -1101,7 +1062,10 @@ export async function login(
 /**
  * OAuth 登录（仅国际版支持）
  */
-export async function loginWithOAuth(provider: 'google' | 'github'): Promise<{ url: string }> {
+export async function loginWithOAuth(
+  provider: 'google' | 'github',
+  appUrl?: string
+): Promise<{ url: string }> {
   const region = getAppRegion()
   
   if (region !== 'global') {
@@ -1115,7 +1079,7 @@ export async function loginWithOAuth(provider: 'google' | 'github'): Promise<{ u
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider,
     options: {
-      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/auth/callback`,
+      redirectTo: `${appUrl || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/api/auth/callback`,
     },
   })
 

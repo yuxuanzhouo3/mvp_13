@@ -1,11 +1,30 @@
 "use client"
 
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { useTranslations } from 'next-intl'
 import { Shield, Facebook, Twitter, Instagram, Linkedin } from "lucide-react"
+import { useToast } from "@/hooks/use-toast"
 
 export function Footer() {
   const t = useTranslations('footer')
+  const router = useRouter()
+  const { toast } = useToast()
+
+  const handleLinkClick = (e: React.MouseEvent, href: string) => {
+    if (href === '/search' || href === '/list-property') {
+      const token = localStorage.getItem("auth-token")
+      if (!token) {
+        e.preventDefault()
+        toast({
+          title: "Login Required",
+          description: "Please login to continue.",
+          variant: "destructive",
+        })
+        router.push("/auth/login")
+      }
+    }
+  }
 
   const footerLinks = {
     [t('forRenters')]: [
@@ -68,9 +87,10 @@ export function Footer() {
               <ul className="space-y-2">
                 {links.map((link) => (
                   <li key={link.name}>
-                    <Link
-                      href={link.href}
+                    <Link 
+                      href={link.href} 
                       className="text-muted-foreground hover:text-primary transition-colors"
+                      onClick={(e) => handleLinkClick(e, link.href)}
                     >
                       {link.name}
                     </Link>

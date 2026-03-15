@@ -2,11 +2,20 @@
 
 import { Suspense } from "react"
 import { useTranslations } from 'next-intl'
+import { useSearchParams } from "next/navigation"
 import { DashboardLayout } from "@/components/dashboard/dashboard-layout"
 import { MessageCenter } from "@/components/dashboard/message-center"
 
+function AgentMessagesContent() {
+  const searchParams = useSearchParams()
+  const userId = searchParams.get('userId') || undefined
+
+  return <MessageCenter initialUserId={userId} />
+}
+
 export default function AgentMessagesPage() {
   const t = useTranslations('dashboard')
+  
   return (
     <DashboardLayout userType="agent">
       <div className="space-y-6">
@@ -15,8 +24,8 @@ export default function AgentMessagesPage() {
           <p className="text-muted-foreground">{t('communicateWithLandlordsAndTenants') || "Communicate with landlords and tenants"}</p>
         </div>
 
-        <Suspense fallback={<div />}>
-          <MessageCenter />
+        <Suspense fallback={<div className="h-[600px] flex items-center justify-center">Loading...</div>}>
+          <AgentMessagesContent />
         </Suspense>
       </div>
     </DashboardLayout>

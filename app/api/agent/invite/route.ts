@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-adapter'
 import { getDatabaseAdapter } from '@/lib/db-adapter'
+import { createNotification } from '@/lib/notification-service'
 
 export async function POST(request: NextRequest) {
   try {
@@ -125,12 +126,11 @@ export async function POST(request: NextRequest) {
           ? `您好！我现在是您的专属中介，将协助您找房与洽谈。如有问题欢迎随时联系。`
           : `Hello! I am now your representing agent. I will help you find properties and negotiate leases. Feel free to message me here.`)
       // 1. Create Notification
-      await db.create('notifications', {
+      await createNotification({
           userId: existingUser.id,
           type: 'SYSTEM',
           title: notificationTitle,
-          message: notificationMessage,
-          isRead: false
+          message: notificationMessage
       })
       console.log(`[Invite] Notification created for user ${existingUser.id}`)
 
@@ -145,12 +145,11 @@ export async function POST(request: NextRequest) {
         : (region === 'china'
           ? `您已成为租客 ${targetName} 的代理。`
           : `You are now representing tenant ${targetName}.`)
-      await db.create('notifications', {
+      await createNotification({
         userId: agentId,
         type: 'SYSTEM',
         title: agentNotificationTitle,
-        message: agentNotificationMessage,
-        isRead: false
+        message: agentNotificationMessage
       })
 
       // 2. Create Message (More visible in Message Center)

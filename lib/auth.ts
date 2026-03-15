@@ -10,6 +10,16 @@ export interface AuthUser {
   userType?: string
 }
 
+const authTimeoutMarker = Symbol('auth-timeout')
+const withAuthTimeout = async <T,>(promise: Promise<T>, timeoutMs: number): Promise<T | typeof authTimeoutMarker> => {
+  return await Promise.race([
+    promise,
+    new Promise<typeof authTimeoutMarker>((resolve) => {
+      setTimeout(() => resolve(authTimeoutMarker), timeoutMs)
+    })
+  ])
+}
+
 /**
  * 从请求中获取认证用户
  */
@@ -42,75 +52,33 @@ export async function getAuthUser(request: NextRequest): Promise<AuthUser | null
       if (!client) {
         return null
       }
-      const timeoutPromise = new Promise<{ __timeout: true }>((resolve) =>
-        setTimeout(() => resolve({ __timeout: true }), 5000)
-      )
-      const result = await Promise.race([client.auth.getUser(token), timeoutPromise])
-      if ((result as any)?.__timeout) {
+      const result = await withAuthTimeout(client.auth.getUser(token), 5000)
+      if (result === authTimeoutMarker) {
         return null
       }
       const user = (result as any)?.data?.user
       if (!user) return null
       const userType = (user.user_metadata as any)?.userType
-      let resolvedUserId = user.id
-      let resolvedEmail = user.email || ''
+      let resolvedId = user.id
       try {
         const db = getDatabaseAdapter()
-        const dbUser =
-          (user.email ? await db.findUserByEmail(user.email) : null) ||
-          (await db.findUserById(user.id))
+        let dbUser: any = null
+        if (user.email) {
+          const byEmail = await withAuthTimeout(db.findUserByEmail(String(user.email)), 2500)
+          dbUser = byEmail === authTimeoutMarker ? null : byEmail
+        }
+        if (!dbUser) {
+          const byId = await withAuthTimeout(db.findUserById(String(user.id)), 2500)
+          dbUser = byId === authTimeoutMarker ? null : byId
+        }
         if (dbUser?.id) {
-          resolvedUserId = dbUser.id
-          resolvedEmail = dbUser.email || resolvedEmail
-          return {
-            userId: dbUser.id,
-            id: dbUser.id,
-            email: resolvedEmail,
-            userType: dbUser.userType || userType
-          }
+          resolvedId = String(dbUser.id)
         }
       } catch {}
-      if (supabaseAdmin) {
-        const userTables = ['User', 'user', 'users']
-        for (const tableName of userTables) {
-          if (user.id) {
-            const { data, error } = await supabaseAdmin
-              .from(tableName)
-              .select('id,email,userType')
-              .eq('id', user.id)
-              .limit(1)
-            if (!error && data && data.length > 0) {
-              const row = data[0]
-              return {
-                userId: String(row.id),
-                id: String(row.id),
-                email: row.email || resolvedEmail,
-                userType: row.userType || userType
-              }
-            }
-          }
-          if (user.email) {
-            const { data, error } = await supabaseAdmin
-              .from(tableName)
-              .select('id,email,userType')
-              .ilike('email', user.email)
-              .limit(1)
-            if (!error && data && data.length > 0) {
-              const row = data[0]
-              return {
-                userId: String(row.id),
-                id: String(row.id),
-                email: row.email || resolvedEmail,
-                userType: row.userType || userType
-              }
-            }
-          }
-        }
-      }
       return {
-        userId: resolvedUserId,
-        id: resolvedUserId,
-        email: resolvedEmail,
+        userId: resolvedId,
+        id: resolvedId,
+        email: user.email || '',
         userType: userType
       }
     } catch (e) {

@@ -10,6 +10,7 @@ import { MapPin, Bed, Bath, Square, Heart } from "lucide-react"
 import Image from "next/image"
 import { PropertyCard } from "@/components/dashboard/property-card"
 import { useToast } from "@/hooks/use-toast"
+import { getPrimaryImage } from "@/lib/utils"
 
 export function FeaturedListings() {
   const router = useRouter()
@@ -40,9 +41,7 @@ export function FeaturedListings() {
           beds: p.bedrooms,
           baths: p.bathrooms,
           sqft: p.sqft || 0,
-          image: typeof p.images === 'string' 
-            ? (JSON.parse(p.images)?.[0] || '/placeholder.svg')
-            : (p.images?.[0] || '/placeholder.svg'),
+          image: getPrimaryImage(p.images ?? p.image),
           status: 'available',
         }))
         setListings(formattedListings)

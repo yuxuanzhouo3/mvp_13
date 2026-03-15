@@ -1,33 +1,59 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getDatabaseAdapter } from '@/lib/db-adapter'
+import { getCurrentUser } from '@/lib/auth-adapter'
 
 /**
  * Get testimonials for the landing page
  */
 export async function GET(request: NextRequest) {
   try {
-    // 使用数据库适配器，自动根据环境变量选择正确的数据库
+    const { searchParams } = new URL(request.url)
+    const requestedUserType = String(searchParams.get('userType') || '').trim().toUpperCase()
+    const scope = String(searchParams.get('scope') || '').trim().toLowerCase()
+    const roleMap: Record<string, string[]> = {
+      LANDLORD: ['LANDLORD', '房东'],
+      TENANT: ['TENANT', '租客'],
+      AGENT: ['AGENT', '中介'],
+    }
+    const requestedRoles = roleMap[requestedUserType] || []
+    const shouldRoleFilter = requestedRoles.length > 0 || scope === 'dashboard'
     const db = getDatabaseAdapter()
-    
-    // 查询testimonials（使用数据库适配器，自动处理 Prisma 和 CloudBase 的差异）
-    const testimonials = await db.query('testimonials', { isActive: true }, {
+    let testimonials = await db.query('testimonials', { isActive: true }, {
       orderBy: { createdAt: 'desc' },
-      take: 6
+      take: shouldRoleFilter ? 100 : 6
     })
+    if (testimonials.length === 0) {
+      testimonials = await db.query('testimonials', {}, {
+        orderBy: { createdAt: 'desc' },
+        take: shouldRoleFilter ? 100 : 6
+      })
+    }
+    if (shouldRoleFilter) {
+      const targetRoleTokens = requestedRoles.length > 0 ? requestedRoles : ['LANDLORD', '房东']
+      const normalizedTargetRoleTokens = targetRoleTokens.map((role) => role.toUpperCase())
+      testimonials = testimonials.filter((item: any) => {
+        const role = String(item?.role || '').trim().toUpperCase()
+        return normalizedTargetRoleTokens.some((token) => role.includes(token))
+      })
+    }
 
     return NextResponse.json({ testimonials })
   } catch (error: any) {
-    // If table doesn't exist, return empty array
     console.error('Get testimonials error:', error)
     return NextResponse.json({ testimonials: [] })
   }
 }
 
 /**
- * Create a new testimonial (admin only)
+ * Create a new testimonial (any authenticated user can create)
  */
 export async function POST(request: NextRequest) {
   try {
+    const user = await getCurrentUser(request)
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const body = await request.json()
     const { name, role, content, rating, avatar } = body
 
@@ -38,18 +64,16 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // 使用数据库适配器
     const db = getDatabaseAdapter()
     
     const testimonial = await db.create('testimonials', {
       name,
       role,
       content,
-      rating: parseInt(rating),
+      rating: parseInt(String(rating)),
       avatar: avatar || null,
       isActive: true,
       createdAt: new Date(),
-      updatedAt: new Date(),
     })
 
     return NextResponse.json({ testimonial })

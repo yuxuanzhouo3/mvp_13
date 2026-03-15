@@ -25,6 +25,7 @@ if (supabaseUrl && supabaseAnonKey) {
       },
       auth: {
         persistSession: false, // We're using JWT for auth
+        flowType: 'pkce',
       },
     })
     supabase = Object.assign((() => client) as any, client) as SupabaseClient & (() => SupabaseClient)
@@ -72,13 +73,14 @@ if (supabaseUrl && supabaseAnonKey) {
 const createSupabaseServerClient = (accessToken?: string) => {
   if (!supabaseUrl || !supabaseAnonKey) return null
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || supabaseAnonKey
+  const clientKey = accessToken ? supabaseAnonKey : serviceRoleKey
   const headers: Record<string, string> = {
-    apikey: serviceRoleKey,
+    apikey: clientKey,
   }
   if (accessToken) {
     headers.Authorization = `Bearer ${accessToken}`
   }
-  return createClient(supabaseUrl, serviceRoleKey, {
+  return createClient(supabaseUrl, clientKey, {
     global: { headers },
     auth: { persistSession: false },
   })

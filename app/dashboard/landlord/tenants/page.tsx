@@ -20,18 +20,73 @@ export default function TenantsPage() {
   const [tenants, setTenants] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const currencySymbol = getCurrencySymbol()
+  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeoutMs = 8000) => {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      return await fetch(url, {
+        ...options,
+        signal: controller.signal,
+        cache: "no-store",
+      })
+    } finally {
+      clearTimeout(timeoutId)
+    }
+  }
+  const parseTokenHints = (token: string) => {
+    try {
+      const payloadBase64 = token.split(".")[1]
+      if (!payloadBase64) return { userId: "", email: "" }
+      const normalized = payloadBase64.replace(/-/g, "+").replace(/_/g, "/")
+      const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4)
+      const decoded = JSON.parse(atob(padded))
+      const userId = decoded?.userId || decoded?.sub || decoded?.id || decoded?.uid || decoded?.user_id || ""
+      const email = decoded?.email || decoded?.userEmail || decoded?.preferred_username || ""
+      return { userId: String(userId || ""), email: String(email || "") }
+    } catch {
+      return { userId: "", email: "" }
+    }
+  }
+  const getAuthHeaders = (token: string) => {
+    const headers: Record<string, string> = { Authorization: `Bearer ${token}` }
+    const userStr = localStorage.getItem("user")
+    let parsedUser: any = null
+    if (userStr) {
+      try {
+        parsedUser = JSON.parse(userStr)
+      } catch {
+        localStorage.removeItem("user")
+      }
+    }
+    const tokenHints = parseTokenHints(token)
+    const hintedId = parsedUser?.id || parsedUser?.userId || parsedUser?._id
+    const hintedEmail = parsedUser?.email
+    if (hintedId) headers["x-user-id"] = String(hintedId)
+    if (hintedEmail) headers["x-user-email"] = String(hintedEmail)
+    if (!headers["x-user-id"] && tokenHints.userId) headers["x-user-id"] = tokenHints.userId
+    if (!headers["x-user-email"] && tokenHints.email) headers["x-user-email"] = tokenHints.email
+    return headers
+  }
 
   useEffect(() => {
     fetchTenants()
   }, [])
 
+  const cleanText = (text: string) => {
+    if (!text) return ''
+    return text.replace(/^(dashboard\.|property\.|common\.|application\.|payment\.)/i, '')
+  }
+
   const fetchTenants = async () => {
     try {
       const token = localStorage.getItem("auth-token")
-      if (!token) return
+      if (!token) {
+        router.replace("/auth/login")
+        return
+      }
 
-      const response = await fetch("/api/landlord/tenants", {
-        headers: { Authorization: `Bearer ${token}` },
+      const response = await fetchWithTimeout("/api/landlord/tenants?userType=landlord", {
+        headers: getAuthHeaders(token),
       })
 
       if (response.ok) {
@@ -90,7 +145,7 @@ export default function TenantsPage() {
                     {tenant.propertyName && (
                       <div className="flex items-center text-sm">
                         <Home className="h-4 w-4 mr-1" />
-                        {tenant.propertyName}
+                        {cleanText(tenant.propertyName)}
                       </div>
                     )}
                     {tenant.leaseStart && tenant.leaseEnd && (
@@ -104,13 +159,23 @@ export default function TenantsPage() {
                       </div>
                     )}
                     <Badge variant={tenant.source === 'lease' ? 'default' : 'secondary'} className="mt-1">
-                      {tenant.source === 'lease' ? t('activeLease') : t('approved')}
+                      {tenant.source === 'lease' ? t('activeLease') : cleanText(t('approved'))}
                     </Badge>
                   </div>
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => router.push(`/dashboard/landlord/messages?userId=${tenant.id}`)}
+                    onClick={() => {
+                      if (tenant.id) {
+                        router.push(`/dashboard/landlord/messages?userId=${tenant.id}`)
+                      } else {
+                        toast({
+                          title: tCommon('error'),
+                          description: "Invalid tenant ID",
+                          variant: "destructive",
+                        })
+                      }
+                    }}
                   >
                     <MessageSquare className="h-4 w-4 mr-1" />
                     {t('messages')}

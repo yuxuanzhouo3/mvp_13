@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentUser } from '@/lib/auth-adapter'
 import { getDatabaseAdapter } from '@/lib/db-adapter'
 import { createSupabaseServerClient, supabaseAdmin } from '@/lib/supabase'
+import { prisma } from '@/lib/db'
 
 /**
  * Get all tenants (for agents to help find homes)
@@ -147,15 +148,42 @@ export async function GET(request: NextRequest) {
     let allProperties: any[] = []
     let allApplications: any[] = []
     try {
-      allUsers = await db.query('users', {}, {
+      allUsers = await prisma.user.findMany({
+        orderBy: { createdAt: 'desc' },
+        include: {
+          landlordProfile: true,
+          tenantProfile: true
+        }
+      })
+      allProperties = await prisma.property.findMany({
         orderBy: { createdAt: 'desc' }
       })
-      allProperties = await db.query('properties', {}, { orderBy: { createdAt: 'desc' } })
-      allApplications = await db.query('applications', {}, { orderBy: { createdAt: 'desc' } })
+      allApplications = await prisma.application.findMany({
+        orderBy: { createdAt: 'desc' }
+      })
     } catch (error) {
-      allUsers = await fetchUsersFromSupabase()
-      allProperties = await fetchPropertiesFromSupabase()
-      allApplications = await fetchApplicationsFromSupabase()
+      try {
+        allUsers = await db.query('users', {}, {
+          orderBy: { createdAt: 'desc' }
+        })
+        allProperties = await db.query('properties', {}, { orderBy: { createdAt: 'desc' } })
+        allApplications = await db.query('applications', {}, { orderBy: { createdAt: 'desc' } })
+        if (allUsers.length > 0 && !allUsers[0].tenantProfile) {
+          const landlordProfiles = await db.query('landlordProfiles')
+          const tenantProfiles = await db.query('tenantProfiles')
+          const landlordMap = new Map(landlordProfiles.map((p: any) => [String(p.userId || p.user_id), p]))
+          const tenantMap = new Map(tenantProfiles.map((p: any) => [String(p.userId || p.user_id), p]))
+          allUsers = allUsers.map((u: any) => ({
+            ...u,
+            landlordProfile: u.landlordProfile || landlordMap.get(String(u.id)),
+            tenantProfile: u.tenantProfile || tenantMap.get(String(u.id)),
+          }))
+        }
+      } catch {
+        allUsers = await fetchUsersFromSupabase()
+        allProperties = await fetchPropertiesFromSupabase()
+        allApplications = await fetchApplicationsFromSupabase()
+      }
     }
     const representedLandlordIds = new Set(
       allUsers
